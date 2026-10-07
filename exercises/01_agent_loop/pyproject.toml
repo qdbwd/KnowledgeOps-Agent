@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "knowledgeops-agent-loop-exercise"
+version = "0.1.0"
+description = "A small, inspectable LangGraph agent loop for learning"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "langgraph==1.1.9",
+    "langchain-core>=1.0,<2",
+    "python-dotenv>=1.1,<2",
+]
+
+[project.optional-dependencies]
+online = ["langchain-openai>=1.0,<2"]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+
+[project.scripts]
+agent-loop = "agent_loop.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_loop"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.uv]
+# 仅选择 uv 管理的 Python，避免重建练习环境时再次使用 conda 的解释器。
+python-preference = "only-managed"
