@@ -43,7 +43,7 @@ Python 3.12、FastAPI、LangChain/LangGraph、PostgreSQL 17 + pg_search BM25；C
 
 开发模式的 Python 环境实际位于项目根 .venv，对应容器 /workspace/.venv，解释器为 /workspace/.venv/bin/python。由初始化容器按根 uv.lock 安装，不使用 Windows/Conda Python；该目录不进入 Git。构建后运行模式的依赖位于镜像内。
 
-知识工作文件、历史正文、上传原件及产物保存在专用宿主挂载目录 `data/agent-workspace`；PG保存版本身份、引用、关系、草稿、运行/聊天与派生BM25索引。正式知识可使用通用文件工具或脚本编辑，程序自动维护发布版本和索引，预览/冲突仍有明确回执。桌面个人知识库不作为运行时数据，不挂载、不复制、不回写。[学习练习](exercises/README.md)独立保留，业务代码不依赖它。
+知识工作文件、历史正文、上传原件及产物保存在专用宿主挂载目录 `data/agent-workspace`；PG保存版本身份、引用、关系、草稿、运行/聊天与派生BM25索引。正式知识可使用通用文件工具或脚本编辑，程序自动维护发布版本和索引，预览/冲突仍有明确回执。桌面个人知识库不作为运行时数据，不挂载、不复制、不回写。早期学习练习仅在本地保留，不随仓库发布，业务代码不依赖它。
 
 模型配置由本地 .env 注入，密钥不进入 Git。配置与任务预算见[工程规则](AGENTS.md)。不接入旧 Agent-Evaluation-Framework，不做向量检索或GraphRAG。现已追加worker内本地命令执行，不创建AIO容器；它不是运行不可信代码的强安全沙盒。
 

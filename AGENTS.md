@@ -31,7 +31,7 @@
 - Redis另用于SSE实时事件及确定检查点内容的可丢弃缓存（决策0021）：事件在PG提交后发布，缺口回PG；latest和pending_writes不缓存。保持PG为事实来源，不用缓存绕过恢复授权，升级PG保存器时核对读取适配。
 - Python 虚拟环境按用户要求实际保存在项目根 .venv，由容器创建并使用 /workspace/.venv/bin/python；不将它改回独立依赖卷，不使用 Windows/Conda Python。
 - 上述根.venv适用于开发模式。compose.yaml默认构建后运行，compose.dev.yaml只准备dev及其依赖，不启动单独api/worker/web；运行镜像的环境在镜像内。只支持Docker部署。make dev或start.ps1 -Mode development负责模式切换/环境准备，开发容器内python scripts/dev.py负责启动应用，Ctrl+C统一停止；worker不自动热重启。不要因省略开发覆盖文件把开发服务意外换成运行模式，切换前停止旧应用。源码入口为backend/src/knowledgeops_agent和frontend，Python锁文件、迁移与集成验证统一保留在根目录。Skills正文维护根skills，模型容量/搜索/领域规则维护根config，旧运行逻辑资源标识及快照保持兼容。
-- 保留 exercises，主项目不依赖教学实现，不另加练习。
+- 早期 exercises 仅在本地保留，不再纳入 Git 跟踪或公开仓库；主项目不依赖教学实现，不另加练习。此为2026-10-12用户追加的发布范围决定，不删除本地练习、不改写已有提交历史。
 - 不接入 Agent-Evaluation-Framework；不做向量/GraphRAG、多租户、递归委派。2026-10-10用户追加本地文件与命令执行，采用worker内LocalShellBackend，不创建AIO；本地模式不是安全隔离容器。
 - 用户已授权文件修改、计划内依赖、容器、迁移和验证。未经另行授权不提交/推送 Git、不公开部署、不删除正常业务数据/持久卷；测试恢复使用隔离空间。
 

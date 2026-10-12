@@ -52,3 +52,5 @@ frontend/test-results/
 !data/agent-workspace/README.md
 # Synthetic PDF fixtures are generated locally; keep their generator in Git.
 /evaluation/materials/*.pdf
+# Early learning exercises stay local and are not part of the published application.
+/exercises/
