@@ -5,23 +5,79 @@ build-backend = "hatchling.build"
 [project]
 name = "knowledgeops-agent"
 version = "0.1.0"
-description = "Traceable knowledge research and maintenance agent with human approval and evaluation adapters"
+description = "Traceable knowledge operations web application"
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    "langgraph==1.1.9",
+    "langchain[mcp]==1.4.3",
+    "langchain-openai>=1.1,<2",
+    "langgraph>=1.0,<2",
+    "langgraph-checkpoint-postgres>=3,<4",
     "pydantic>=2.10,<3",
+    "pydantic-settings>=2.7,<3",
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.34,<1",
+    "sqlalchemy>=2.0,<3",
+    "alembic>=1.14,<2",
+    "psycopg[binary,pool]>=3.2,<4",
+    "python-multipart>=0.0.20,<1",
+    "httpx>=0.28,<1",
+    "trafilatura>=2,<3",
+    "ddgs>=9,<10",
+    "jieba>=0.42,<1",
+    "pypdf>=6,<7",
+    "pypdfium2>=5,<6",
+    "pillow>=12,<13",
+    "python-dotenv>=1.1,<2",
+    "celery[redis]>=5.6,<6",
+    "redis>=6.4,<7",
+    "langchain-deepseek>=1,<2",
+    "deepagents==0.7.23",
+    "pyyaml>=6,<7",
+    "deepseek-recipe==0.1.1",
+    "langchain-text-splitters>=1.1,<2",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8,<10",
+    "pytest-asyncio>=1,<2",
+    "ruff>=0.12,<1",
+    "mypy>=1.15,<2",
+    "reportlab>=4,<5",
+    "types-pyyaml>=6.0.12.20260906",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/knowledgeops_agent"]
+packages = ["backend/src/knowledgeops_agent"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"skills" = "knowledgeops_agent/skills"
+"config" = "knowledgeops_agent/config"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-q"
+asyncio_mode = "auto"
+markers = [
+    "integration: requires the project's isolated PostgreSQL test database",
+    "online: explicitly authorized real-model or network validation",
+]
 
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["backend/src", "."]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true
+
+[tool.uv]
+python-preference = "only-system"

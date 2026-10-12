@@ -1,0 +1,38 @@
+# 只准备开发容器和基础服务。进入 dev 后执行 python scripts/dev.py 启动应用。
+# init 单点安装依赖/迁移；API、worker、Vite 均作为 dev 内的普通进程运行。
+x-development: &development
+  image: knowledgeops-agent-dev:local
+  build: {context: ., target: toolchain}
+  volumes:
+    - .:/workspace
+    - uv-cache:/root/.cache/uv
+    - node-modules:/workspace/frontend/node_modules
+    - browser-cache:/root/.cache/ms-playwright
+  environment: &test-environment
+    TEST_DATABASE_URL: postgresql+psycopg://knowledgeops:${POSTGRES_PASSWORD}@postgres:5432/knowledgeops_test
+    TEST_REDIS_URL: redis://redis:6379/15
+
+services:
+  init:
+    <<: *development
+    command: ["sh", "scripts/bootstrap.sh", "development"]
+    environment:
+      <<: *test-environment
+      MODEL_CALLS_ENABLED: "false"
+  dev:
+    <<: *development
+    # 不能继承生产 env_file/环境快照，否则 .env 修改后进程重启仍会读旧值。
+    # 这里只保留非业务的开发环境标志；应用/测试连接由 dev.py 启动时生成。
+    env_file: !reset []
+    environment: !override
+      KNOWLEDGEOPS_DEV_CONTAINER: "1"
+      KNOWLEDGEOPS_DEV_CONFIG_SOURCE: dotenv-v2
+    ports:
+      - "127.0.0.1:${KNOWLEDGEOPS_PORT:-8787}:5173"
+  # 覆盖文件不启用这些部署服务；生产模式直接使用 compose.yaml。
+  api:
+    profiles: [deployment]
+  worker:
+    profiles: [deployment]
+  web:
+    profiles: [deployment]

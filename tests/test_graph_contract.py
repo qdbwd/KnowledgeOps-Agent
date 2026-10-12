@@ -9,4 +9,3 @@ def test_m0_graph_normalizes_and_stops_without_agent_claims() -> None:
     assert result["terminal_reason"] == "m0_contract_only"
     assert result["tool_history"] == []
     assert result["evidence"] == []
-

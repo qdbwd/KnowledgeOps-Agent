@@ -1,0 +1,156 @@
+// 与 HTTP 合同对应的业务类型；运行状态与业务结果分别表示，避免“结束=成功”。
+export type Conversation = { id: string; title: string; selected_learning_task_id?: string | null };
+export type Message = {
+  id: string;
+  run_id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: string;
+};
+export type Budgets = {
+  model_requests: number;
+  tool_calls: number;
+  searches: number;
+  active_seconds: number;
+};
+export type Usage = {
+  root_used: number;
+  root_limit: number | null;
+};
+export type Run = {
+  id: string;
+  root_id: string;
+  parent_id: string | null;
+  conversation_id: string | null;
+  kind: 'agent' | 'material';
+  task: string;
+  status: string;
+  generation: number;
+  checkpoint_id: string;
+  input: {
+    publication_mode: 'ask' | 'preview' | 'direct';
+    knowledge_only: boolean;
+    delegation: boolean;
+    auxiliary?: boolean;
+    source_ids: string[];
+  };
+  budgets: Budgets;
+  model_usage?: Usage;
+  tool_calls: number;
+  searches: number;
+  active_ms: number;
+  cancel_requested: boolean;
+  stop_reason: string | null;
+  created_at: string;
+  last_event: number;
+  outcome: {
+    kind?: string;
+    answer?: string;
+    draft_ids?: string[];
+    published_ids?: string[];
+    source_id?: string;
+    source_version_id?: string;
+    target_root_id?: string;
+  };
+};
+export type RunEvent = {
+  sequence: number;
+  kind: string;
+  data: Record<string, unknown>;
+  created_at: string;
+};
+export type Guidance = {
+  id: string;
+  message_id: string;
+  target_root_id: string;
+  target_generation: number;
+  user_sequence: number;
+  status: 'pending' | 'applied' | 'stale';
+  result: { reason?: string; authorization_error?: string };
+};
+export type Knowledge = {
+  id: string;
+  document_id: string;
+  version_id: string;
+  version: number;
+  title: string;
+  body: string;
+  summary: string;
+  category: string;
+  tags: string[];
+  archived: boolean;
+  relations?: { target_id: string; label: string }[];
+  citation_ids?: string[];
+  snippet?: string;
+};
+export type Change = {
+  action: 'create' | 'update' | 'archive' | 'restore';
+  document_id: string;
+  title: string;
+  body: string;
+  base_version_id?: string;
+  restore_version_id?: string;
+  summary?: string;
+  tags?: string[];
+  category?: string;
+  relations?: { target_id: string; label: string }[];
+};
+export type ChangeSet = {
+  id: string;
+  root_id: string;
+  status: string;
+  revision: number;
+  operations: Change[];
+  before: Record<string, Knowledge>;
+  after?: Record<string, Partial<Knowledge>>;
+  proactive: boolean;
+  requires_impact_confirmation: boolean;
+  impact_confirmed: boolean;
+  differences: { document_id: string; action: string; diff: string }[];
+};
+export type Source = { id: string; title: string; kind: string; origin: string | null };
+export type SourceDetail = Source & {
+  version: number;
+  version_id: string;
+  status: string;
+  mime_type: string;
+  error?: string;
+  segments: {
+    id: string;
+    position: number;
+    page: number | null;
+    start: number;
+    end: number;
+    status: string;
+    method: string;
+    error?: string;
+  }[];
+};
+export type Evidence = {
+  id: string;
+  title: string;
+  text: string;
+  start: number;
+  end: number;
+  source_id?: string;
+  source_version_id?: string;
+  segment_id?: string;
+  knowledge_version_id?: string;
+  document_id?: string;
+  version?: number;
+  page?: number;
+  origin?: string;
+  citation: string;
+};
+export type ModelRecord = {
+  id: string;
+  run_id: string;
+  status: string;
+  purpose: string;
+  duration_ms: number | null;
+  first_token_ms: number | null;
+  usage: { total_tokens?: number } | null;
+  request: unknown;
+  response: unknown;
+  error: string | null;
+};

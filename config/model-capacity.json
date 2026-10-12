@@ -1,0 +1,15 @@
+{
+  "model": "deepseek-flash",
+  "endpoint_host": "api.deepseek.com",
+  "context_window": 1048576,
+  "max_output_tokens": 393216,
+  "working_window": 262144,
+  "output_reserve": 8192,
+  "framing_reserve": 4096,
+  "summary_fraction": 0.9,
+  "summary_trigger_basis": "input_tokens",
+  "compact_after_turn": true,
+  "token_counter": "deepseek_v41_tokenizer_v1",
+  "source": "GET /models, verified against https://api-docs.deepseek.com/api/list-models/; raw allowlisted result: artifacts/verification/optimization/model-profile-discovery.json",
+  "verified_at": "2026-10-09"
+}

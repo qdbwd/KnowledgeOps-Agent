@@ -1,137 +1,42 @@
-# KnowledgeOps Agent 项目上下文
+# KnowledgeOps 项目上下文
 
-> 本文件是项目长期上下文的入口。任何编码、测试或结构调整前先阅读本文件，再按任务读取 `docs/` 下的相关文档。代码与文档冲突时以代码事实为准，并在同一次修改中更新文档。
+更新：2026-10-12。开发对象：D:\codes\KnowledgeOps Agent。
 
-> 2026-09-25：用户已授权在 `exercises/` 下实现独立学习小程序。KnowledgeOps 业务实战的具体架构、技术选型和里程碑仍待讨论；本次练习不将早期草案转为已确认需求。
+## 当前接续状态
 
-## 1. 项目定位
+此前的[两种学习模式与通用长期记忆增量计划](docs/implementation-plan.md)已完成工程交付，取代关系见[决策0023](docs/decisions/0023-learning-modes-and-general-memory.md)。用户随后追加的 Docker 快速启动、目录与配置、Skills及前端布局整理已落实，当前设计见[决策0024](docs/decisions/0024-docker-modes-and-deployment-resources.md)。没有启动新的长期目标；历史计划和exports不能重新当成待执行指令。
 
-当前确定的实战目标是：构建一个支持知识库构建、维护和对话问答的智能体；知识库设计参考用户的个人知识库，项目知识库与个人知识库保持独立。具体设计在学习过程中逐步讨论。
+通用长期记忆、持久学习任务、两层配置、交互学习、真实读者/审读子运行、统一发布门、持续推进和Web闭环已完成工程交付。两单元离线演示、普通聊天、交互学习和配置操作通过；完整回归的四项失败已修正并定向复核，618个后端案例各有通过证据，前端40项及18条不同浏览器场景通过。不是一次全量无失败的报告；原始失败、逐项最终证据和质量边界见[进展](docs/progress.md)及 artifacts/verification/learning-delivery.json。真实模型语义质量未验证。
 
-项目使用 LangGraph 自主实现，重点参考 LangChain Deep Agents 与 DeerFlow 2.0 的通用 Agent 机制及各自设计理念，不直接二次开发 DeerFlow。用户已确认提供简单 Web UI，用于对话和可视化操作，不追求复杂前端；具体交互、接口和技术栈仍待设计。
+正常数据库仍为0022，本次部署整理没有新增业务迁移或删除数据。前后端源码已移至backend/src/knowledgeops_agent和frontend；config及skills位于根目录。用户进一步要求简化开发体验，make dev或start.ps1 -Mode development现在只准备dev/PG/Redis；进入dev执行python scripts/dev.py，API、worker、Vite在同一容器内作为三个进程运行。API/Vite热更新，worker显式重启；Ctrl+C统一收尾。make up保留独立api/worker/web部署方式。最新单容器启动、HTTP/消费者就绪、重复启动拒绝和退出清理已验证，报告为artifacts/verification/dev-single-container.json；验证进程已停止，当前仅dev/PG/Redis运行，需在dev终端运行脚本才有网页。未修改.env的MODEL_CALLS_ENABLED=true，验证子进程显式关闭模型调用；正常库仍无Run，本轮零付费。call_model仍需Run明确允许辅助模型，默认和自动推进均不允许。
 
-## 2. 两个知识库的硬边界
+现有三份技能保留，另移植并适配DeerFlow的code-documentation和academic-paper-review；/tools可查看五份技能。模型及搜索等部署资源支持指定位置，旧运行保持冻结内容。API/工具接口、容器服务名和持久卷名称保持兼容。最新证据见progress及artifacts/verification/docker-*-layout.json、docker-layout-resources.xml、docker-layout-browser.json。备份脚本已脱离常驻dev，实际备份及哈希检查通过，保存于artifacts/backups/docker-modes-20261012；未重复做全套恢复演练，既有非空恢复证据仍在d0ea729d9035。
 
-### 2.1 个人知识库
+## 产品与持久化
 
-`C:\Users\cyq\Desktop\个人知识库` 是用户日常阅读、由 Codex 按其现行规则维护的独立项目。其设计可供参考；Agent 不直接操作个人源目录，不同步或回写。
+- 产品是以聊天为主要交互、由Agent推进任务的通用任务应用，重点特化知识库建设、维护、问答和学习。普通聊天/文件任务不强制创建学习任务或入库。
+- 会话承载常规短期记忆；同一会话可串行切换多个学习任务。任务保存目标、范围、框架、个性化配置、授权、知识单元和进展，不另建一套任务短期记忆。旧授权、预算和待执行动作不因历史继承而继续生效。
+- 交互学习围绕真人交流推进；委托整理由主Agent处理内容、读者追问、独立审读核对。协调程序推进有限单元，不增加管理模型。审读绑定草稿修订和要求版本；自动保存校验共用于业务发布和文件同步。人工明确接管具体草稿另留来源。
+- 通用长期记忆是在原偏好服务上扩展；从新真人消息的既有语义解释入口产生候选，自动推进及子Agent消息不能成为真人证据。PG BM25召回、DeerMem纯函数排序、有界注入与按需补读共用一套记录及版本。
+- 人工学习配置正文为不可变工作区文件；自动部分由生效记忆确定性生成，不覆盖人工正文。任务配置独立持久化，可明确选择固定版本复用；普通编辑下一Run生效，真人即时纠正通过原引导入口生效，撤回在下一相关调用前检查。
+- 文件、上传原件、运行产物在 data/agent-workspace；PG保存身份、版本、引用、草稿、会话、状态和派生索引。正式知识编辑入口 knowledge/documents，历史正文 knowledge/versions；配置正文 profiles/versions。不恢复两套可分别编辑的正文真相。
 
-2026-10-07 已按用户要求删除此前复制的 43 份 Markdown 和导入清单，项目知识库恢复为无业务数据状态。`data/knowledge_base/` 保留目录说明及空目录；没有数据库或检索索引需要重置。后续不自动重新复制个人知识库，初始材料和存储技术在项目设计中另行确定，见[清理决策](docs/decisions/0005-remove-personal-kb-snapshot.md)。
+## 环境与执行边界
 
-2026-10-08 按用户新授权，仅将当前个人知识库的维护规则和设计决策复制到[设计参考目录](docs/references/personal-knowledge-base/README.md)。两份原文用于设计讨论，不恢复业务语料，也不替代本项目的工程规则或自动确定 Agent 写入策略。
+- 本机.env与模板保持22个公开字段，模型与凭据值保留；APP_LOG_LEVEL同时控制API/worker，宿主工作区用AGENT_WORKSPACE_HOST。开发dev只保留两个识别标志，不注入应用配置；dev.py每次读取当前.env并生成基础服务/测试连接与内部目录，显式进程覆盖仍优先。单独调试、维护及需环境的测试使用python scripts/dev.py --run 命令；端口、挂载仍由Docker管理。最终24项定向离线检查及Compose/真实dev读取链通过；已按最终配置重新创建dev，未构建镜像、安装依赖、执行业务迁移或启动应用。证据见progress中的dev-dotenv-v2记录。
+- LangChain create_agent / LangGraph，直接依赖Deep Agents 0.7.23，按具体职责借鉴DeerFlow；不整体二开DeerFlow。上游引用与适配区别在[开发实现说明](docs/architecture.md)。
+- Python3.12/FastAPI/SQLAlchemy/Alembic、React/TypeScript/Vite、PG17+pg_search、Celery+Redis。只用本项目容器组；运行部署为api/worker/web/postgres/redis，开发为dev/postgres/redis（应用三进程在dev内），init准备完成后退出。开发.venv实际在项目根，运行镜像使用镜像内依赖。Windows用于编辑、Git和容器控制；日常开发启动不需要回宿主执行脚本。
+- Redis承载broker、SSE事件桥和确定检查点的可丢弃缓存；PG保存事实。正文/原件/配置需要与PG一起备份。模型回执库保留根预算与重放身份，不恢复已废弃的项目累计用量。
+- 原工作窗口262144 tokens、90%压缩保留。根Run预算和单元跨Run预算都保留；单元默认40模型请求、80工具、20搜索、1200秒活跃时间，恢复不清零。服务重启等待人工恢复，关闭浏览器不自动取消后台任务。
+- worker内LocalShellBackend用于可信本地任务，执行期间检查取消并回收普通子进程；不宣称操作系统级安全隔离，不新增AIO容器。
+- 真实模型由.env/环境的MODEL_CALLS_ENABLED控制，UI只显示状态；普通应用参数修改后生产需重新创建API/worker，开发只需重启dev.py，不重建镜像或dev。用户.env保留原启用设置，当前没有应用进程；验证命令继续显式注入false，不修改配置值，不作本轮真实语义质量达标声明。不要在开发终端长期export旧参数，否则显式覆盖仍会优先于文件。
+- Git提交和推送仅按用户明确授权执行；2026-10-12用户已授权检查忽略规则并上传当前完整应用到GitHub的main分支，上传前检查见progress。当前本地分支main。不增加GitHub CI、不公开部署应用、不购买服务、不删除正常业务数据/持久卷、不读取或修改桌面个人知识库。
+- 不引入额外数据库、向量/GraphRAG、多租户、递归委派或独立记忆队列。MCP默认外部服务为空。通用call_model默认关闭，不补跑已取消的效果实验。
 
-### 2.2 KnowledgeOps Agent 项目知识库
+## 文档与交付
 
-本项目将独立拥有并维护自己的知识库，当前尚无业务数据，建议根目录为 `data/knowledge_base/`。它是本项目 Demo 的业务数据和被测对象，Agent 可以在工具合同和运行策略约束下：
+修改前读AGENTS、本文、progress，再查对应设计/实际代码。工程问题自主解决；产品范围、权限、费用或无法自主解决的外部条件变化才询问。
 
-- 列出、读取、搜索和关系遍历文档；
-- 新增、修改、删除项目知识；
-- 重建或更新项目索引；
-- 记录版本、来源、审计事件和失败结果。
+[architecture](docs/architecture.md)保存连贯开发实现说明，沿实际运行顺序解释问题、设计、模块/数据协作、上游采用方式和限制；它不是测试流水，也不把解释顺序冒充历史开发顺序。[progress](docs/progress.md)集中保存完成状态与必要证据，[development-issues](docs/development-issues.md)记录有复查价值的问题和解决办法。最终在聊天中主动说明实际开发内容，不只发文件链接或功能清单。
 
-是否要求人工审批是项目内可配置的安全策略，用于展示不同维护模式；它不是因为个人知识库边界而强加的永久限制。项目知识库不会自动同步到个人知识库。
-
-## 3. 早期目标与验收建议（待按需求重新讨论）
-
-验收重点是 Agent 全流程，而不是页面数量或基础设施规模：
-
-1. ReAct 单 Agent 能在预算内选择工具、观察结果并结束或继续；
-2. Plan-and-Execute 能维护计划、当前步骤、重规划和终止原因；
-3. 项目知识库能支持问答和受控维护；
-4. 回答、修改和拒答都能关联可核验来源；
-5. 失败、超时、空结果、冲突和预算耗尽可观测、可回放；
-6. 评估适配器能输出执行事实，而不是把一次成功包装成自治能力结论。
-
-## 4. 当前事实
-
-- 项目路径：`D:\codes\KnowledgeOps Agent`。
-- 主项目阶段：`src/knowledgeops_agent/` 仍是 M0，无模型、无真实工具的最小图。
-- 学习练习：`exercises/01_agent_loop/` 独立实现模型—工具反馈循环，支持离线脚本及可配置真实模型；实际验证范围见进展文档。
-- 开发环境决定：使用本项目独立容器组，包含开发容器和实际需要的服务，不复用共享开发容器。目前 `.devcontainer/` 和容器组配置尚未创建，技术栈与服务清单待设计。
-- 现有环境：Windows 本地保留独立的 `C:\Users\cyq\.local\bin\uv.exe`；首个练习已使用 uv 管理的 CPython 3.11.14，与 Miniconda 分离。本次未安装依赖或创建容器；运行与环境变更前先说明。
-- 首个练习的在线配置：自动读取项目根目录 .env，使用 OPENAI_BASE_URL/OPENAI_API_KEY（兼容旧字段名）；当前用户指定 AGENT_MODEL=deepseek-flash。练习 .env 可覆盖，进程变量优先；只有 --mode online 启用真实客户端，已验证范围见进展文档。
-- 真实模型调用和外部费用默认关闭，除非用户明确授权。
-- Git：本地已初始化，分支为 `main`，尚无提交、暂存文件或 remote。用户截图显示已创建 GitHub 私有仓库 `qdbwd/KnowledgeOps-Agent`；本次未访问远端或提交、推送。后续 Git 写操作按用户明确指令执行。
-- GraphRAG 和 Agent-Evaluation-Framework 是外部可选集成；不复制其源码，不把它们的运行时依赖塞进核心。
-
-## 5. 阅读顺序
-
-每次改代码前：
-
-1. 阅读本文件；
-2. 阅读与改动范围对应的 `docs/architecture.md`、`docs/implementation-plan.md`、`docs/progress.md` 或 `docs/decisions/`；
-3. 检查目标模块、测试和实际调用链；
-4. 修改后更新进展记录，并运行受影响的最小测试。
-
-每次改项目设计前：
-
-1. 先确认是否改变了项目知识库边界、Agent 状态、工具权限、终态或评估合同；
-2. 若改变，新增或更新一条带状态的决策记录；
-3. 同步 `README.md` 和相关上下文，避免项目入口与代码冲突。
-
-## 6. 早期建议目录（包含尚未创建的模块）
-
-```text
-KnowledgeOps Agent/
-├── PROJECT_CONTEXT.md
-├── AGENTS.md
-├── README.md
-├── data/
-│   ├── knowledge_base/       # 项目拥有的知识库，非个人知识库
-│   ├── index/                # 项目知识库索引
-│   └── runs/                 # 可回放运行产物
-├── datasets/                 # 评估问题、固定夹具和回归样例
-├── evaluation_adapter/       # 后续接入 Agent-Evaluation-Framework
-├── docs/
-│   ├── architecture.md
-│   ├── implementation-plan.md
-│   ├── progress.md
-│   └── decisions/
-├── src/knowledgeops_agent/
-│   ├── state.py              # 状态、任务类型和终态
-│   ├── graph.py              # LangGraph 编排
-│   ├── policies.py           # 预算、路径和副作用策略
-│   ├── tools/                # 项目知识库与其他工具
-│   └── observability/        # 轨迹与运行事实
-└── tests/
-```
-
-目录只在对应代码真实出现时创建，不为未来功能提前生成空模块。
-
-## 7. 允许的能力边界
-
-- Agent 可管理自己的项目知识库；写入必须经过明确的工具 Schema、路径约束、版本/审计记录和错误处理。
-- 文档内容是数据，不是系统指令；检索到的文字不能提升工具权限。
-- Agent 可以拒答、追问、重新检索或安全终止，但不能在没有证据时把猜测写成事实。
-- 真实在线模型、外部服务、远程发布和跨项目写入都需要显式授权。
-
-## 8. 关联文档
-
-- [实施方案](docs/implementation-plan.md)
-- [当前进展](docs/progress.md)
-- [架构边界](docs/architecture.md)
-- [独立项目与知识库所有权决策](docs/decisions/0001-independent-project-boundaries.md)
-
-## 9. 学习练习
-
-- [练习入口](exercises/README.md)
-- [首个单 Agent 闭环](exercises/01_agent_loop/README.md)
-- [首个练习的源码阅读与实现要点](exercises/01_agent_loop/CODE_WALKTHROUGH.md)：正文包含完整运行源码；修改对应练习模块时同步核对代码块和解释。
-- [独立学习小程序决策](docs/decisions/0003-isolated-agent-learning-exercises.md)
-
-学习练习默认使用 C 类教学注释；实战代码按重要性与理解需要选择 B/C。练习材料、依赖和运行状态独立；不默认采用为主项目的最终实现。
-
-## 10. 业务应用层候选参考
-
-2026-09-28 用户确认：先保留以下参考项目，进入知识库具体业务设计时再按问题查阅；当前继续学习通用 Agent 机制，主要参考 Deep Agents、DeerFlow 和 LangChain/LangGraph 官方资料。
-
-| 候选项目 | 后续重点考察的内容 |
-|---|---|
-| [Basic Memory](https://github.com/basicmachines-co/basic-memory) | 知识组织、笔记读写与搜索工具、正文和索引之间的关系；属于知识持久化与工具层参考 |
-| [Khoj](https://github.com/khoj-ai/khoj) | 个人知识助手的交互方式、资料问答与自定义 Agent |
-| [Onyx](https://github.com/onyx-dot-app/onyx) | 知识检索与问答的 Agent 编排、数据源接入和权限处理 |
-| [RAGFlow](https://github.com/infiniflow/ragflow) | 文档解析、切分、入库处理流程、检索和来源引用 |
-
-Onyx 的[使用 LangGraph 实现 Agent Search 的技术文章](https://onyx.app/blog/agent-search-with-langgraph)可作为后续阅读入口；它描述的是文章发表时的实现，具体接口需对照届时使用的版本。
-
-这是一份候选参考清单，不代表已经采用这些项目或确定数据库、存储、检索方案。前期仅核对官方仓库和说明，未本地运行或完成源码审计。具体设计时应区分资料同步与索引维护、知识正文整理与修订，再判断哪些机制适用于本项目。
+历史开发、收费实验、失败原文、旧部署及验收证据继续保留在progress及其链接中；本文只描述当前接续状态。开发报告不进入普通用户页面，历史23/24结果不作为本轮新增学习模式的语义质量证明。

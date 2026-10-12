@@ -3,12 +3,32 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+coverage/
 .mypy_cache/
 .ruff_cache/
 .env
 .env.*
 !.env.example
+# Local credentials, logs and database exports must not become public source.
+.envrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.log
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+*.db-wal
+*.db-shm
+*.dump
+*.sql.gz
 dist/
 build/
 *.egg-info/
@@ -18,4 +38,17 @@ build/
 Thumbs.db
 artifacts/
 runs/
-
+node_modules/
+frontend/playwright-report/
+frontend/test-results/
+.superpowers/
+.worktrees/
+.local/
+*.tsbuildinfo
+# Keep the workspace guide, never its uploads, generated knowledge or runtime data.
+/data/*
+!/data/agent-workspace/
+/data/agent-workspace/*
+!data/agent-workspace/README.md
+# Synthetic PDF fixtures are generated locally; keep their generator in Git.
+/evaluation/materials/*.pdf

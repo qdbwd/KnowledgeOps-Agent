@@ -34,4 +34,3 @@ def test_path_check_uses_resolved_containment(tmp_path: Path) -> None:
 
     assert is_within_directory(root / "topic.md", root) is True
     assert is_within_directory(tmp_path / "outside.md", root) is False
-

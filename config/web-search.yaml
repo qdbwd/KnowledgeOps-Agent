@@ -1,0 +1,13 @@
+# 联网搜索配置；新根任务首次执行时冻结，子任务和恢复继续使用同一快照。
+# YAML随项目交付，不需要改代码；无需搜索API Key。工具启停仍在统一工具管理中。
+version: 1
+# 可以使用逗号字符串或列表。auto/all交给DDGS选择，但不保证更好的结果。
+backend: [brave, duckduckgo, startpage, yahoo]
+# auto：中文查询cn-zh，其他wt-wt；也可明确设为us-en、cn-zh等。
+region: auto
+# 若改为on或off，请写成"on"/"off"，避免YAML把它们解析为布尔值。
+safesearch: moderate
+# Agent不传count时的默认条数；每次仍限定1至8条。
+max_results: 5
+timeout_seconds: 15
+# 时间范围由Agent按每次任务指定day/week/month/year；不指定时不限制日期。

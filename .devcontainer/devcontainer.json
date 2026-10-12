@@ -1,0 +1,14 @@
+{
+  "name": "KnowledgeOps",
+  "dockerComposeFile": ["../compose.yaml", "../compose.dev.yaml"],
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "runServices": ["dev", "postgres", "redis"],
+  "shutdownAction": "none",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "charliermarsh.ruff"],
+      "settings": {"python.defaultInterpreterPath": "/workspace/.venv/bin/python"}
+    }
+  }
+}

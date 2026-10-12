@@ -1,0 +1,115 @@
+name: knowledgeops-agent
+
+# 默认为构建后运行模式。源码热更新与开发工具在 compose.dev.yaml 中显式启用。
+x-backend: &backend
+  image: knowledgeops-agent:local
+  build:
+    context: .
+    target: application
+  working_dir: /workspace
+  env_file: [.env]
+  environment: &backend-environment
+    DATABASE_URL: postgresql+psycopg://knowledgeops:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/knowledgeops
+    ACCOUNTING_DATABASE_URL: postgresql+psycopg://knowledgeops:${POSTGRES_PASSWORD}@postgres:5432/knowledgeops_accounting
+    # 内部路径属于挂载/备份合同；用户通过 AGENT_WORKSPACE_HOST 配置宿主位置。
+    WORKSPACE_ROOT: /data/agent-workspace
+    SOURCE_STORAGE_ROOT: /data/agent-workspace/uploads/originals
+    CELERY_BROKER_URL: redis://redis:6379/0
+    RUNTIME_REDIS_URL: ${RUNTIME_REDIS_URL-redis://redis:6379/1}
+    MODEL_CALLS_ENABLED: ${MODEL_CALLS_ENABLED:-false}
+  volumes:
+    - ${AGENT_WORKSPACE_HOST:-./data/agent-workspace}:/data/agent-workspace
+    - ${CONFIG_HOST_DIRECTORY:-./config}:/workspace/config:ro
+    - ${SKILLS_HOST_DIRECTORY:-./skills}:/workspace/skills:ro
+  init: true
+  stop_grace_period: 30s
+
+services:
+  init:
+    <<: *backend
+    command: ["sh", "scripts/bootstrap.sh", "production"]
+    environment:
+      <<: *backend-environment
+      MODEL_CALLS_ENABLED: "false"
+    volumes:
+      - source-data:/data/sources:ro
+      - ${AGENT_WORKSPACE_HOST:-./data/agent-workspace}:/data/agent-workspace
+      - ${CONFIG_HOST_DIRECTORY:-./config}:/workspace/config:ro
+      - ${SKILLS_HOST_DIRECTORY:-./skills}:/workspace/skills:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  api:
+    <<: *backend
+    command: ["sh", "-c", "exec uvicorn knowledgeops_agent.api:app --host 0.0.0.0 --port 8000 --log-level ${APP_LOG_LEVEL:-info} --timeout-graceful-shutdown 10"]
+    depends_on:
+      init: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 20
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "knowledgeops_agent.worker"]
+    depends_on:
+      init: {condition: service_completed_successfully}
+
+  web:
+    image: knowledgeops-agent-web:local
+    build: {context: ./frontend, target: production}
+    ports:
+      - "127.0.0.1:${KNOWLEDGEOPS_PORT:-8787}:80"
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  # 编辑器入口保留同一服务名；只由开发配置/显式 profile 启用。
+  dev:
+    <<: *backend
+    profiles: [development]
+    command: ["sleep", "infinity"]
+    depends_on:
+      init: {condition: service_completed_successfully}
+
+  postgres:
+    image: paradedb/paradedb:0.26.1-pg17@sha256:c1c147499c6649739d7977f1e47db149578c894f35249953acdd7680ccbae75b
+    command: ["postgres", "-c", "shared_preload_libraries=pg_search,pg_cron,pg_stat_statements"]
+    environment:
+      PDB_TUNE: "false"
+      POSTGRES_USER: knowledgeops
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: knowledgeops
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres-init.sql:/docker-entrypoint-initdb.d/10-project-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U knowledgeops -d knowledgeops"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres-data:
+  redis-data:
+  source-data:
+  uv-cache:
+  node-modules:
+  browser-cache:
