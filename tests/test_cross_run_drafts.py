@@ -79,13 +79,13 @@ def test_revised_cross_run_draft_is_shown_and_next_confirmation_targets_that_rev
 
     from langchain_core.messages import AIMessage
 
-    from knowledgeops_agent.worker import _outcome
+    from knowledgeops_agent.app.runs.worker import _outcome
 
     jobs, knowledge, _, _, new, draft = drafts(runtime_services)
     knowledge.edit_draft(
         draft["id"], draft["operations"], expected_revision=1, actor_run_id=new["id"]
     )
-    context = SimpleNamespace(knowledge=knowledge, jobs=jobs, root_id=new["id"])
+    context = SimpleNamespace(knowledge=knowledge, jobs=jobs, root_id=new["id"], run_id=new["id"])
     outcome = _outcome(context, {"messages": [AIMessage("已修订，等待你的选择")]})
     assert outcome["draft_ids"] == [draft["id"]]
     finished = jobs.finish(new["id"], "worker", outcome=outcome)

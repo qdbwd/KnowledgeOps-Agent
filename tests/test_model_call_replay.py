@@ -4,7 +4,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from test_model_gateway import ledger as _ledger
 
-from knowledgeops_agent.model_gateway import ModelGateway
+from knowledgeops_agent.harness.models.gateway import ModelGateway
 
 ledger = _ledger
 
@@ -33,7 +33,7 @@ def test_successful_recovery_reuses_result_but_new_call_id_is_charged(ledger):
 
 
 def test_changed_input_same_id_is_rejected_before_a_new_request(ledger):
-    from knowledgeops_agent.model_gateway import ModelReplayConflict
+    from knowledgeops_agent.harness.models.gateway import ModelReplayConflict
 
     provider = Provider()
     gateway = ModelGateway(ledger, enabled=True, client=provider)
@@ -44,7 +44,7 @@ def test_changed_input_same_id_is_rejected_before_a_new_request(ledger):
 
 
 def test_unknown_attempt_stays_charged_and_is_not_automatically_retried(ledger):
-    from knowledgeops_agent.model_gateway import ModelCallUncertain
+    from knowledgeops_agent.harness.models.gateway import ModelCallUncertain
 
     class CrashProvider(Provider):
         def invoke(self, messages, **kwargs):

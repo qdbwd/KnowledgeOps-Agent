@@ -32,8 +32,8 @@ def test_http_guidance_targets_exact_running_generation(client, services):
 
 
 def test_old_checkpoint_tool_decision_is_rejected_after_guidance_applied(runtime_services):
-    from knowledgeops_agent.guidance import apply_decision
-    from knowledgeops_agent.jobs import SteeringPending
+    from knowledgeops_agent.app.runs.guidance import apply_decision
+    from knowledgeops_agent.app.runs.service import SteeringPending
 
     _, context, run = setup_run(runtime_services)
     queued = context.jobs.enqueue(

@@ -18,7 +18,7 @@ def bundle():
 
 
 def test_skill_catalog_is_loaded_from_snapshot_and_only_read_tool_is_exposed(bundle):
-    module = importlib.import_module("knowledgeops_agent.skill_resources")
+    module = importlib.import_module("knowledgeops_agent.harness.skills.resources")
     backend, middlewares = module.build_skill_middleware(bundle)
     tools = [tool for middleware in middlewares for tool in getattr(middleware, "tools", [])]
     assert [tool.name for tool in tools] == ["read_file"]
@@ -66,7 +66,7 @@ def test_skill_catalog_is_loaded_from_snapshot_and_only_read_tool_is_exposed(bun
 
 
 def test_frozen_backend_does_not_follow_mutated_source_or_read_other_paths(bundle):
-    module = importlib.import_module("knowledgeops_agent.skill_resources")
+    module = importlib.import_module("knowledgeops_agent.harness.skills.resources")
     backend, _ = module.build_skill_middleware(bundle)
     bundle["/skills/learning/examples.md"] = "被修改的源文件"
     assert (
@@ -80,7 +80,7 @@ def test_frozen_backend_does_not_follow_mutated_source_or_read_other_paths(bundl
 
 
 def test_resource_hash_changes_only_when_content_changes(bundle):
-    module = importlib.import_module("knowledgeops_agent.skill_resources")
+    module = importlib.import_module("knowledgeops_agent.harness.skills.resources")
     first, _ = module.build_skill_middleware(bundle)
     second, _ = module.build_skill_middleware(dict(reversed(list(bundle.items()))))
     assert first.content_hash == second.content_hash

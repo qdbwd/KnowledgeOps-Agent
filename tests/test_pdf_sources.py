@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfWriter
 from reportlab.pdfgen.canvas import Canvas
 
-from knowledgeops_agent.sources import SourceService
+from knowledgeops_agent.sources.service import SourceService
 
 
 def text_pdf() -> bytes:
@@ -49,7 +49,7 @@ def scan_pdf(language: str) -> bytes:
 def test_real_pdf_pages_are_located_and_ocr_is_used_only_when_needed(
     business_sessions, tmp_path, kind
 ):
-    parser = importlib.import_module("knowledgeops_agent.pdf_sources")
+    parser = importlib.import_module("knowledgeops_agent.sources.pdf")
     sources = SourceService(business_sessions, tmp_path)
     if kind == "text":
         data = text_pdf()
@@ -89,7 +89,7 @@ def test_real_pdf_pages_are_located_and_ocr_is_used_only_when_needed(
 
 
 def test_corrupt_pdf_is_recorded_as_failed_not_as_empty_success(business_sessions, tmp_path):
-    parser = importlib.import_module("knowledgeops_agent.pdf_sources")
+    parser = importlib.import_module("knowledgeops_agent.sources.pdf")
     sources = SourceService(business_sessions, tmp_path)
     uploaded = sources.register_pdf("损坏文件", b"%PDF-corrupt data")
     with pytest.raises(ValueError, match="PDF"):
@@ -102,7 +102,7 @@ def test_corrupt_pdf_is_recorded_as_failed_not_as_empty_success(business_session
 def test_pdf_resume_preserves_completed_page_and_failed_page_cannot_be_cited(
     business_sessions, tmp_path, monkeypatch
 ):
-    parser = importlib.import_module("knowledgeops_agent.pdf_sources")
+    parser = importlib.import_module("knowledgeops_agent.sources.pdf")
     sources = SourceService(business_sessions, tmp_path)
     writer = PdfWriter()
     writer.append(io.BytesIO(text_pdf()))

@@ -23,7 +23,7 @@ from evaluation.optimization import (
     auxiliary_policy,
     schedule,
 )
-from knowledgeops_agent.jobs import RunStopped
+from knowledgeops_agent.app.runs.service import RunStopped
 
 runtime_services = _runtime_services
 

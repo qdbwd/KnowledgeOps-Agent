@@ -11,14 +11,14 @@ from uuid import uuid4
 
 from sqlalchemy import text
 
-from knowledgeops_agent.jobs import RunService
-from knowledgeops_agent.task_queue import TASK_NAME, create_queue
+from knowledgeops_agent.app.runs.queue import TASK_NAME, create_queue
+from knowledgeops_agent.app.runs.service import RunService
 
 
 def test_worker_entrypoint_uses_configured_log_level(tmp_path, monkeypatch):
     """在入口接缝替换服务与消费者，确认文件配置传到 Celery，不连接真实队列。"""
-    from knowledgeops_agent import worker
-    from knowledgeops_agent.config import Settings
+    from knowledgeops_agent.app.runs import worker as worker
+    from knowledgeops_agent.core.config import Settings
 
     path = tmp_path / ".env"
     path.write_text("APP_LOG_LEVEL=error\nMODEL_CALLS_ENABLED=false\n", encoding="utf-8")

@@ -15,7 +15,8 @@ test('wide chat is centred in the space beside the sidebar; mobile retains navig
   await page.screenshot({ path: '../artifacts/verification/layout-wide.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.new-chat')).toBeVisible();
-  await expect(page.locator('.sidebar-bottom')).toBeVisible();
+  await expect(page.locator('.sidebar-bottom')).toHaveCount(0);
+  await expect(page.locator('.composer-model')).toBeVisible();
   await page.locator('.mobile-conversations summary').click();
   await expect(page.locator('.mobile-conversations').getByRole('link').first()).toBeVisible();
   await page.locator('.mobile-conversations summary').click();
@@ -25,11 +26,11 @@ test('wide chat is centred in the space beside the sidebar; mobile retains navig
 
 test('skills are discoverable from the capabilities page without model calls', async ({ page }) => {
   await page.goto('/tools');
-  await page.getByText('已发现的任务技能（5）', { exact: true }).click();
+  await page.getByText(/^已发现的任务技能（\d+）$/).click();
   await expect(
-    page.getByRole('heading', { name: 'code-documentation', exact: true }),
+    page.getByRole('checkbox', { name: '启用技能 code-documentation', exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole('heading', { name: 'academic-paper-review', exact: true }),
+    page.getByRole('checkbox', { name: '启用技能 academic-paper-review', exact: true }),
   ).toBeVisible();
 });

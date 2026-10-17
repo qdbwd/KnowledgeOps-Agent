@@ -3,12 +3,13 @@
 import json
 
 import pytest
+from fixtures.subagent_dispatch import drive_graph
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 
-from knowledgeops_agent.tool_policy import ToolPolicyService
+from knowledgeops_agent.harness.tools.policy import ToolPolicyService
 
 runtime_services = _runtime_services
 
@@ -160,7 +161,7 @@ def test_pending_checkpoint_tool_is_denied_after_rebuild(runtime_services):
 
 def test_main_selection_and_child_groups_share_global_ceiling(runtime_services):
     """主Agent可以只委派；子角色依分组读取，但仍不能获得全局关闭的工具。"""
-    from knowledgeops_agent.subagent_registry import SubagentRegistry
+    from knowledgeops_agent.harness.subagents.registry import SubagentRegistry
 
     module, context, run = setup_run(runtime_services)
     SubagentRegistry(context.jobs.sessions).create(
@@ -191,6 +192,7 @@ def test_main_selection_and_child_groups_share_global_ceiling(runtime_services):
         def stream(self, messages, **kwargs):
             is_child = "GROUP-READER" in str(messages[0].content)
             observations = [m for m in messages if isinstance(m, ToolMessage)]
+            # 本用例保留零版本全局许可，新目录成员不能自动扩权。
             assert self.names == ({"list_materials", "read_source"} if is_child else {"task"})
             if observations:
                 if is_child:
@@ -221,18 +223,14 @@ def test_main_selection_and_child_groups_share_global_ceiling(runtime_services):
 
     context.gateway.client = Provider()
     graph = module.build_agent(context, checkpointer=InMemorySaver())
-    graph.invoke(
-        {"messages": module.initial_messages(context)},
-        {"configurable": {"thread_id": run["id"]}},
-        context=context,
-    )
+    drive_graph(context, graph, {"messages": module.initial_messages(context)})
     children = [row for row in context.jobs.list_runs(root_id=run["id"]) if row["parent_id"]]
     assert len(children) == 1 and children[0]["status"] == "completed"
 
 
 def test_revoke_during_context_processing_is_checked_before_provider(runtime_services, monkeypatch):
     """前置筛选后仍可能进行摘要；发送请求前的最后检查不能漏掉此期间的撤回。"""
-    from knowledgeops_agent.context_management import ContextMiddleware
+    from knowledgeops_agent.harness.context.management import ContextMiddleware
 
     module, context, run = setup_run(runtime_services)
     original = ContextMiddleware.wrap_model_call
@@ -266,7 +264,7 @@ def test_revoke_during_context_processing_is_checked_before_provider(runtime_ser
 def test_mcp_revoke_uses_existing_registry_without_second_permission_store(runtime_services):
     from test_mcp_business import configured
 
-    from knowledgeops_agent.mcp_registry import MCPRegistry
+    from knowledgeops_agent.harness.mcp.registry import MCPRegistry
 
     module, context, run = setup_run(runtime_services)
     binding = configured(context)
@@ -294,8 +292,8 @@ def test_mcp_revoke_uses_existing_registry_without_second_permission_store(runti
 
 
 def test_legacy_resource_snapshot_uses_baseline_not_latest_grants(runtime_services):
-    from knowledgeops_agent.db import RunResourceSnapshot
-    from knowledgeops_agent.run_resources import content_hash
+    from knowledgeops_agent.harness.runtime.resources import content_hash
+    from knowledgeops_agent.persistence.models import RunResourceSnapshot
 
     module, context, _ = setup_run(runtime_services)
     module.build_agent(context, checkpointer=InMemorySaver())

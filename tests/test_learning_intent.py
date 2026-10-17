@@ -5,12 +5,12 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from knowledgeops_agent.db import LearningTask, OperationReceipt, Run
-from knowledgeops_agent.file_store import FileStore
-from knowledgeops_agent.jobs import RunService
-from knowledgeops_agent.learning_intent import apply_candidates, current_learning
-from knowledgeops_agent.learning_profiles import LearningProfileService
-from knowledgeops_agent.learning_tasks import LearningTaskService
+from knowledgeops_agent.app.runs.service import RunService
+from knowledgeops_agent.learning.intent import apply_candidates, current_learning
+from knowledgeops_agent.learning.profiles import LearningProfileService
+from knowledgeops_agent.learning.tasks import LearningTaskService
+from knowledgeops_agent.persistence.files import FileStore
+from knowledgeops_agent.persistence.models import LearningTask, OperationReceipt, Run
 
 
 @pytest.fixture

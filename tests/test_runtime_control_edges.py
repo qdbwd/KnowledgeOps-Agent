@@ -22,8 +22,8 @@ def test_malformed_origin_is_rejected_without_server_exception(client):
 
 
 def test_a_previously_read_skill_cannot_keep_influencing_model_after_revocation(runtime_services):
-    from knowledgeops_agent.db import ResourceRevocation
-    from knowledgeops_agent.run_resources import ResourceService
+    from knowledgeops_agent.harness.runtime.resources import ResourceService
+    from knowledgeops_agent.persistence.models import ResourceRevocation
 
     _, context, _ = setup_run(runtime_services)
     service = ResourceService(context.jobs.sessions)
@@ -49,9 +49,9 @@ def test_a_previously_read_skill_cannot_keep_influencing_model_after_revocation(
 def test_latest_explicit_guidance_length_replaces_original_task_limit(
     runtime_services, guidance_text
 ):
-    from knowledgeops_agent.db import Run
-    from knowledgeops_agent.guidance import apply_decision
-    from knowledgeops_agent.response_validation import FinalAnswerValidation
+    from knowledgeops_agent.app.runs.guidance import apply_decision
+    from knowledgeops_agent.harness.models.validation import FinalAnswerValidation
+    from knowledgeops_agent.persistence.models import Run
 
     _, context, run = setup_run(runtime_services)
     with context.jobs.sessions.begin() as session:

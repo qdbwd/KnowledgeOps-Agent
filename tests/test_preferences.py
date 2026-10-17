@@ -11,7 +11,7 @@ runtime_services = _runtime_services
 
 def prepare(services):
     _, context, run = setup_run(services, task="以后请用中文回答，多给技术例子并先解释全部背景。")
-    module = importlib.import_module("knowledgeops_agent.preferences")
+    module = importlib.import_module("knowledgeops_agent.memory.service")
     service = module.PreferenceService(context.jobs.sessions)
     return context, run, service
 

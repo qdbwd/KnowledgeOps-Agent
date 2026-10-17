@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 
 import pytest
+from fixtures.subagent_dispatch import drive_delegation, drive_graph
 from langchain_core.messages import AIMessageChunk, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from test_runtime import runtime_services as _runtime_services
@@ -13,7 +14,7 @@ runtime_services = _runtime_services
 
 
 def role(context, name="reader", **values):
-    from knowledgeops_agent.subagent_registry import SubagentRegistry
+    from knowledgeops_agent.harness.subagents.registry import SubagentRegistry
 
     return SubagentRegistry(context.jobs.sessions).create(
         name=name,
@@ -48,10 +49,10 @@ def test_new_root_reuses_upstream_task_tool(runtime_services):
 
 
 def test_configured_role_uses_frozen_tools_skills_and_replays_child(runtime_services):
-    from knowledgeops_agent.delegation import delegate_one
+    from knowledgeops_agent.harness.subagents.delegation import delegate_one
 
     module, context, run = setup_run(runtime_services, task="主对话隐私标识")
-    from knowledgeops_agent.db import Run
+    from knowledgeops_agent.persistence.models import Run
 
     with context.jobs.sessions.begin() as session:
         row = session.get(Run, context.root_id)
@@ -110,24 +111,24 @@ def test_configured_role_uses_frozen_tools_skills_and_replays_child(runtime_serv
 
     context.gateway.client = Provider()
     graph = module.build_agent(context, checkpointer=InMemorySaver())
-    result = graph.invoke(
+    result = drive_graph(
+        context, graph,
         {"messages": [HumanMessage(run["task"])]},
-        {"configurable": {"thread_id": run["id"]}},
-        context=context,
     )
     assert result["messages"][-1].content == "已收到子任务报告。"
     children = [r for r in context.jobs.list_runs(root_id=run["id"]) if r["parent_id"]]
     assert len(children) == 1
     assert children[0]["input"]["subagent"] == configured
     before = len(context.gateway.ledger.records())
-    replay = delegate_one(context, configured, f"读取{segment}并报告", "configured-task")
+    replay = drive_delegation(context,
+        lambda: delegate_one(context, configured, f"读取{segment}并报告", "configured-task"), identity="configured-replay")
     assert replay["run_id"] == children[0]["id"]
     assert len(context.gateway.ledger.records()) == before
 
 
 def test_role_edits_do_not_rewrite_frozen_definition_and_disable_revokes(runtime_services):
-    from knowledgeops_agent.delegation import delegate_one
-    from knowledgeops_agent.subagent_registry import SubagentRegistry
+    from knowledgeops_agent.harness.subagents.delegation import delegate_one
+    from knowledgeops_agent.harness.subagents.registry import SubagentRegistry
 
     module, context, _ = setup_run(runtime_services)
     original = role(context)
@@ -195,10 +196,9 @@ def test_parallel_upstream_task_call_ids_remain_distinct(runtime_services):
 
     context.gateway.client = Provider()
     graph = module.build_agent(context, checkpointer=InMemorySaver())
-    graph.invoke(
+    drive_graph(
+        context, graph,
         {"messages": [HumanMessage(run["task"])]},
-        {"configurable": {"thread_id": run["id"]}},
-        context=context,
     )
     children = [r for r in context.jobs.list_runs(root_id=run["id"]) if r["parent_id"]]
     assert len(children) == 2
@@ -208,8 +208,8 @@ def test_parallel_upstream_task_call_ids_remain_distinct(runtime_services):
 
 
 def test_child_revocation_stops_before_next_tool_or_model(runtime_services):
-    from knowledgeops_agent.delegation import delegate_one
-    from knowledgeops_agent.subagent_registry import SubagentRegistry
+    from knowledgeops_agent.harness.subagents.delegation import delegate_one
+    from knowledgeops_agent.harness.subagents.registry import SubagentRegistry
 
     module, context, _ = setup_run(runtime_services)
     configured = role(context)
@@ -233,7 +233,8 @@ def test_child_revocation_stops_before_next_tool_or_model(runtime_services):
 
     context.gateway.client = Provider()
     module.build_agent(context, checkpointer=InMemorySaver())
-    result = delegate_one(context, configured, "核对资料", "revoked-during-run")
+    result = drive_delegation(context,
+        lambda: delegate_one(context, configured, "核对资料", "revoked-during-run"), identity="revoked")
     assert result["status"] == "failed"
     assert len(context.gateway.ledger.records()) == 1
     events = context.jobs.events(result["run_id"])
@@ -241,7 +242,7 @@ def test_child_revocation_stops_before_next_tool_or_model(runtime_services):
 
 
 def test_new_role_not_in_old_snapshot_and_child_cannot_delegate(runtime_services):
-    from knowledgeops_agent.delegation import delegate_one
+    from knowledgeops_agent.harness.subagents.delegation import delegate_one
 
     module, context, _ = setup_run(runtime_services)
     module.build_agent(context, checkpointer=InMemorySaver())
@@ -249,14 +250,14 @@ def test_new_role_not_in_old_snapshot_and_child_cannot_delegate(runtime_services
     with pytest.raises(PermissionError, match="冻结"):
         delegate_one(context, added_later, "晚加入的角色", "too-late")
     child = context.jobs.start_child(context.run_id, "旧研究者", operation_key="legacy-child")
-    with pytest.raises(PermissionError, match="recursive"):
+    with pytest.raises(PermissionError, match="递归"):
         delegate_one(replace(context, run_id=child["id"]), added_later, "递归", "recursive")
     assert len(context.gateway.ledger.records()) == 0
 
 
 def test_legacy_snapshot_keeps_legacy_tool_only(runtime_services):
-    from knowledgeops_agent.db import RunResourceSnapshot
-    from knowledgeops_agent.run_resources import content_hash
+    from knowledgeops_agent.harness.runtime.resources import content_hash
+    from knowledgeops_agent.persistence.models import RunResourceSnapshot
 
     module, context, _ = setup_run(runtime_services)
     module.build_agent(context, checkpointer=InMemorySaver())

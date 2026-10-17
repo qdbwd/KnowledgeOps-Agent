@@ -9,8 +9,8 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine
 
-from knowledgeops_agent.config import get_settings
-from knowledgeops_agent.db import Base
+from knowledgeops_agent.core.config import get_settings
+from knowledgeops_agent.persistence.models import Base
 
 config = context.config
 if config.config_file_name:

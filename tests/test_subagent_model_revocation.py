@@ -10,9 +10,9 @@ from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 from test_subagent_runtime import role
 
-from knowledgeops_agent.context_management import summarize
-from knowledgeops_agent.run_resources import ResourceUnavailable
-from knowledgeops_agent.subagent_registry import SubagentRegistry
+from knowledgeops_agent.harness.context.management import summarize
+from knowledgeops_agent.harness.runtime.resources import ResourceUnavailable
+from knowledgeops_agent.harness.subagents.registry import SubagentRegistry
 
 runtime_services = _runtime_services
 
@@ -56,6 +56,7 @@ def configured_child(runtime_services, *, summary_fraction=0.85):
             "summary_fraction": summary_fraction,
             "working_window": 32768,
             "summary_trigger_basis": "total_tokens",
+            "input_budget_version": 0,
         }
     )
     saver = InMemorySaver()
@@ -66,7 +67,8 @@ def configured_child(runtime_services, *, summary_fraction=0.85):
         operation_key="summary-revocation-child",
         subagent=definition,
     )
-    context = replace(parent, run_id=child["id"])
+    assert parent.jobs.claim("summary-child", run_id=child["id"], generation=child["generation"])
+    context = replace(parent, run_id=child["id"], worker_id="summary-child")
     graph = module.build_agent(context, checkpointer=saver)
     return context, child, graph, provider
 

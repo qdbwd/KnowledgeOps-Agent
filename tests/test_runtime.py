@@ -15,15 +15,15 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg import Connection
 from psycopg.rows import dict_row
 
-from knowledgeops_agent.jobs import RunService, RunStopped
-from knowledgeops_agent.knowledge import KnowledgeService
-from knowledgeops_agent.model_gateway import (
+from knowledgeops_agent.app.runs.service import RunService, RunStopped
+from knowledgeops_agent.harness.models.gateway import (
     ModelCallFailed,
     ModelGateway,
     ModelLedger,
     prepare_accounting,
 )
-from knowledgeops_agent.sources import SourceService
+from knowledgeops_agent.knowledge.service import KnowledgeService
+from knowledgeops_agent.sources.service import SourceService
 
 
 class DraftProvider:
@@ -100,18 +100,23 @@ class DraftProvider:
 def runtime_services(business_sessions, tmp_path):
     engine = business_sessions.kw["bind"]
     prepare_accounting(engine)
-    return (
-        RunService(business_sessions),
+    jobs = RunService(business_sessions)
+    services = (
+        jobs,
         KnowledgeService(business_sessions),
         SourceService(business_sessions, tmp_path),
         ModelLedger(engine, scope="offline-" + uuid4().hex),
     )
+    try:
+        yield services
+    finally:
+        jobs.close_mcp_sessions()
 
 
 def setup_run(
     services, mode="preview", *, budgets=None, fail=False, task="整理材料", auxiliary=False
 ):
-    module = importlib.import_module("knowledgeops_agent.runtime")
+    module = importlib.import_module("knowledgeops_agent.harness.runtime.agent")
     jobs, knowledge, sources, ledger = services
     source = sources.import_text("固定测试材料", "重复消息可能到达，因此写入需要幂等。")
     conversation = jobs.create_conversation()
@@ -275,7 +280,7 @@ def test_research_children_isolate_history_share_ledger_and_replay_without_calls
     from langchain_core.messages import AIMessage
 
     module, context, run = setup_run(runtime_services)
-    delegation = importlib.import_module("knowledgeops_agent.delegation")
+    delegation = importlib.import_module("knowledgeops_agent.harness.subagents.delegation")
     context.checkpointer = InMemorySaver()
 
     class ResearchProvider:
@@ -293,14 +298,18 @@ def test_research_children_isolate_history_share_ledger_and_replay_without_calls
     # 主图的历史既不自动复制给研究者，也不替研究者创建另一套账本。
     parent_state = {"messages": [HumanMessage("主对话隐私标识"), AIMessage("未发给研究者")]}
     assert parent_state["messages"]
-    outputs = delegation.research_many(context, ["研究第一主题", "研究第二主题"], "call-research")
+    from fixtures.subagent_dispatch import drive_delegation
+
+    outputs = drive_delegation(context,
+        lambda: delegation.research_many(context, ["研究第一主题", "研究第二主题"], "call-research"), identity="research")
     assert len(outputs) == 2 and all(row["status"] == "completed" for row in outputs)
     children = [r for r in context.jobs.list_runs(root_id=run["id"]) if r["parent_id"]]
     assert len(children) == 2
     records = context.gateway.ledger.records(root_id=run["id"])
     assert len(records) == 2 and {r["run_id"] for r in records} == {c["id"] for c in children}
     assert all(r["purpose"] == "research" for r in records)
-    again = delegation.research_many(context, ["研究第一主题", "研究第二主题"], "call-research")
+    again = drive_delegation(context,
+        lambda: delegation.research_many(context, ["研究第一主题", "研究第二主题"], "call-research"), identity="research")
     assert again == outputs
     assert len(context.gateway.ledger.records()) == 2
 
@@ -380,7 +389,7 @@ def test_final_response_repair_keeps_user_history_and_counts_each_request(runtim
 
 
 def test_visible_answer_length_honors_explicit_limit_without_charging_urls():
-    module = importlib.import_module("knowledgeops_agent.response_validation")
+    module = importlib.import_module("knowledgeops_agent.harness.models.validation")
     assert module.explicit_length_limit("请回答，最终答案不超过500字。") == 500
     assert module.explicit_length_limit("改为150字以内解释，不要小标题。") == 150
     assert module.explicit_length_limit("请在80字之内回答，最多100字。") == 80

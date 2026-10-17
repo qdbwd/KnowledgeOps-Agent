@@ -78,7 +78,7 @@ def test_single_command_reads_new_file_without_recreating_container(tmp_path):
     """经真实子进程及Settings验证新文件值，而不只检查字典拼装。"""
     path = tmp_path / ".env"
     program = (
-        "import json; from knowledgeops_agent.config import Settings; "
+        "import json; from knowledgeops_agent.core.config import Settings; "
         "s=Settings(_env_file=None); "
         "print(json.dumps([s.app_log_level,s.model_timeout_seconds,s.model_calls_enabled]))"
     )

@@ -10,10 +10,10 @@ from pathlib import Path
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 
-from knowledgeops_agent.mcp_calls import MCPCalls
-from knowledgeops_agent.mcp_registry import MCPRegistry
-from knowledgeops_agent.mcp_transport import child_environment
-from knowledgeops_agent.run_resources import prepare_resources
+from knowledgeops_agent.harness.mcp.calls import MCPCalls
+from knowledgeops_agent.harness.mcp.registry import MCPRegistry
+from knowledgeops_agent.harness.mcp.transport import child_environment
+from knowledgeops_agent.harness.runtime.resources import prepare_resources
 
 runtime_services = _runtime_services
 

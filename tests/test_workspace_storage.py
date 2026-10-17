@@ -8,13 +8,13 @@ import pytest
 from sqlalchemy import select, text
 from test_knowledge_service import publish_article
 
-from knowledgeops_agent.db import KnowledgeVersion, RunArtifact
-from knowledgeops_agent.file_store import FileStore
-from knowledgeops_agent.jobs import RunService
-from knowledgeops_agent.knowledge import KnowledgeService
-from knowledgeops_agent.markdown_export import export_markdown
-from knowledgeops_agent.sources import SourceService
-from knowledgeops_agent.workspace_storage import migrate_content, sync_knowledge_projection
+from knowledgeops_agent.app.runs.service import RunService
+from knowledgeops_agent.knowledge.export import export_markdown
+from knowledgeops_agent.knowledge.service import KnowledgeService
+from knowledgeops_agent.persistence.files import FileStore
+from knowledgeops_agent.persistence.models import KnowledgeVersion, RunArtifact
+from knowledgeops_agent.persistence.workspace import migrate_content, sync_knowledge_projection
+from knowledgeops_agent.sources.service import SourceService
 
 
 def test_published_body_is_file_backed_and_indexes_exports_still_work(business_sessions, tmp_path):

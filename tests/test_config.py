@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 def test_model_switch_comes_from_env_file_and_process_override(tmp_path, monkeypatch):
     """只验证配置装载，不建立模型客户端或发送请求。"""
-    config = importlib.import_module("knowledgeops_agent.config")
+    config = importlib.import_module("knowledgeops_agent.core.config")
     path = tmp_path / ".env"
     path.write_text("MODEL_CALLS_ENABLED=true\n", encoding="utf-8")
     monkeypatch.delenv("MODEL_CALLS_ENABLED", raising=False)
@@ -24,7 +24,7 @@ def test_model_switch_comes_from_env_file_and_process_override(tmp_path, monkeyp
 
 def test_operational_settings_from_file_reach_model_client(tmp_path, monkeypatch):
     """用非默认值核对实际 dotenv 读取、类型转换和 SDK 参数，不发送模型请求。"""
-    config = importlib.import_module("knowledgeops_agent.config")
+    config = importlib.import_module("knowledgeops_agent.core.config")
     expected = {
         "model_calls_enabled": False,
         "agent_model": "offline-config-probe",
@@ -41,6 +41,10 @@ def test_operational_settings_from_file_reach_model_client(tmp_path, monkeypatch
         "redis_checkpoint_ttl_seconds": 120,
         "redis_checkpoint_max_entries": 44,
         "redis_checkpoint_max_value_bytes": 65536,
+        "mcp_session_max_connections": 7,
+        "mcp_session_idle_seconds": 123.0,
+        "mcp_session_sweep_seconds": 3.0,
+        "mcp_session_close_seconds": 4.0,
     }
     path = tmp_path / ".env"
     lines = [f"{name.upper()}={str(value).lower() if isinstance(value, bool) else value}"
@@ -69,14 +73,38 @@ def test_public_env_template_does_not_offer_compose_owned_paths():
     assert values["POSTGRES_PASSWORD"] == ""
 
 
+def test_lifecycle_settings_are_loaded_from_dotenv_with_explicit_override(tmp_path, monkeypatch):
+    config = importlib.import_module("knowledgeops_agent.core.config")
+    for field in config.Settings.model_fields:
+        if field.startswith("lifecycle_"):
+            monkeypatch.delenv(field.upper(), raising=False)
+    path = tmp_path / ".env"
+    path.write_text(
+        "LIFECYCLE_CLEANUP_ENABLED=false\nLIFECYCLE_RETENTION_DAYS=45\n"
+        "LIFECYCLE_SCAN_INTERVAL_SECONDS=120\nLIFECYCLE_BATCH_SIZE=7\n"
+        "LIFECYCLE_TEMPORARY_GRACE_SECONDS=7200\nLIFECYCLE_JOB_RETENTION_DAYS=9\n"
+        "LIFECYCLE_JOB_LEASE_SECONDS=40\nLIFECYCLE_RETRY_SECONDS=12\n", encoding="utf-8",
+    )
+    monkeypatch.setenv("LIFECYCLE_BATCH_SIZE", "3")
+    settings = config.Settings(_env_file=path, model_calls_enabled=False)
+    assert settings.lifecycle_cleanup_enabled is False
+    assert settings.lifecycle_retention_days == 45
+    assert settings.lifecycle_scan_interval_seconds == 120
+    assert settings.lifecycle_batch_size == 3
+    assert settings.lifecycle_temporary_grace_seconds == 7200
+    assert settings.lifecycle_job_retention_days == 9
+    assert settings.lifecycle_job_lease_seconds == 40
+    assert settings.lifecycle_retry_seconds == 12
+
+
 def test_invalid_application_log_level_fails_before_startup():
-    config = importlib.import_module("knowledgeops_agent.config")
+    config = importlib.import_module("knowledgeops_agent.core.config")
     with pytest.raises(ValidationError, match="app_log_level"):
         config.Settings(_env_file=None, model_calls_enabled=False, app_log_level="verbose")
 
 
 def test_online_config_requires_credentials_without_leaking_them(monkeypatch):
-    config = importlib.import_module("knowledgeops_agent.config")
+    config = importlib.import_module("knowledgeops_agent.core.config")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     with pytest.raises(ValidationError, match="OPENAI_API_KEY"):
@@ -92,7 +120,7 @@ def test_online_config_requires_credentials_without_leaking_them(monkeypatch):
 
 
 def test_invalid_online_settings_do_not_expose_credentials(monkeypatch):
-    config = importlib.import_module("knowledgeops_agent.config")
+    config = importlib.import_module("knowledgeops_agent.core.config")
     monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@db/test")
     monkeypatch.setenv("ACCOUNTING_DATABASE_URL", "postgresql://test:test@db/accounting")
     with pytest.raises(ValidationError) as caught:
@@ -114,7 +142,7 @@ def test_provider_preserves_opaque_reasoning_protocol_for_followup():
     import httpx
     from langchain_core.messages import HumanMessage, message_chunk_to_message
 
-    config = importlib.import_module("knowledgeops_agent.config")
+    config = importlib.import_module("knowledgeops_agent.core.config")
     seen = []
 
     def respond(request):
@@ -201,7 +229,7 @@ def test_provider_preserves_reasoning_across_real_tool_roundtrip(stream_tool_tur
     import httpx
     from langchain_core.messages import HumanMessage, ToolMessage, message_chunk_to_message
 
-    config = importlib.import_module("knowledgeops_agent.config")
+    config = importlib.import_module("knowledgeops_agent.core.config")
     tool_reasoning = "opaque-工具轮\n原始片段-a+片段-b"
     final_reasoning = "opaque-最终回复轮\n原样保留"
     seen = []

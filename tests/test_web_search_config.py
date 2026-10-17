@@ -16,7 +16,7 @@ runtime_services = _runtime_services
 
 
 def config_module():
-    return importlib.import_module("knowledgeops_agent.web_search_config")
+    return importlib.import_module("knowledgeops_agent.sources.search_config")
 
 
 def test_yaml_controls_ddgs_options_and_keeps_search_separate_from_evidence(tmp_path, monkeypatch):
@@ -29,7 +29,7 @@ def test_yaml_controls_ddgs_options_and_keeps_search_separate_from_evidence(tmp_
         encoding="utf-8",
     )
     options = config.load_web_search_config(path)
-    web = importlib.import_module("knowledgeops_agent.web_research")
+    web = importlib.import_module("knowledgeops_agent.sources.web")
     client = Mock()
     client.text.return_value = [
         {"title": "Python", "href": "https://docs.python.org/", "body": "discovery only"}
@@ -104,7 +104,7 @@ def test_defaults_language_and_count_contract_match_actual_model_schema():
         == "tw-zh"
     )
     assert settings.search_kwargs("Python", count=2)["max_results"] == 2
-    runtime = importlib.import_module("knowledgeops_agent.runtime")
+    runtime = importlib.import_module("knowledgeops_agent.harness.runtime.agent")
     schema = convert_to_openai_tool(runtime.search_web)["function"]["parameters"]
     enum = next(
         item["enum"] for item in schema["properties"]["time_range"]["anyOf"] if "enum" in item
@@ -117,7 +117,7 @@ def test_run_freezes_search_config_and_legacy_snapshot_does_not_use_new_defaults
     runtime_services, monkeypatch
 ):
     config = config_module()
-    resources = importlib.import_module("knowledgeops_agent.run_resources")
+    resources = importlib.import_module("knowledgeops_agent.harness.runtime.resources")
     module, context, _ = setup_run(runtime_services)
     monkeypatch.setattr(
         resources,
@@ -142,9 +142,10 @@ def test_run_freezes_search_config_and_legacy_snapshot_does_not_use_new_defaults
     assert service.ensure(next_context)["web_search"]["backend"] == "brave"
     assert service.ensure(context)["web_search"] == first["web_search"]
     context.resources = first
-    assert module._web_service(context).search_config.backend == "duckduckgo"
+    source_tools = importlib.import_module("knowledgeops_agent.sources.tools")
+    assert source_tools._web_service(context).search_config.backend == "duckduckgo"
     context.resources = {key: value for key, value in first.items() if key != "web_search"}
-    assert module._web_service(context).search_config.backend == "brave,duckduckgo,startpage,yahoo"
+    assert source_tools._web_service(context).search_config.backend == "brave,duckduckgo,startpage,yahoo"
 
 
 def test_actual_graph_routes_search_arguments_and_result_without_model_fee(
@@ -152,8 +153,8 @@ def test_actual_graph_routes_search_arguments_and_result_without_model_fee(
 ):
     """真实create_agent和数据库，只有模型/外网替身；证明新参数确实到达搜索库。"""
     config = config_module()
-    resources = importlib.import_module("knowledgeops_agent.run_resources")
-    web = importlib.import_module("knowledgeops_agent.web_research")
+    resources = importlib.import_module("knowledgeops_agent.harness.runtime.resources")
+    web = importlib.import_module("knowledgeops_agent.sources.web")
     module, context, _ = setup_run(runtime_services, mode="ask")
     monkeypatch.setattr(
         resources,

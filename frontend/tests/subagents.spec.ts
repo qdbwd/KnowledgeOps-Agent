@@ -135,6 +135,7 @@ test('chat defaults auxiliary off and persists the user-controlled delegation ch
   page,
 }) => {
   await page.goto('/');
+  await page.getByRole('button', { name: '更多设置与材料' }).click();
   const auxiliary = page.getByRole('checkbox', { name: '允许辅助模型', exact: true });
   const delegation = page.getByRole('checkbox', { name: '允许子Agent分工', exact: true });
   await expect(auxiliary).not.toBeChecked();
@@ -150,6 +151,7 @@ test('chat defaults auxiliary off and persists the user-controlled delegation ch
   expect(first.status).toBe('queued');
   expect(first.input).toMatchObject({ auxiliary: false, delegation: false });
   await page.reload();
+  await page.getByRole('button', { name: '更多设置与材料' }).click();
   await expect(page.getByRole('checkbox', { name: '允许辅助模型', exact: true })).not.toBeChecked();
   await expect(page.locator('.message.user')).toHaveCount(1);
   const settings = await (await page.request.get('/api/settings')).json();
@@ -158,6 +160,7 @@ test('chat defaults auxiliary off and persists the user-controlled delegation ch
   expect(saved.status).toBe('queued');
   expect(saved.tool_calls).toBe(0);
   expect(saved.input).toMatchObject({ auxiliary: false, delegation: false });
+  await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '取消排队', exact: true }).click();
   await expect(page.getByText('已取消', { exact: true })).toBeVisible();
   const cancelled = await (await page.request.get(`/api/runs/${first.id}`)).json();

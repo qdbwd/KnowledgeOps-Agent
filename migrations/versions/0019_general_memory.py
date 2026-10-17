@@ -49,7 +49,7 @@ def upgrade():
     # 只读取本迁移定义的旧列，不能使用未来ORM查询新字段。保留旧修订JSON原样。
     from uuid import uuid4
 
-    from knowledgeops_agent.retrieval import split_passages, tokenize
+    from knowledgeops_agent.retrieval.search import split_passages, tokenize
 
     connection = op.get_bind()
     for row in connection.execute(

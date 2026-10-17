@@ -12,7 +12,7 @@ import pytest
 
 
 def test_connection_config_does_not_store_secret_values():
-    module = importlib.import_module("knowledgeops_agent.mcp_transport")
+    module = importlib.import_module("knowledgeops_agent.harness.mcp.transport")
     config = module.MCPConnectionConfig(
         transport="http",
         url="https://example.test/mcp",
@@ -25,11 +25,27 @@ def test_connection_config_does_not_store_secret_values():
         module.MCPConnectionConfig(transport="http", url="file:///etc/passwd")
 
 
+def test_legacy_config_keeps_its_identity_and_protocol_mode_is_explicit():
+    from knowledgeops_agent.harness.mcp.registry import configuration
+    from knowledgeops_agent.harness.mcp.transport import MCPConnectionConfig
+
+    old = {
+        "transport": "http", "url": "http://localhost/mcp", "command": None,
+        "args": [], "environment_refs": {}, "header_refs": {}, "timeout_seconds": 30.0,
+    }
+    assert configuration(old) == old
+    assert configuration({**old, "protocol_mode": "auto"}) == old
+    assert MCPConnectionConfig.model_validate(old).protocol_mode == "auto"
+    assert configuration({**old, "protocol_mode": "legacy"})["protocol_mode"] == "legacy"
+    with pytest.raises(ValueError):
+        configuration({**old, "protocol_mode": "unrecognized"})
+
+
 @pytest.mark.parametrize("transport", ["stdio", "http"])
 async def test_real_protocol_discovery_and_call_keep_app_secrets_out(
     transport, monkeypatch, tmp_path
 ):
-    module = importlib.import_module("knowledgeops_agent.mcp_transport")
+    module = importlib.import_module("knowledgeops_agent.harness.mcp.transport")
     fixture = str(Path("tests/fixtures/mcp_probe.py").resolve())
     monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-a-child-process")
     process = None

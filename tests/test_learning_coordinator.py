@@ -7,12 +7,17 @@ import pytest
 from sqlalchemy import select
 from test_jobs import jobs as _jobs
 
-from knowledgeops_agent.db import ChangeSet, Conversation, LearningAdvance, LearningUnit
-from knowledgeops_agent.learning_budget import reserve_model
-from knowledgeops_agent.learning_coordinator import advance
-from knowledgeops_agent.learning_tasks import LearningTaskService
-from knowledgeops_agent.model_gateway import ModelBudgetExceeded
-from knowledgeops_agent.publication_intent import ensure_publication_intent
+from knowledgeops_agent.harness.models.gateway import ModelBudgetExceeded
+from knowledgeops_agent.knowledge.intent import ensure_publication_intent
+from knowledgeops_agent.learning.budget import reserve_model
+from knowledgeops_agent.learning.coordinator import advance
+from knowledgeops_agent.learning.tasks import LearningTaskService
+from knowledgeops_agent.persistence.models import (
+    ChangeSet,
+    Conversation,
+    LearningAdvance,
+    LearningUnit,
+)
 
 jobs = _jobs
 
@@ -137,7 +142,7 @@ def test_pause_and_finish_use_one_control_lock_and_do_not_continue(jobs):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
 
-    from knowledgeops_agent.learning_intent import BoundSessions
+    from knowledgeops_agent.learning.intent import BoundSessions
 
     service, sessions, tasks, task, run = setup(jobs)
     service.claim("w", run_id=run["id"], generation=1)
@@ -178,7 +183,7 @@ def test_waiting_unit_blocks_extra_tools_but_preserves_final_response(jobs):
 
 
 def test_changed_requirements_resume_new_run_without_rewriting_old_snapshot(jobs):
-    from knowledgeops_agent.db import RunResourceSnapshot
+    from knowledgeops_agent.persistence.models import RunResourceSnapshot
 
     service, sessions, tasks, task, run = setup(jobs)
     service.claim("w", run_id=run["id"], generation=1)

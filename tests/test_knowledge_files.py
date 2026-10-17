@@ -9,14 +9,19 @@ from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 from test_workspace_runtime import enable
 
-from knowledgeops_agent.db import ChangeSet, KnowledgeDocument, KnowledgeVersion
-from knowledgeops_agent.file_store import FileStore
+from knowledgeops_agent.harness.permissions.settings import ExecutionSettings
+from knowledgeops_agent.persistence.files import FileStore
+from knowledgeops_agent.persistence.models import ChangeSet, KnowledgeDocument, KnowledgeVersion
 
 runtime_services = _runtime_services
 
 
 def run_files(services, root, steps, *, mode="direct"):
     module, context, run = setup_run(services, mode=mode)
+    # 此组验证通用文件操作到业务版本的同步，命令执行许可显式独立设置。
+    ExecutionSettings(context.jobs.sessions).update(
+        run["conversation_id"], expected_revision=0, permission_mode="auto"
+    )
     context.workspace_root = root
     context.jobs.sessions.configure(info={"file_store": FileStore(root)})
     enable(context.jobs.sessions)
@@ -171,7 +176,7 @@ def test_external_edit_can_be_explicitly_synchronized_without_duplicate_revision
 ):
     from langchain.tools import ToolRuntime
 
-    from knowledgeops_agent.knowledge_files import sync_knowledge_files
+    from knowledgeops_agent.knowledge.files import sync_knowledge_files
 
     path = "/knowledge/documents/外部编辑.md"
     context, _ = run_files(

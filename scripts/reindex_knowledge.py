@@ -2,10 +2,10 @@
 
 import json
 
-from knowledgeops_agent.config import get_settings
-from knowledgeops_agent.db import make_sessions
-from knowledgeops_agent.knowledge import KnowledgeService
-from knowledgeops_agent.retrieval import INDEX_CONTRACT
+from knowledgeops_agent.core.config import get_settings
+from knowledgeops_agent.knowledge.service import KnowledgeService
+from knowledgeops_agent.persistence.models import make_sessions
+from knowledgeops_agent.retrieval.search import INDEX_CONTRACT
 
 
 def main():

@@ -160,8 +160,11 @@ def _lexical_relevance(
 
 
 def _coerce_confidence(fact: dict[str, Any]) -> float:
+    raw_value = fact.get("confidence")
+    if raw_value is None:
+        return 0.0
     try:
-        value = float(fact.get("confidence"))
+        value = float(raw_value)
         if not math.isfinite(value):
             raise ValueError
     except (TypeError, ValueError):

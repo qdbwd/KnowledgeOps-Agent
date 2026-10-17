@@ -6,7 +6,7 @@ import pytest
 
 
 def test_report_keeps_failed_attempt_and_does_not_accept_a_judge_score(business_sessions):
-    module = importlib.import_module("knowledgeops_agent.evaluation")
+    module = importlib.import_module("knowledgeops_agent.diagnostics.reports")
     service = module.ReportService(business_sessions)
     report = service.create({"kind": "business", "expected_count": 1, "catalog_hash": "fixture"})
     result = {
@@ -33,7 +33,7 @@ def test_report_keeps_failed_attempt_and_does_not_accept_a_judge_score(business_
 
 
 def test_report_completion_requires_expected_results_and_reviews(business_sessions):
-    module = importlib.import_module("knowledgeops_agent.evaluation")
+    module = importlib.import_module("knowledgeops_agent.diagnostics.reports")
     service = module.ReportService(business_sessions)
     report = service.create({"kind": "comparison", "expected_count": 1})
     with pytest.raises(ValueError, match="incomplete"):
@@ -61,7 +61,7 @@ def test_report_completion_requires_expected_results_and_reviews(business_sessio
 
 @pytest.mark.parametrize("kind", ["interactive", "auxiliary", "delegation"])
 def test_optimization_reports_keep_distinct_modes(business_sessions, kind):
-    service = importlib.import_module("knowledgeops_agent.evaluation").ReportService(
+    service = importlib.import_module("knowledgeops_agent.diagnostics.reports").ReportService(
         business_sessions
     )
     report = service.create({"kind": kind, "expected_count": 1})
@@ -83,7 +83,7 @@ def test_optimization_reports_keep_distinct_modes(business_sessions, kind):
 def test_semantic_review_can_explain_synonyms_but_never_override_business_assertions(
     business_sessions,
 ):
-    service = importlib.import_module("knowledgeops_agent.evaluation").ReportService(
+    service = importlib.import_module("knowledgeops_agent.diagnostics.reports").ReportService(
         business_sessions
     )
     report = service.create({"kind": "business", "expected_count": 1})

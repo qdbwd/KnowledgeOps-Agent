@@ -9,7 +9,7 @@ from test_api_worker import services as _services
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 
-from knowledgeops_agent.response_validation import FinalAnswerValidation
+from knowledgeops_agent.harness.models.validation import FinalAnswerValidation
 
 services = _services
 runtime_services = _runtime_services
@@ -49,7 +49,7 @@ def test_actual_dsml_in_documentation_remains_a_valid_answer(runtime_services, c
 
 
 def test_actual_dsml_in_a_legacy_checkpoint_is_not_delivered_as_an_answer(runtime_services):
-    from knowledgeops_agent.worker import _outcome
+    from knowledgeops_agent.app.runs.worker import _outcome
 
     _, context, _ = setup_run(runtime_services)
     outcome = _outcome(context, {"messages": [AIMessage(ACTUAL_DSML)]})
@@ -60,7 +60,7 @@ def test_actual_dsml_in_a_legacy_checkpoint_is_not_delivered_as_an_answer(runtim
 def test_actual_dsml_worker_fails_and_keeps_raw_response_without_another_request(
     services, monkeypatch
 ):
-    from knowledgeops_agent import worker
+    from knowledgeops_agent.app.runs import worker as worker
 
     class Provider:
         def bind_tools(self, tools):

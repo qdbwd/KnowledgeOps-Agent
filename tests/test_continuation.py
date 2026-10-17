@@ -64,7 +64,7 @@ def test_old_run_resume_keeps_parent_and_does_not_replace_newer_snapshot(jobs):
 
 def test_real_state_snapshot_retains_complete_groups_not_pending_actions(runtime_services):
     module, context, run = setup_run(runtime_services)
-    continuation = importlib.import_module("knowledgeops_agent.continuation")
+    continuation = importlib.import_module("knowledgeops_agent.harness.context.continuation")
     state = {
         "messages": [
             HumanMessage("原问题", id="original-user"),
@@ -102,7 +102,7 @@ def test_non_graph_turn_keeps_previous_internal_context_and_appends_receipt(
 ):
     """A读取后B纯审批/提前失败，C继续必须仍看见A的工具结果与B的真实事实。"""
     module, context, first = setup_run(runtime_services)
-    continuation = importlib.import_module("knowledgeops_agent.continuation")
+    continuation = importlib.import_module("knowledgeops_agent.harness.context.continuation")
     state = {
         "messages": [
             HumanMessage("先读取关键条件", id="original-user"),

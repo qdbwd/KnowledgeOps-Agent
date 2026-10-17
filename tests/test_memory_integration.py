@@ -9,9 +9,9 @@ from test_preferences import proposal
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 
-from knowledgeops_agent.preferences import MemoryService
-from knowledgeops_agent.publication_intent import ensure_publication_intent
-from knowledgeops_agent.run_resources import prepare_resources
+from knowledgeops_agent.harness.runtime.resources import prepare_resources
+from knowledgeops_agent.knowledge.intent import ensure_publication_intent
+from knowledgeops_agent.memory.service import MemoryService
 
 client = _client
 services = _services
@@ -107,7 +107,7 @@ def test_actual_graph_can_search_and_reread_frozen_memory(runtime_services):
     from langchain_core.messages import AIMessageChunk, HumanMessage, ToolMessage
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from knowledgeops_agent.tool_policy import ToolPolicyService
+    from knowledgeops_agent.harness.tools.policy import ToolPolicyService
 
     module, context, run = setup_run(runtime_services, task="核对我学习Python的背景")
     ToolPolicyService(context.jobs.sessions).update(

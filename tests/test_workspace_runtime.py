@@ -11,9 +11,10 @@ from test_api_worker import services as _services
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 
-from knowledgeops_agent.jobs import RunStopped
-from knowledgeops_agent.tool_catalog import tool_options
-from knowledgeops_agent.tool_policy import ToolPolicyService
+from knowledgeops_agent.app.runs.service import RunStopped
+from knowledgeops_agent.harness.permissions.settings import ExecutionSettings
+from knowledgeops_agent.harness.tools.catalog import tool_options
+from knowledgeops_agent.harness.tools.policy import ToolPolicyService
 
 runtime_services = _runtime_services
 services = _services
@@ -29,6 +30,9 @@ def enable(sessions):
 
 def test_real_graph_writes_edits_executes_presents_and_imports(runtime_services, tmp_path):
     module, context, run = setup_run(runtime_services)
+    ExecutionSettings(context.jobs.sessions).update(
+        run["conversation_id"], expected_revision=0, permission_mode="auto"
+    )
     context.workspace_root = tmp_path / "workspace"
     enable(context.jobs.sessions)
 
@@ -100,7 +104,7 @@ def test_real_graph_writes_edits_executes_presents_and_imports(runtime_services,
 def test_old_snapshot_does_not_gain_workspace_and_live_disable_hides_tools(
     runtime_services, tmp_path
 ):
-    from knowledgeops_agent.tool_access import unavailable_tools
+    from knowledgeops_agent.harness.tools.access import unavailable_tools
 
     module, context, _ = setup_run(runtime_services)
     module.build_agent(context, checkpointer=InMemorySaver())
@@ -112,9 +116,86 @@ def test_old_snapshot_does_not_gain_workspace_and_live_disable_hides_tools(
     assert "write_file" in unavailable_tools(context)
 
 
+def test_graph_executes_frozen_skill_script_and_records_resource_use(
+    runtime_services, tmp_path, monkeypatch
+):
+    """从部署包到冻结清单、真实 SDK 工具、子进程和回执，只有模型响应是替身。"""
+    module, context, run = setup_run(runtime_services)
+    ExecutionSettings(context.jobs.sessions).update(
+        run["conversation_id"], expected_revision=0, permission_mode="auto"
+    )
+    context.workspace_root = tmp_path / "workspace"
+    directory = tmp_path / "skills" / "script-example"
+    (directory / "scripts").mkdir(parents=True)
+    (directory / "SKILL.md").write_text(
+        "---\nname: script-example\ndescription: execute a local script\n---\nUse scripts/run.py"
+    )
+    script = directory / "scripts/run.py"
+    script.write_text("print('frozen-script-output')")
+    monkeypatch.setenv("SKILLS_DIRECTORY", str(directory.parent))
+    enable(context.jobs.sessions)
+
+    class Provider:
+        def bind_tools(self, tools):
+            assert "execute" in {tool.name for tool in tools}
+            return self
+
+        def stream(self, messages, **kwargs):
+            observations = [m for m in messages if isinstance(m, ToolMessage)]
+            if observations:
+                assert "frozen-script-output" in str(observations[-1].content)
+                yield AIMessageChunk("脚本运行完成。")
+                return
+            yield AIMessageChunk(
+                "",
+                tool_call_chunks=[
+                    {
+                        "name": "execute",
+                        "id": "skill-script",
+                        "index": 0,
+                        "args": json.dumps(
+                            {
+                                "command": 'python "$SKILLS_DIR/script-example/scripts/run.py"',
+                                "timeout": 5,
+                            }
+                        ),
+                    }
+                ],
+            )
+
+    context.gateway.client = Provider()
+    graph = module.build_agent(context, checkpointer=InMemorySaver())
+    script.write_text("raise RuntimeError('must not use new deployment')")
+    result = graph.invoke(
+        {"messages": module.initial_messages(context)},
+        {"configurable": {"thread_id": run["checkpoint_id"]}},
+        context=context,
+    )
+    assert "脚本运行完成" in result["messages"][-1].text
+    from sqlalchemy import select
+
+    from knowledgeops_agent.persistence.models import RunEvent
+
+    with context.jobs.sessions() as session:
+        events = list(
+            session.scalars(
+                select(RunEvent).where(
+                    RunEvent.run_id == context.run_id, RunEvent.kind == "skill_materialized"
+                )
+            )
+        )
+    assert {event.data["path"] for event in events} == {
+        "/skills/script-example/SKILL.md",
+        "/skills/script-example/scripts/run.py",
+    }
+
+
 def test_real_graph_cancellation_reaches_running_shell(runtime_services, tmp_path):
     """模拟 Web 的取消写入 PG，验证真实图/SDK 调用中的命令会及时退出。"""
     module, context, run = setup_run(runtime_services)
+    ExecutionSettings(context.jobs.sessions).update(
+        run["conversation_id"], expected_revision=0, permission_mode="auto"
+    )
     context.workspace_root = tmp_path / "workspace"
     context.workspace_execute_timeout = 15
     enable(context.jobs.sessions)
@@ -164,7 +245,7 @@ def test_real_graph_cancellation_reaches_running_shell(runtime_services, tmp_pat
 def test_workspace_http_download_and_tool_preview(services, tmp_path):
     from fastapi.testclient import TestClient
 
-    from knowledgeops_agent.api import create_app
+    from knowledgeops_agent.app.application import create_app
 
     services.settings.workspace_root = tmp_path
     (tmp_path / "outputs").mkdir()

@@ -15,8 +15,8 @@ runtime_services = _runtime_services
 def test_mcp_tool_runtime_injection_and_pending_checkpoint_resume(runtime_services):
     module, context, run = setup_run(runtime_services)
     configured(context, "confirm")
-    from knowledgeops_agent.mcp_calls import MCPApprovalRequired, MCPCalls, mcp_tools
-    from knowledgeops_agent.run_resources import prepare_resources
+    from knowledgeops_agent.harness.mcp.calls import MCPApprovalRequired, MCPCalls, mcp_tools
+    from knowledgeops_agent.harness.runtime.resources import prepare_resources
 
     class Provider:
         name = ""
@@ -58,7 +58,9 @@ def test_mcp_tool_runtime_injection_and_pending_checkpoint_resume(runtime_servic
         run["id"], context.worker_id, status="interrupted", outcome={"kind": "waiting_approval"}
     )
     MCPCalls(context).decide(receipt["id"], expected_hash=receipt["input_hash"], approve=True)
-    context.jobs.resume(run["id"])
+    assert context.jobs.get_run(run["id"])["status"] == "queued"
+    MCPCalls(context).decide(receipt["id"], expected_hash=receipt["input_hash"], approve=True)
+    assert context.jobs.get_run(run["id"])["generation"] == 2
     context.jobs.claim(context.worker_id, run_id=run["id"], generation=2)
     graph = module.build_agent(context, checkpointer=saver)
     state = graph.invoke(None, config=config, context=context)

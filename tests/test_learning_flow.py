@@ -1,17 +1,23 @@
 """委托两单元走真实worker、主/子图、版本和发布；供应商响应确定且零付费。"""
 
 from fixtures.learning_provider import LearningProvider
+from fixtures.subagent_dispatch import execute_family
 from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import select
 from test_api_worker import services as _services
 
-from knowledgeops_agent.db import LearningCollaboration, LearningUnit, Run, SubagentDefinition
-from knowledgeops_agent.file_store import FileStore
-from knowledgeops_agent.learning_profiles import LearningProfileService
-from knowledgeops_agent.learning_tasks import LearningTaskService
-from knowledgeops_agent.subagent_registry import SubagentRegistry
-from knowledgeops_agent.tool_policy import ToolPolicyService
-from knowledgeops_agent.worker import execute_run
+from knowledgeops_agent.app.runs.worker import execute_run
+from knowledgeops_agent.harness.subagents.registry import SubagentRegistry
+from knowledgeops_agent.harness.tools.policy import ToolPolicyService
+from knowledgeops_agent.learning.profiles import LearningProfileService
+from knowledgeops_agent.learning.tasks import LearningTaskService
+from knowledgeops_agent.persistence.files import FileStore
+from knowledgeops_agent.persistence.models import (
+    LearningCollaboration,
+    LearningUnit,
+    Run,
+    SubagentDefinition,
+)
 
 services = _services
 
@@ -73,19 +79,19 @@ def test_two_units_revision_review_pause_profile_update_and_publish(services, tm
             request_key="real-guidance",
         )
         delivered.append(
-            services.jobs.guide(message["id"], target_id=current["id"], target_generation=1)
+            services.jobs.guide(message["id"], target_id=current["id"], target_generation=current["generation"])
         )
 
     provider.before_main_request = inject_real_feedback
     saver = InMemorySaver()
     first = next(r for r in services.jobs.list_runs() if r["status"] == "queued")
-    result = execute_run(first["id"], 1, services=services, checkpointer=saver, worker_id="demo")
+    result = execute_family(first["id"], 1, services=services, checkpointer=saver, worker_id="demo")
     assert result["status"] == "completed", result
     assert result["outcome"]["published_ids"]
     task = tasks.get(task["id"])
     assert task["configuration"]["examples"]["value"] == "使用SQL例子"
     assert provider.intent_calls == 1 and len(delivered) == 1
-    from knowledgeops_agent.preferences import MemoryService
+    from knowledgeops_agent.memory.service import MemoryService
 
     assert len(MemoryService(services.sessions).list()) == 1
     paused = tasks.control(task["id"], expected_revision=task["revision"], action="pause")
@@ -102,7 +108,7 @@ def test_two_units_revision_review_pause_profile_update_and_publish(services, tm
         content="第二单元请先给例子，这是人工反馈后的修改。",
     )
     tasks.control(task["id"], expected_revision=paused["revision"], action="resume")
-    result = execute_run(queued["id"], 2, services=services, checkpointer=saver, worker_id="demo")
+    result = execute_family(queued["id"], 2, services=services, checkpointer=saver, worker_id="demo")
     assert result["status"] == "completed", result
     assert tasks.get(task["id"])["status"] == "completed"
     assert any(

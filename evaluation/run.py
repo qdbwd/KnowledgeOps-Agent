@@ -25,12 +25,12 @@ from sqlalchemy.engine import make_url
 
 from evaluation.checks import evaluate
 from evaluation.fixtures import make_pdf_files, publish_fixture, seed_case
-from knowledgeops_agent.config import Settings
-from knowledgeops_agent.evaluation import ReportService
-from knowledgeops_agent.runtime import SYSTEM_PROMPT
-from knowledgeops_agent.services import create_services
-from knowledgeops_agent.task_queue import worker_lease
-from knowledgeops_agent.worker import execute_run
+from knowledgeops_agent.app.runs.queue import worker_lease
+from knowledgeops_agent.app.runs.worker import execute_run
+from knowledgeops_agent.app.services import create_services
+from knowledgeops_agent.core.config import Settings
+from knowledgeops_agent.diagnostics.reports import ReportService
+from knowledgeops_agent.harness.runtime.agent import SYSTEM_PROMPT
 
 # 比较前冻结，同一案例两种模式使用完全相同的根预算，不给多 Agent 额外额度。
 BUDGETS = {"model_requests": 12, "tool_calls": 50, "searches": 5, "active_seconds": 360}

@@ -7,16 +7,16 @@ import pytest
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
 
-from knowledgeops_agent.config import Settings
-from knowledgeops_agent.jobs import RunService
-from knowledgeops_agent.knowledge import KnowledgeService
-from knowledgeops_agent.model_gateway import ModelGateway, ModelLedger, prepare_accounting
-from knowledgeops_agent.sources import SourceService
+from knowledgeops_agent.app.runs.service import RunService
+from knowledgeops_agent.core.config import Settings
+from knowledgeops_agent.harness.models.gateway import ModelGateway, ModelLedger, prepare_accounting
+from knowledgeops_agent.knowledge.service import KnowledgeService
+from knowledgeops_agent.sources.service import SourceService
 
 
 @pytest.fixture
 def services(business_sessions, tmp_path):
-    module = importlib.import_module("knowledgeops_agent.services")
+    module = importlib.import_module("knowledgeops_agent.app.services")
     engine = business_sessions.kw["bind"]
     prepare_accounting(engine)
     ledger = ModelLedger(engine, scope="api-offline-" + uuid4().hex)
@@ -38,7 +38,7 @@ def services(business_sessions, tmp_path):
 
 @pytest.fixture
 def client(services):
-    api = importlib.import_module("knowledgeops_agent.api")
+    api = importlib.import_module("knowledgeops_agent.app.application")
     with TestClient(api.create_app(services=services, publish_jobs=False)) as client:
         yield client
 
@@ -119,7 +119,7 @@ def test_message_is_durable_and_duplicate_http_request_has_one_run(client, servi
 
 def test_long_run_records_are_pageable_and_export_keeps_the_final_event(client, services):
     """长流式输出不能在第1000条静默截断，导出需覆盖其声明的事件快照。"""
-    from knowledgeops_agent.db import Run, RunEvent
+    from knowledgeops_agent.persistence.models import Run, RunEvent
 
     _, run, _ = enqueue(client)
     services.jobs.claim("record-test", run_id=run["id"], generation=run["generation"])
@@ -152,8 +152,8 @@ def test_long_run_records_are_pageable_and_export_keeps_the_final_event(client, 
 
 
 def test_web_import_is_a_durable_background_job_without_model_calls(client, services, monkeypatch):
-    web = importlib.import_module("knowledgeops_agent.web_research")
-    worker = importlib.import_module("knowledgeops_agent.worker")
+    web = importlib.import_module("knowledgeops_agent.sources.web")
+    worker = importlib.import_module("knowledgeops_agent.app.runs.worker")
     text = "后台导入网页会保存原件和解析后的定位片段。只保存材料，不会自动创建知识文章。" * 4
     monkeypatch.setattr(
         web.PublicWebReader,
@@ -199,7 +199,7 @@ def test_pdf_upload_queues_parsing_and_persists_page_progress(client, services):
     )
     assert response.status_code == 202
     run = services.jobs.get_run(response.json()["job_id"])
-    worker = importlib.import_module("knowledgeops_agent.worker")
+    worker = importlib.import_module("knowledgeops_agent.app.runs.worker")
     result = worker.execute_run(
         run["id"], run["generation"], services=services, worker_id="pdf-worker"
     )
@@ -293,7 +293,7 @@ def test_sse_reconnect_cursor_skips_old_events_and_terminal_closes(client, servi
 
 
 def test_worker_persists_disabled_model_failure_and_charges_nothing(services):
-    worker = importlib.import_module("knowledgeops_agent.worker")
+    worker = importlib.import_module("knowledgeops_agent.app.runs.worker")
     conversation = services.jobs.create_conversation()
     run = services.jobs.enqueue(conversation["id"], "问题", request_key=str(uuid4()))
     result = worker.execute_run(
@@ -425,7 +425,7 @@ def test_auxiliary_http_choice_is_durable_and_defaults_off(client, services, cho
 
 
 def test_legacy_auxiliary_default_retry_does_not_rewrite_history(client, services):
-    from knowledgeops_agent.db import Run
+    from knowledgeops_agent.persistence.models import Run
 
     conversation, run, body = enqueue(client)
     with services.sessions.begin() as session:

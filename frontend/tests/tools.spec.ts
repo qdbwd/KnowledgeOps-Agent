@@ -63,6 +63,7 @@ test('tool policy preserves edits on conflict, distinguishes empty selection, an
   const grouped = await (await page.request.get('/api/tools/policy')).json();
   expect(grouped.resolved_main_tools).toEqual([
     'builtin:list_materials',
+    'builtin:list_evidence',
     'builtin:inspect_material',
     'builtin:read_source',
   ]);
@@ -109,6 +110,7 @@ test('saved subagent groups survive prompt edits and share global restrictions i
   await form.getByLabel('用途说明', { exact: true }).fill('只读核对材料');
   await form.getByLabel('角色提示', { exact: true }).fill('核对给定材料。');
   await form.getByRole('checkbox', { name: '材料读取', exact: true }).check();
+  await form.getByRole('checkbox', { name: /^继承只读 MCP/ }).uncheck();
   await form.getByRole('checkbox', { name: '创建后启用', exact: true }).check();
   const createdHttp = page.waitForResponse(
     (r) => r.url().endsWith('/api/subagents') && r.request().method() === 'POST',
@@ -118,7 +120,7 @@ test('saved subagent groups survive prompt edits and share global restrictions i
   expect(created).toMatchObject({
     tools: [],
     tool_groups: ['materials_read'],
-    resolved_tools: ['list_materials', 'inspect_material', 'read_source'],
+    resolved_tools: ['list_materials', 'list_evidence', 'inspect_material', 'read_source'],
   });
   const card = page.getByRole('region', { name: '工具组核对员', exact: true });
   await card.getByRole('button', { name: '编辑配置', exact: true }).click();

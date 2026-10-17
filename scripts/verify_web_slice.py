@@ -13,8 +13,8 @@ from uuid import uuid4
 
 import httpx
 
-from knowledgeops_agent.config import get_settings
-from knowledgeops_agent.task_queue import create_queue
+from knowledgeops_agent.app.runs.queue import create_queue
+from knowledgeops_agent.core.config import get_settings
 
 
 def main():

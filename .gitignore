@@ -37,7 +37,8 @@ build/
 .DS_Store
 Thumbs.db
 artifacts/
-runs/
+# Root run artifacts only; app/runs and features/runs are application source.
+/runs/
 node_modules/
 frontend/playwright-report/
 frontend/test-results/

@@ -12,9 +12,9 @@ from sqlalchemy import event, select
 
 @pytest.fixture
 def services(tmp_path, business_sessions):
-    db = importlib.import_module("knowledgeops_agent.db")
-    sources = importlib.import_module("knowledgeops_agent.sources")
-    knowledge = importlib.import_module("knowledgeops_agent.knowledge")
+    db = importlib.import_module("knowledgeops_agent.persistence.models")
+    sources = importlib.import_module("knowledgeops_agent.sources.service")
+    knowledge = importlib.import_module("knowledgeops_agent.knowledge.service")
     sessions = business_sessions
     yield (
         db,

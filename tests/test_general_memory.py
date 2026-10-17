@@ -9,13 +9,13 @@ from test_preferences import proposal
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 
-from knowledgeops_agent.db import ChatMessage, Preference, utcnow
+from knowledgeops_agent.persistence.models import ChatMessage, Preference, utcnow
 
 runtime_services = _runtime_services
 
 
 def service_for(services):
-    return importlib.import_module("knowledgeops_agent.preferences").MemoryService(
+    return importlib.import_module("knowledgeops_agent.memory.service").MemoryService(
         services[0].sessions
     )
 

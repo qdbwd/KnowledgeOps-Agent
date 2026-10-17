@@ -8,15 +8,16 @@ import json
 from dataclasses import replace
 
 import pytest
+from fixtures.subagent_dispatch import drive_delegation
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 from test_subagent_runtime import role
 
-from knowledgeops_agent.db import Run
-from knowledgeops_agent.delegation import delegate_one
-from knowledgeops_agent.subagent_registry import SubagentRegistry
+from knowledgeops_agent.harness.subagents.delegation import delegate_one
+from knowledgeops_agent.harness.subagents.registry import SubagentRegistry
+from knowledgeops_agent.persistence.models import Run
 
 runtime_services = _runtime_services
 
@@ -36,7 +37,8 @@ def test_same_tool_call_cannot_rebind_completed_child_to_another_role(runtime_se
 
     context.gateway.client = Provider()
     module.build_agent(context, checkpointer=InMemorySaver())
-    first = delegate_one(context, original, "检查同一项材料", "stable-role-call")
+    first = drive_delegation(context,
+        lambda: delegate_one(context, original, "检查同一项材料", "stable-role-call"), identity="original")
     assert first["status"] == "completed"
     before_child = context.jobs.get_run(first["run_id"])
     before_requests = context.gateway.ledger.records(root_id=root["id"])
@@ -98,7 +100,8 @@ def test_interrupted_child_resumes_frozen_role_and_checkpoint_without_resetting_
     context.gateway.client = provider
     saver = InMemorySaver()
     module.build_agent(context, checkpointer=saver)
-    failed = delegate_one(context, original, task, "resume-role-call")
+    failed = drive_delegation(context,
+        lambda: delegate_one(context, original, task, "resume-role-call"), identity="resume-role")
     assert failed["status"] == "failed"
     before_child = context.jobs.get_run(failed["run_id"])
     before_root = context.jobs.get_run(root["id"])
@@ -124,7 +127,7 @@ def test_interrupted_child_resumes_frozen_role_and_checkpoint_without_resetting_
         "worker-after-restart", run_id=root["id"], generation=resumed["generation"]
     )
     assert claimed is not None
-    assert resumed["generation"] == root["generation"] + 1
+    assert resumed["generation"] == before_root["generation"] + 1
     assert claimed["tool_calls"] == before_root["tool_calls"]
     assert claimed["budgets"] == before_root["budgets"]
     assert context.gateway.ledger.summary(root["id"])["root_used"] == 2
@@ -134,7 +137,8 @@ def test_interrupted_child_resumes_frozen_role_and_checkpoint_without_resetting_
     module.build_agent(restarted, checkpointer=saver)
     frozen = next(item for item in restarted.resources["subagents"] if item["id"] == original["id"])
     assert frozen == original
-    completed = delegate_one(restarted, frozen, task, "resume-role-call")
+    completed = drive_delegation(restarted,
+        lambda: delegate_one(restarted, frozen, task, "resume-role-call"), identity="resume-role")
     assert completed["status"] == "completed"
     assert "写入需要幂等" in completed["answer"]
     after_child = restarted.jobs.get_run(completed["run_id"])
@@ -144,7 +148,7 @@ def test_interrupted_child_resumes_frozen_role_and_checkpoint_without_resetting_
     with restarted.jobs.sessions() as session:
         persisted_child = session.get(Run, after_child["id"])
         assert persisted_child is not None
-        assert persisted_child.worker_id == "worker-after-restart"
+        assert persisted_child.worker_id and persisted_child.worker_id != "worker-after-restart"
     assert after_child["input"]["subagent"] == original
     assert after_child["budgets"] == before_child["budgets"]
     assert (

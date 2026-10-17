@@ -9,12 +9,12 @@ import pytest
 from langchain_core.messages import AIMessage
 from sqlalchemy import select
 
-from knowledgeops_agent.db import TaskGrant
-from knowledgeops_agent.jobs import RunService, RunStopped
-from knowledgeops_agent.knowledge import KnowledgeService
-from knowledgeops_agent.model_gateway import ModelGateway, ModelLedger, prepare_accounting
-from knowledgeops_agent.runtime import RunContext
-from knowledgeops_agent.sources import SourceService
+from knowledgeops_agent.app.runs.service import RunService, RunStopped
+from knowledgeops_agent.harness.models.gateway import ModelGateway, ModelLedger, prepare_accounting
+from knowledgeops_agent.harness.runtime.agent import RunContext
+from knowledgeops_agent.knowledge.service import KnowledgeService
+from knowledgeops_agent.persistence.models import TaskGrant
+from knowledgeops_agent.sources.service import SourceService
 
 
 @pytest.fixture
@@ -61,7 +61,7 @@ def interpret(context, response):
             return AIMessage(json.dumps(response, ensure_ascii=False))
 
     context.gateway.client = Provider()
-    module = importlib.import_module("knowledgeops_agent.publication_intent")
+    module = importlib.import_module("knowledgeops_agent.knowledge.intent")
     return module.ensure_publication_intent(context)
 
 
@@ -297,7 +297,7 @@ def test_ui_direct_no_text_conflict_keeps_user_control_but_suspends_during_inter
             return AIMessage(json.dumps(response, ensure_ascii=False))
 
     context.gateway.client = Provider()
-    bridge = importlib.import_module("knowledgeops_agent.publication_intent")
+    bridge = importlib.import_module("knowledgeops_agent.knowledge.intent")
     assert bridge.ensure_publication_intent(context)["mode"] == "direct"
     context.knowledge.publish(draft["id"], idempotency_key="after-interpretation")
     assert len(context.knowledge.list_documents()) == 1
@@ -316,7 +316,7 @@ def test_undisplayed_draft_and_child_cannot_get_chat_approval(context):
     )
     assert result["published_ids"] == []
     child = context.jobs.start_child(context.root_id, "只读研究")
-    bridge = importlib.import_module("knowledgeops_agent.publication_intent")
+    bridge = importlib.import_module("knowledgeops_agent.knowledge.intent")
     with pytest.raises(PermissionError, match="children"):
         bridge.ensure_publication_intent(replace(context, run_id=child["id"]))
     assert context.knowledge.list_documents() == []
@@ -403,9 +403,10 @@ def test_worker_reports_prior_publication_and_preserves_compound_task(context, c
         settings=SimpleNamespace(
             workspace_root=context.workspace_root,
             workspace_execute_timeout=context.workspace_execute_timeout,
+            workspace_output_limit_bytes=context.workspace_output_limit_bytes,
         ),
     )
-    worker = importlib.import_module("knowledgeops_agent.worker")
+    worker = importlib.import_module("knowledgeops_agent.app.runs.worker")
     result = worker.execute_run(
         run["id"],
         run["generation"],
@@ -456,7 +457,7 @@ def test_committed_cross_turn_publication_is_reported_even_before_intent_result_
     )
     with pytest.raises(RuntimeError, match="crash"):
         interpret(context, response)
-    worker = importlib.import_module("knowledgeops_agent.worker")
+    worker = importlib.import_module("knowledgeops_agent.app.runs.worker")
     assert worker._outcome(context, {}, stopped=True)["published_ids"] == [draft["id"]]
     monkeypatch.setattr(context.jobs, "save_publication_result", original)
     assert interpret(context, response)["published_ids"] == [draft["id"]]
@@ -487,7 +488,7 @@ def test_application_publication_receipt_is_context_not_fake_provider_assistant(
         "继续讨论",
         request_key=str(uuid4()),
     )
-    runtime = importlib.import_module("knowledgeops_agent.runtime")
+    runtime = importlib.import_module("knowledgeops_agent.harness.runtime.agent")
     messages = runtime.initial_messages(replace(context, run_id=run["id"], root_id=run["id"]))
     assert isinstance(messages[-2], SystemMessage)
     assert draft["id"] in messages[-2].content and answer in messages[-2].content
@@ -499,7 +500,7 @@ def test_intent_request_disables_thinking_only_for_classification_in_real_http_p
     import httpx
     from langchain_core.messages import HumanMessage
 
-    from knowledgeops_agent.config import Settings, create_chat_client
+    from knowledgeops_agent.core.config import Settings, create_chat_client
 
     seen = []
     decision = semantic_response(context)
@@ -536,7 +537,7 @@ def test_intent_request_disables_thinking_only_for_classification_in_real_http_p
     )
     with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
         context.gateway.client = create_chat_client(settings, http_client=http_client)
-        bridge = importlib.import_module("knowledgeops_agent.publication_intent")
+        bridge = importlib.import_module("knowledgeops_agent.knowledge.intent")
         assert bridge.ensure_publication_intent(context)["mode"] == "direct"
         answer = context.gateway.invoke(
             [HumanMessage("继续回答")],
@@ -561,8 +562,8 @@ def test_length_capped_json_cannot_grant_publish_or_persist_preferences(context,
     """JSON恰好闭合也不代表供应商完整完成分类；不能先产生副作用再检查终止原因。"""
     from test_preferences import proposal
 
-    from knowledgeops_agent.preferences import PreferenceService
-    from knowledgeops_agent.publication_intent import ensure_publication_intent
+    from knowledgeops_agent.knowledge.intent import ensure_publication_intent
+    from knowledgeops_agent.memory.service import PreferenceService
 
     task = (
         "这个草稿通过，保存吧。以后默认先给概括。"

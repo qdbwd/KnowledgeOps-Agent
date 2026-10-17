@@ -15,7 +15,7 @@ from uuid import uuid4
 import httpx
 from pypdf import PdfWriter
 
-from knowledgeops_agent.task_queue import TASK_NAME, create_queue
+from knowledgeops_agent.app.runs.queue import TASK_NAME, create_queue
 
 
 def main():

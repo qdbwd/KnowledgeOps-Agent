@@ -151,8 +151,7 @@ test('import material, preview its text, and retain validation errors', async ({
   await page.getByLabel('材料内容').fill('这份材料来自浏览器端导入，可定位到实际片段。');
   await page.getByRole('button', { name: '保存材料' }).click();
   await expect(page).toHaveURL(/\/sources\/[a-f0-9-]+$/);
-  await page.getByRole('button', { name: /片段 1/ }).click();
-  await expect(page.locator('.source-text')).toContainText('可定位到实际片段');
+  await expect(page.locator('.document-reader')).toContainText('可定位到实际片段');
   await page.reload();
   await expect(page.getByRole('heading', { name: '浏览器导入材料' })).toBeVisible();
   await page.goto('/sources');
@@ -174,8 +173,8 @@ test('review, publish, read evidence, edit, and reopen a historical version', as
   await page.getByRole('link', { name: /Agent 共享预算规则/ }).click();
   const articleUrl = page.url();
   await page.getByRole('link', { name: '预算规则原始材料' }).click();
-  await expect(page).toHaveURL(/\/evidence\//);
-  await expect(page.locator('.source-text')).toContainText('重试也计入');
+  await expect(page).toHaveURL(/\/sources\/[^?]+\?version=/);
+  await expect(page.locator('.document-reader')).toContainText('重试也计入');
   await page.goto(articleUrl);
   await page.getByRole('button', { name: '编辑', exact: true }).click();
   const editor = page.getByLabel('Markdown 正文');
@@ -231,8 +230,27 @@ test('queued chat survives refresh and can be cancelled and explicitly resumed',
 test('preserved context is visible and can be paged without losing the run link', async ({
   page,
 }) => {
+  // 本例自己建立跨页条件，不能假定其他场景结束后种子仍位于最新20条里。
+  const padding = await (await page.request.post('/api/conversations', {
+    data: { title: '运行列表分页夹具' },
+  })).json();
+  for (let index = 0; index < 21; index++) {
+    const response = await page.request.post(`/api/conversations/${padding.id}/messages`, {
+      data: { content: `分页填充 ${index}`, request_key: crypto.randomUUID() },
+    });
+    expect(response.ok()).toBe(true);
+  }
   await page.goto('/runs');
-  await page.getByRole('link', { name: /整理共享预算规则/ }).click();
+  const target = page.getByRole('link', { name: /整理共享预算规则/ });
+  const more = page.getByRole('button', { name: '加载更多运行', exact: true });
+  await expect(more).toBeVisible();
+  await expect(target).toHaveCount(0);
+  for (let index = 0; index < 5 && !(await target.count()); index++) {
+    const before = await page.locator('a.list-card').count();
+    await more.click();
+    await expect.poll(() => page.locator('a.list-card').count()).toBeGreaterThan(before);
+  }
+  await target.click();
   await page.getByRole('link', { name: /context_original/ }).click();
   await expect(page.locator('.source-text')).toContainText('分页原文证据');
   await page.getByRole('button', { name: '下一段' }).click();

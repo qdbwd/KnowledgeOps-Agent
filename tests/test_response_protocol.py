@@ -9,7 +9,7 @@ from test_api_worker import services as _services
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 
-from knowledgeops_agent.response_validation import FinalAnswerValidation
+from knowledgeops_agent.harness.models.validation import FinalAnswerValidation
 
 services = _services
 runtime_services = _runtime_services
@@ -36,7 +36,7 @@ def test_documented_protocol_examples_remain_valid_answers(runtime_services, con
 
 
 def test_outcome_filters_checkpointed_raw_protocol_even_without_feedback(runtime_services):
-    from knowledgeops_agent.worker import _outcome
+    from knowledgeops_agent.app.runs.worker import _outcome
 
     _, context, _ = setup_run(runtime_services)
     outcome = _outcome(context, {"messages": [AIMessage(RAW)]})
@@ -45,7 +45,7 @@ def test_outcome_filters_checkpointed_raw_protocol_even_without_feedback(runtime
 
 
 def test_worker_records_failed_run_and_preserves_raw_provider_response(services, monkeypatch):
-    from knowledgeops_agent import worker
+    from knowledgeops_agent.app.runs import worker as worker
 
     class Provider:
         def bind_tools(self, tools):

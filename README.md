@@ -10,7 +10,7 @@
 
 项目展示与面试准备的38题问答已迁入个人知识库的任务板块，见[迁移入口](docs/interview-qa.md)。完整正文在知识库维护，项目不再保留另一份问答副本；本仓库继续维护工程说明与验证证据。
 
-2026-10-12增量增加两种学习模式、通用长期记忆和可维护的读者配置，数据库已从0018升级到0022。当前以[实施计划](docs/implementation-plan.md)和[决策0023](docs/decisions/0023-learning-modes-and-general-memory.md)为准，完成状态及验证证据见[进展](docs/progress.md)。本轮使用离线模型替身验证实际图、服务和浏览器，未进行付费语义质量验证；2026-10-09的23/24业务结果是历史基线，不能作为新学习模式的效果评分。
+2026-10-12增加两种学习模式、通用长期记忆和可维护的读者配置，设计见[决策0023](docs/decisions/0023-learning-modes-and-general-memory.md)。2026-10-14按[当前实施计划](docs/implementation-plan.md)增加会话执行权限、命令审批和恢复回执，正常数据库已增量升级到0024。完成状态与证据见[进展](docs/progress.md)。新增机制通过离线模型替身验证实际图、服务和浏览器，未进行付费语义质量验证；历史23/24业务结果不能作为新功能的效果评分。
 
 ## 首版范围
 
@@ -20,8 +20,13 @@
 - 只读 Skills 渐进加载、独立输入的 `call_model`、可配置的只读子 Agent、完整请求容量检查。
 - 同会话跨轮延续、FIFO 排队、用户选择运行中引导、自然语言授权、取消及手动恢复。
 - 可管理的跨会话记忆、通用及任务学习配置；两种学习模式共用原会话历史，任务目标和进展独立保存。
-- 通用 MCP 工具服务接入；默认没有已配置的外部服务。
+- 通用 MCP 工具服务接入，按聊天/子 Agent 隔离复用连接；默认没有已配置的外部服务。
+
 - 固定业务评估、多轮交互、真实子 Agent 验证、备份恢复与可复现演示。辅助工具默认关闭，其效果实验已按用户要求移出本轮交付范围；各项当前证据见进展，能力存在不代表效果已验收。
+
+技能启停入口：“工具与能力 → 已发现的任务技能”，勾选后点击“保存工具配置”。用户选择保存在PG并可查看配置历史；部署条件不满足的技能不可通过UI开启。启用用于新任务，关闭会撤回后续读取和脚本资源装配，重新开启不会恢复旧任务已撤回的许可。目录与扩展方式见[Skills说明](skills/README.md)。
+
+MCP入口为“工具服务”。添加连接、发现工具并审查许可后，主Agent在同一聊天中可以跨多轮使用连接，子Agent和其他聊天分开。依赖有状态握手会话的服务可在连接JSON中加`"protocol_mode":"legacy"`；默认`auto`自动协商，保持连接不保证远端保存页面或任务状态。空闲回收、worker重启都会建立新连接，成功调用仍可从数据库回执读取，未知结果不会自动重做。池容量和回收时间由`.env`的`MCP_SESSION_*`配置，修改后重启应用；机制和参考来源见[决策0027](docs/decisions/0027-mcp-session-lifecycle.md)。
 
 ## 两种学习模式怎么用
 
@@ -47,13 +52,27 @@ Python 3.12、FastAPI、LangChain/LangGraph、PostgreSQL 17 + pg_search BM25；C
 
 模型配置由本地 .env 注入，密钥不进入 Git。配置与任务预算见[工程规则](AGENTS.md)。不接入旧 Agent-Evaluation-Framework，不做向量检索或GraphRAG。现已追加worker内本地命令执行，不创建AIO容器；它不是运行不可信代码的强安全沙盒。
 
+聊天输入区的思考强度选项来自模型能力声明；DeepSeek在线时优先读取供应商元数据，失败时使用`config/model-reasoning.json`。选择保存为会话默认值，供新普通任务和自动学习任务使用；子Agent继承根运行，任务恢复沿用原来冻结的值。修改默认值不会改变已经开始的运行，也不改变内部摘要的专用配置。其他Chat Completions渠道需显式配置适配类型、模型容量和实际支持的档位，见[模型配置说明](config/README.md)。
+
+## 执行权限与命令确认
+
+聊天输入区的“执行权限”保存到当前会话。默认“请求批准”：已开放的文件读写和公开网页检索照常使用，执行Shell命令前显示命令原文、工作目录和执行者，等待用户允许或拒绝。选择“自动执行”可以跳过普通命令询问，但不能开启已关闭的工具、扩大只读子Agent能力，也不绕过命令deny规则、MCP强制确认或正式知识发布授权。这是应用层审批，不是额外的操作系统沙盒。
+
+每条命令可以允许一次、拒绝一次或停止任务。对于能够可靠解析的简单命令，还可以按展示的完整参数数组保存本会话规则或跨会话规则；前缀规则允许追加参数，确认前应核对范围。脚本、解释器、变量和组合命令只提供单次批准。命令规则在“工具与能力 → 命令执行规则”维护，也可以从聊天框的“命令规则”入口查看本会话规则；支持allow/ask/deny、停用和删除。规则绑定工作区及工作目录，属于权限配置，不会从用户偏好或Skill文字自动提取。
+
+全部待办处理后，应用自动继续同一个任务。页面刷新不会丢失待办，等待期间不消耗活跃执行时间。排队消息仍排在当前任务之后；明确插入新要求会使旧提议失效。异常重启后仍须用户明确恢复，不会因为曾经批准过就自行运行。
+
+如果命令已启动，但应用没能保存结果，页面显示“执行结果未知”。先检查文件或外部结果，再选择“跳过并继续”或“明确重试一次”；重试可能重复副作用，会记为新的执行尝试。已有完整结果的调用恢复时只重放回执。详细设计与边界见[决策0025](docs/decisions/0025-execution-permissions.md)。
+
 ## 本地文件与通用执行
 
 默认将 Windows 的本项目 `data/agent-workspace` 挂载到 dev/API/worker 的 `/data/agent-workspace`。将材料放进 `work/`，就可以通过聊天让 Agent 找文件、阅读、搜索、精确编辑和执行 Linux 命令或 Python 脚本；普通交付放在 `outputs/` 并可下载。正式知识的编辑入口是 `knowledge/documents/`，支持多级目录，Markdown可以直接写入，不需要先生成Python脚本。完整目录分工见[工作区说明](data/agent-workspace/README.md)。
 
 通用文件工具直接复用 Deep Agents 的接口；知识修改后的版本/引用/索引由同步中间件维护。同一文件的预览编辑修订原草稿，批准后才进入正式检索；同步失败保留文件并明确返回原因。Windows编辑器的外部修改不会后台自动发布，可让 Agent 用 `sync_knowledge_files` 指定同步。`knowledge/versions` 是不可变历史，`knowledge/current` 是阅读导出，两者不是编辑入口。
 
-新工具沿用工具管理界面/API的开关，旧任务和子Agent不会因升级自动获得工作区。可通过 `.env` 的 `AGENT_WORKSPACE_HOST` 更换专用宿主目录；更换前先停止应用并搬齐整个工作区。备份必须包含业务数据库、模型回执库和完整工作区，不能只复制PG。命令可访问worker已有挂载，适用于本机可信任务；运行中约每秒检查取消、租约和活跃时间预算，默认60秒超时，`.env`的`WORKSPACE_EXECUTE_TIMEOUT`最多可设300秒。普通子进程在工具结束时回收，不支持跨调用后台服务；写出的文件保留。输出最多保留64,000原始字节，长日志请重定向到`work/`后分页读取。
+新工具沿用工具管理界面/API的开关，旧任务和子Agent不会因升级自动获得工作区。可通过 `.env` 的 `AGENT_WORKSPACE_HOST` 更换专用宿主目录；更换前先停止应用并搬齐整个工作区。备份必须包含业务数据库、模型回执库和完整工作区，不能只复制PG。命令可访问worker已有挂载，适用于本机可信任务；运行中约每秒检查取消、租约和活跃时间预算，默认60秒超时，`.env`的`WORKSPACE_EXECUTE_TIMEOUT`最多可设300秒。普通子进程在工具结束时回收，不支持跨调用后台服务；写出的文件保留。应用命令输出边接收边保存为工作区产物，`WORKSPACE_OUTPUT_LIMIT_BYTES`默认10485760（10 MiB），模型获得有界预览及补读引用。超过保存上限、超时或取消都有明确标记，不把预览截断解释为产物内容丢失，也不承诺保存超过上限的输出。
+
+新根运行的上下文配置位于 `config/model-capacity.json`：保留262144工作窗口与90%压缩阈值，`compact_target_fraction`为压缩后80%输入目标；`optional_background_tokens`和`optional_background_fraction`共同限制压力下可补读背景。`deferred_mcp_tools`默认启用，获准的可选MCP工具先经tool_search发现，再加载参数定义；工具管理仍控制权限。旧快照保持原行为，不因升级自动获得能力。聊天页可展开上下文分项，数值是最近一次输入或轮末整理后的估计，不是累计消费。
 
 ## Docker 快速启动
 
@@ -117,6 +136,7 @@ docker compose exec dev bash
 ```sh
 cd /workspace
 python scripts/dev.py
+uv run scripts/dev.py
 ```
 
 等待API显示启动完成、worker完成启动恢复检查并启动消费者，然后访问 **http://localhost:8787**。若修改过`KNOWLEDGEOPS_PORT`，使用修改后的端口。`dev.py`只管理当前容器中的API、worker和Vite进程，不执行Docker命令；日志直接显示在当前终端。按**Ctrl+C**停止应用，dev、PG和Redis继续保留。
@@ -170,7 +190,7 @@ API和worker使用镜像内安装的Python依赖；web使用Nginx提供构建后
 ├─ .env.example、.env           配置模板与本机部署配置
 ├─ pyproject.toml、uv.lock      Python依赖声明与锁文件
 ├─ .venv/                      开发用Linux Python环境
-├─ backend/src/knowledgeops_agent/  API、worker和Agent源码
+├─ backend/src/knowledgeops_agent/  app接入、harness运行机制及领域模块
 ├─ frontend/
 │  ├─ package.json、package-lock.json  前端依赖声明与锁文件
 │  ├─ node_modules/            容器中挂载的前端依赖卷
@@ -300,7 +320,7 @@ docker compose exec -T dev python scripts/dev.py --run python scripts/seed_demo.
 
 真实演示需要在`.env`启用`MODEL_CALLS_ENABLED=true`，开发重启`dev.py`、生产重新创建API/worker以读取配置。每个任务保留自身预算、输入输出回执和恢复关联；应用不维护项目累计用量。完整场景与开发用例见[evaluation/cases.json](evaluation/cases.json)，开发报告不作为用户功能展示。
 
-项目累计统计已按用户要求停用，任务预算及执行回执保留，见[预算修订](docs/decisions/0018-cumulative-budget-2000.md)。模型是否启用以当前环境配置为准。辅助工具默认关闭，效果实验已按[决策0019](docs/decisions/0019-remove-auxiliary-experiment-gate.md)取消。当前数据库0022，意图解释入口同时处理真人控制、通用记忆及学习配置候选；上下文仍按256K/90%处理，任务背景、历史补读和来源笔记保留。旧I04等结果有其当时的版本和语义边界，不作为本轮学习模式的效果验收。
+项目累计统计已按用户要求停用，任务预算及执行回执保留，见[预算修订](docs/decisions/0018-cumulative-budget-2000.md)。模型是否启用以当前环境配置为准。辅助工具默认关闭，效果实验已按[决策0019](docs/decisions/0019-remove-auxiliary-experiment-gate.md)取消。当前业务结构为0029；意图解释入口同时处理真人控制、通用记忆及学习配置候选，上下文仍按256K/90%处理，任务背景、历史补读和来源笔记保留。旧I04等结果有其当时的版本和语义边界，不作为本轮学习模式的效果验收。
 
 仍有内容质量限制：K09回答把创建虚拟环境与安装依赖的先后顺序说反；真实聊天中保留了四/五计数、个别措辞和一个加粗排版问题；子Agent机制通过不表示子答复一定正确。旧批次分数与失败原文保留在[进展](docs/progress.md)和[开发问题](docs/development-issues.md)，交付不等于模型输出没有错误。
 
@@ -340,7 +360,7 @@ docker compose exec -T dev python scripts/dev.py --run python -m evaluation.opti
 
 ## 优化功能的使用方式
 
-开始新主题时，说明想了解的方向即可。核心知识库规则由应用自动装配；Agent 可按需读取“交互学习”“知识整理”“证据检查”，以及从DeerFlow移植的“代码文档”“论文审读”五项技能。文件及扩充方式见[Skills目录](skills/README.md)，能力页可查看发现的名称、用途与版本。之后可以直接追问、纠正、要求草稿或修改上一版，不必重复说明知识库用途。技能是方法指导，不能保证任意主题都覆盖完整，文档是否合用仍由用户判断。
+开始新主题时，说明想了解的方向即可。核心知识库规则由应用自动装配；Agent按需读取学习、知识维护、证据检查，以及已适配的代码文档、论文审读、研究和写作等12项技能。根skills目录支持正文、脚本、参考资料与模板，脚本通过已有execute运行，不在发现时自动执行。复制的其他14项暂未启用，原因和扩充方式见[Skills目录](skills/README.md)，能力页可查看名称、用途、版本及未启用原因。之后可以直接追问、纠正、要求草稿或修改上一版，不必重复说明知识库用途。技能是方法指导，不能保证任意主题都覆盖完整，文档是否合用仍由用户判断。
 
 普通消息在当前任务运行时默认排队。排队项的“引导当前任务”用于改变正在执行的根任务，成功投递后该消息不再单独执行；“取消排队”只取消对应排队任务。撤销写入会阻止后续发布，已提交的事务和已发送的模型请求仍保留真实结果与费用。关闭网页不会取消后台任务。
 
@@ -358,13 +378,54 @@ docker compose exec -T dev python scripts/dev.py --run python -m evaluation.opti
 
 ## 不花模型费用的开发演示
 
+### 暂停、补问与异步协作
+
+聊天中的“暂停任务”让正在返回的模型响应先保存，在安全点停下后续操作；“继续任务”沿原检查点和预算执行。暂停时仍可保存问题答案、审批决定或补充要求，但不会因此自动恢复。取消表示放弃后续执行，已经提交的文件、知识版本或外部动作不会自动撤销。关闭页面只停止观察，重新打开后仍能读到运行状态。
+
+Agent可以先提出通用问题，页面展示选项及自由回答；回答是任务信息，与批准命令或发布知识分别处理。MCP服务要求填写表单或到外部页面操作时，也在会话中显示待办。完成URL操作后点击继续只是请服务复核；服务是否确认由实际返回值决定，客户端不能替它确认成功。
+
+允许子Agent分工后，主Agent可以启动最多两个子任务，同时处理独立工作。子任务卡片支持查看结果、追加要求与单独取消；等待结果会释放执行槽，结果到达后接续原主任务。旧同步委派仍可使用。任务暂停或服务重启后不会仅因子结果到达而自动复活；服务重启仍需用户明确恢复。
+
+文件修改中断且结果不明时，执行确认区显示当前片段和核对状态。“保留现状，跳过并继续”向Agent返回未确认成功的结果；“重新核对（不改文件）”只在当前内容与原预期一致时补齐回执及知识同步。再次修改冲突文件必须先重新读取，普通恢复不能绕过核对。
+
+上下文百分比可展开查看规则、必需背景、可选背景、工作历史及工具定义等分项。工作窗口仍为262144 tokens、90%触发压缩；后台优先缩减可补读背景，再压缩历史。配置细节见[部署配置](config/README.md)。短命令结果的预览不等于完整输出，保存上限内可按产物引用补读；超过10 MiB默认保存上限的部分会明确标为未保存。
+
+### 离线运行开发场景
+
 下面的浏览器场景在本项目dev内建立隔离测试数据，用确定性模型替身驱动真实主/子 Agent 图、文件、数据库和 UI。它覆盖两个知识单元、真人纠正、人工配置更新、独立审读、暂停恢复和正式保存，也检查普通聊天及交互学习。不是向正常应用写入演示会话，不需要开启真实模型。准备好开发环境后，在Windows项目根目录执行：
 
 ```powershell
-docker compose exec -T -e MODEL_CALLS_ENABLED=false dev python scripts/dev.py --run npm --prefix frontend run test:browser -- tests/learning.spec.ts tests/learning-configuration.spec.ts
+docker compose exec -T -e MODEL_CALLS_ENABLED=false dev python scripts/dev.py --run sh -c "cd /workspace/frontend && npm run test:browser -- tests/learning.spec.ts tests/learning-configuration.spec.ts"
 ```
 
 浏览器首次使用需安装锁定Playwright对应的Chromium，可在dev的`/workspace/frontend`执行`npx playwright install chromium`。这只用于浏览器测试，正常使用Web界面不需要。测试专用执行接口只存在于 `tests/browser_server.py`，正常服务不提供。真实运行中的意图解释、记忆提取、读者和审读仍使用模型并产生费用；离线通过只证明工程流程，不证明真实模型的框架、讲解和审读质量。
+
+## 数据生命周期维护
+
+运行详情默认在根任务及依赖都结束后保留30天，每日检查；聊天记录由用户主动删除。暂停、待审批、待回答、未消费子结果和结果未知的执行受到保护。删除聊天保留上传资料、知识正文及版本、草稿、工作文件、长期记忆正文和学习配置；页面先预览范围，接受后封闭会话，再显示后台进度和失败重试。详细所有权和存储设计见[数据存储与生命周期](docs/database-design.md)，本轮实现与验证边界见[交付核对](docs/lifecycle-delivery.md)。
+
+2026-10-16正常库已完成0029业务迁移及0003_lifecycle模型回执迁移，正式应用尚未重新启动，整体完成状态见[进展](docs/progress.md)。已有0028数据的其他部署先停止应用并完成完整备份，在开发容器的`/workspace`中显式迁移；此入口不会启动任务、纳管或删除数据：
+
+```bash
+MODEL_CALLS_ENABLED=false python scripts/dev.py --run python -m scripts.migrate_lifecycle --backup artifacts/backups/BACKUP_ID --output artifacts/verification/lifecycle-migration.json
+```
+
+随后可使用以下维护命令。维护入口强制关闭模型调用，默认只预览；自动纳管从首次实际纳管时给旧终态任务完整保留期：
+
+```sh
+# 默认只查看候选与保护原因，不设置期限、不删除内容。
+python scripts/dev.py --run python scripts/maintain_lifecycle.py
+python scripts/dev.py --run python scripts/maintain_lifecycle.py --run-id ROOT_ID
+
+# 显式纳管/扫描，或推进已经接受的一个清理作业；替换实际ID。
+python scripts/dev.py --run python scripts/maintain_lifecycle.py --scan --execute --steps 20
+python scripts/dev.py --run python scripts/maintain_lifecycle.py --job-id JOB_ID --execute --steps 20
+python scripts/dev.py --run python scripts/maintain_lifecycle.py --job-id JOB_ID --execute --retry --steps 20
+```
+
+普通运行由API原有维护循环推进，无需另加定时容器。`.env`中的`LIFECYCLE_CLEANUP_ENABLED`控制自动扫描，`LIFECYCLE_RETENTION_DAYS`默认30，`LIFECYCLE_SCAN_INTERVAL_SECONDS`默认86400，`LIFECYCLE_BATCH_SIZE`控制每批工作量；`LIFECYCLE_TEMPORARY_GRACE_SECONDS`默认86400，`LIFECYCLE_JOB_RETENTION_DAYS`默认30，租约和重试分别由`LIFECYCLE_JOB_LEASE_SECONDS`与`LIFECYCLE_RETRY_SECONDS`控制。关闭自动扫描不会撤销已接受的清理。失败作业保留阶段，不复制待删除正文到维护日志。命令不会绕过暂停、unknown或引用保护；要删除整段聊天，使用聊天页的“删除会话”入口。
+
+暂存回收只处理程序登记的上传、原子写入和命令捕获；活写入锁、原任务恢复依赖与24小时保护期共同决定是否可删。未知或旧未登记暂存保留，不能用通配符清理整个工作目录。回退代码不能恢复已删除内容，恢复需要下面的完整备份集；本功能不会自动执行VACUUM FULL或删除备份。
 
 ## 备份、恢复与故障
 
@@ -393,7 +454,9 @@ docker compose exec -T -e MODEL_CALLS_ENABLED=false dev python scripts/dev.py --
 
 ## 代码阅读地图
 
-`api.py` 负责 HTTP 交互，`worker.py`/`task_queue.py` 负责 Celery 投递与执行；`runtime.py` 组装 Agent 和工具。`run_resources.py`/`skill_resources.py` 冻结规则与技能，`publication_intent.py` 解释保存选择与偏好，`preferences.py` 管理偏好修订。`continuation.py`/`guidance.py` 区分跨轮背景与运行中引导；`context_management.py`/`request_capacity.py` 组织并检查完整请求。`auxiliary_model.py` 实现独立模型工具；`mcp_registry.py`/`mcp_transport.py`/`mcp_calls.py` 分别负责 MCP 配置、协议与调用许可。`model_gateway.py` 统一计费与记录，`deepseek_client.py` 适配供应商协议。`knowledge.py` 保证版本、权限、引用和事务；`sources.py`/`pdf_sources.py`/`web_research.py` 管理材料；`evaluation/` 保存固定场景和执行器；`frontend/src/` 为界面。
+后端按职责阅读：`app/` 是HTTP接入、服务装配与后台任务，`harness/` 是模型—工具循环及上下文、权限、Skills、MCP、子Agent等机制，`knowledge/`、`learning/`、`memory/`、`sources/` 是对应业务，检索和持久化各自成包。一次聊天从 `app/routes/conversations.py` 进入，经运行服务和队列交给 `app/runs/worker.py`，再由 `harness/runtime/agent.py` 装配执行图。包顶层API/worker入口保持兼容。
+
+前端 `app/` 组装路由和侧栏，`features/` 把页面、专用组件与测试按功能放在一起，`shared/` 提供请求、类型和公共展示。页面URL和样式没有因目录变化而调整。完整目录和职责说明见[后端源码导航](backend/README.md)、[前端源码导航](frontend/README.md)；运行机制与采用的开源设计见[开发实现说明](docs/architecture.md)，目录取舍见[决策0026](docs/decisions/0026-source-layout.md)。根 `evaluation/` 继续保留显式开发验证，不作为用户页面。
 
 Redis承担Celery broker、实时事件Streams和确定检查点内容缓存；PostgreSQL仍是任务、事件、正式检查点和业务结果的依据。消息重复、事件缺口、进程中断与业务幂等分别处理。选型依据见[ADR 0008](docs/decisions/0008-celery-redis-task-queue.md)和[ADR 0021](docs/decisions/0021-redis-streams-and-checkpoint-cache.md)。
 
@@ -412,7 +475,7 @@ Redis承担Celery broker、实时事件Streams和确定检查点内容缓存；P
 
 “子Agent”页面可创建角色，填写名称、用途和专属指令，明确选择可用工具组、单独工具与Skills后启用。组与单独工具合并后保存固定结果，只改提示不会扩大成员；“查看有效工具”转到统一预览。内置researcher保留为一般只读角色；新角色默认停用。聊天中的“允许子Agent分工”表示允许主Agent按任务需要选择角色，不要求每次委派。可直接说明“把两份材料分别交给两个子Agent核对，再综合结论”。
 
-角色继承同一模型与根预算，每次最多两个活跃子任务，不递归、不发布知识，不新增脚本或MCP权限。保存角色配置不调用模型。配置名称创建后不可改，删除保留修订历史；冲突时刷新核对，不能覆盖他人已保存的新修订。普通编辑与新增许可供新根任务使用；禁用、删除或收窄工具/Skills使旧绑定在下一调用前失效，再启用也不会复活旧绑定。
+角色继承同一模型与根预算，每次最多两个活跃子任务，不递归、不发布知识、不执行工作区脚本。新任务可按“继承只读 MCP”组获得根任务已允许的只读服务，角色或全局许可可以进一步收窄；旧快照不自动增权。保存角色配置不调用模型。配置名称创建后不可改，删除保留修订历史；冲突时刷新核对，不能覆盖他人已保存的新修订。普通编辑与新增许可供新根任务使用；禁用、删除或收窄工具/Skills使旧绑定在下一调用前失效，再启用也不会复活旧绑定。
 
 实现直接使用Deep Agents的SubAgentMiddleware、CompiledSubAgent和task工具；本项目负责PG目录及现有运行服务的连接，不复制其循环源码。最新上游参考、版本和适配理由见[决策0016](docs/decisions/0016-configurable-subagent-catalog.md)。
 

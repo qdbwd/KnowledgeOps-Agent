@@ -8,9 +8,9 @@ from uuid import uuid4
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from knowledgeops_agent.db import Base
-from knowledgeops_agent.sources import SourceService
-from knowledgeops_agent.web_research import WebResearchService
+from knowledgeops_agent.persistence.models import Base
+from knowledgeops_agent.sources.service import SourceService
+from knowledgeops_agent.sources.web import WebResearchService
 
 
 def main():

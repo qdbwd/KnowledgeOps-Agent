@@ -6,11 +6,11 @@ from unittest.mock import Mock
 import httpx
 import pytest
 
-from knowledgeops_agent.sources import SourceService
+from knowledgeops_agent.sources.service import SourceService
 
 
 def test_synthetic_dns_is_resolved_publicly_without_allowing_literal_private_ip(monkeypatch):
-    module = importlib.import_module("knowledgeops_agent.web_research")
+    module = importlib.import_module("knowledgeops_agent.sources.web")
     monkeypatch.setattr(
         module.socket,
         "getaddrinfo",
@@ -39,7 +39,7 @@ def test_synthetic_dns_is_resolved_publicly_without_allowing_literal_private_ip(
     ],
 )
 def test_private_or_non_public_targets_never_reach_transport(url):
-    module = importlib.import_module("knowledgeops_agent.web_research")
+    module = importlib.import_module("knowledgeops_agent.sources.web")
     called = Mock()
     reader = module.PublicWebReader(transport=httpx.MockTransport(called))
     with pytest.raises(ValueError):
@@ -48,7 +48,7 @@ def test_private_or_non_public_targets_never_reach_transport(url):
 
 
 def test_public_address_is_pinned_and_redirect_is_rechecked():
-    module = importlib.import_module("knowledgeops_agent.web_research")
+    module = importlib.import_module("knowledgeops_agent.sources.web")
     seen = []
 
     def transport(request):
@@ -68,7 +68,7 @@ def test_public_address_is_pinned_and_redirect_is_rechecked():
 
 
 def test_mixed_public_private_dns_and_oversized_response_are_rejected():
-    module = importlib.import_module("knowledgeops_agent.web_research")
+    module = importlib.import_module("knowledgeops_agent.sources.web")
     reader = module.PublicWebReader(resolver=lambda *_: ["93.184.215.14", "10.0.0.4"])
     with pytest.raises(ValueError, match="public"):
         reader.fetch("https://example.org")
@@ -84,7 +84,7 @@ def test_mixed_public_private_dns_and_oversized_response_are_rejected():
 def test_search_discovery_is_not_evidence_and_page_cache_preserves_snapshot(
     business_sessions, tmp_path
 ):
-    module = importlib.import_module("knowledgeops_agent.web_research")
+    module = importlib.import_module("knowledgeops_agent.sources.web")
     sources = SourceService(business_sessions, tmp_path)
     html = (
         b"<html><head><title>Recovery guide</title></head><body><article><h1>Recovery</h1><p>"
@@ -131,7 +131,7 @@ def test_search_discovery_is_not_evidence_and_page_cache_preserves_snapshot(
 def test_empty_extraction_and_search_failure_are_not_successful_sources(
     business_sessions, tmp_path
 ):
-    module = importlib.import_module("knowledgeops_agent.web_research")
+    module = importlib.import_module("knowledgeops_agent.sources.web")
     sources = SourceService(business_sessions, tmp_path)
     reader = module.PublicWebReader(
         resolver=lambda *_: ["93.184.215.14"],

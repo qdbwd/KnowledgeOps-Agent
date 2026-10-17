@@ -7,7 +7,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import MetaData, Table, create_engine, select, text
 
-from knowledgeops_agent.db import Conversation, Run, RunResourceSnapshot
+from knowledgeops_agent.persistence.models import Conversation, Run, RunResourceSnapshot
 
 
 def test_nonempty_upgrade_keeps_legacy_run_snapshot_and_disabled_tool():

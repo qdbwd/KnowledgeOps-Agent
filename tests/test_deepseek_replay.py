@@ -6,7 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_deepseek import ChatDeepSeek
 
-from knowledgeops_agent.deepseek_client import DeepSeekClient
+from knowledgeops_agent.harness.models.deepseek import DeepSeekClient
 
 
 def client(**kwargs):

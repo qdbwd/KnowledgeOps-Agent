@@ -7,7 +7,7 @@ import pytest
 
 
 def test_packaged_policy_delivers_identifiable_rules_to_prompt():
-    policy_module = importlib.import_module("knowledgeops_agent.knowledge_policy")
+    policy_module = importlib.import_module("knowledgeops_agent.knowledge.policy")
     policy = policy_module.load_knowledge_policy()
     original = policy_module._POLICY_PATH.read_bytes()
     assert policy.content == original.decode("utf-8")
@@ -23,7 +23,7 @@ def test_packaged_policy_delivers_identifiable_rules_to_prompt():
 
 
 def test_missing_policy_stops_instead_of_returning_empty_rules(tmp_path, monkeypatch):
-    policy_module = importlib.import_module("knowledgeops_agent.knowledge_policy")
+    policy_module = importlib.import_module("knowledgeops_agent.knowledge.policy")
     monkeypatch.setattr(policy_module, "_POLICY_PATH", tmp_path / "absent.md")
     with pytest.raises(policy_module.KnowledgePolicyError, match="无法读取"):
         policy_module.load_knowledge_policy()
@@ -41,7 +41,7 @@ def test_missing_policy_stops_instead_of_returning_empty_rules(tmp_path, monkeyp
     ],
 )
 def test_invalid_policy_cannot_silently_disable_domain_rules(content, error, tmp_path, monkeypatch):
-    policy_module = importlib.import_module("knowledgeops_agent.knowledge_policy")
+    policy_module = importlib.import_module("knowledgeops_agent.knowledge.policy")
     resource = tmp_path / "policy.md"
     resource.write_bytes(content)
     monkeypatch.setattr(policy_module, "_POLICY_PATH", resource)
@@ -50,7 +50,7 @@ def test_invalid_policy_cannot_silently_disable_domain_rules(content, error, tmp
 
 
 def test_resource_update_changes_prompt_and_identity_without_stale_cache(tmp_path, monkeypatch):
-    policy_module = importlib.import_module("knowledgeops_agent.knowledge_policy")
+    policy_module = importlib.import_module("knowledgeops_agent.knowledge.policy")
     resource = tmp_path / "policy.md"
     resource.write_text("版本：test-v1\n先核对适用范围。\n", encoding="utf-8")
     monkeypatch.setattr(policy_module, "_POLICY_PATH", resource)

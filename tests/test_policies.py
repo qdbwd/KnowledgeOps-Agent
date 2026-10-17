@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from knowledgeops_agent.policies import (
+from knowledgeops_agent.legacy.policies import (
     can_write_canonical_knowledge,
     consume_step,
     is_within_directory,
 )
-from knowledgeops_agent.state import initial_state
+from knowledgeops_agent.legacy.state import initial_state
 
 
 def test_initial_state_rejects_blank_request() -> None:

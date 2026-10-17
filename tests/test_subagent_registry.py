@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, text
 
 @pytest.fixture
 def registry(business_sessions):
-    module = importlib.import_module("knowledgeops_agent.subagent_registry")
+    module = importlib.import_module("knowledgeops_agent.harness.subagents.registry")
     return module.SubagentRegistry(business_sessions)
 
 
@@ -49,8 +49,8 @@ def test_default_snapshot_builtin_and_disabled_custom_are_separate(registry):
 @pytest.mark.parametrize("change", ["add", "remove"])
 def test_builtin_binding_survives_live_catalog_changes(registry, monkeypatch, change):
     """目录增删不能给旧内置角色扩权，也不能使未改变的冻结修订失效。"""
-    module = importlib.import_module("knowledgeops_agent.subagent_registry")
-    catalog = importlib.import_module("knowledgeops_agent.tool_catalog")
+    module = importlib.import_module("knowledgeops_agent.harness.subagents.registry")
+    catalog = importlib.import_module("knowledgeops_agent.harness.tools.catalog")
     frozen = registry.get("builtin-researcher")
     skill_rows = module.load_skills()
     if change == "add":
@@ -128,7 +128,7 @@ def test_builtin_catalog_result_cannot_mutate_another_binding(registry):
 
 def test_builtin_new_revision_keeps_old_template_available(registry, monkeypatch):
     """模拟发布新版内置模板；新任务用新版，旧绑定和历史仍按原修订解释。"""
-    module = importlib.import_module("knowledgeops_agent.subagent_registry")
+    module = importlib.import_module("knowledgeops_agent.harness.subagents.registry")
     original = registry.get("builtin-researcher")
     replacement = {**deepcopy(original), "revision": 2, "system_prompt": "新版模板"}
     monkeypatch.setattr(module, "_BUILTIN_REVISIONS", {1: original, 2: replacement})

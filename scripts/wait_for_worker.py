@@ -2,8 +2,8 @@
 
 import time
 
-from knowledgeops_agent.config import Settings
-from knowledgeops_agent.task_queue import create_queue
+from knowledgeops_agent.app.runs.queue import create_queue
+from knowledgeops_agent.core.config import Settings
 
 
 def main():

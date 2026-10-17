@@ -10,8 +10,8 @@ import httpx
 from pypdf import PdfWriter
 from test_pdf_sources import scan_pdf, text_pdf
 
-from knowledgeops_agent.config import get_settings
-from knowledgeops_agent.task_queue import create_queue
+from knowledgeops_agent.app.runs.queue import create_queue
+from knowledgeops_agent.core.config import get_settings
 
 
 def main():

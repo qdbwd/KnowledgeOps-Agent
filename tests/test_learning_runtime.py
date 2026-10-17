@@ -8,12 +8,12 @@ from langgraph.checkpoint.memory import InMemorySaver
 from test_runtime import DraftProvider, setup_run
 from test_runtime import runtime_services as _runtime_services
 
-from knowledgeops_agent.file_store import FileStore
-from knowledgeops_agent.learning_profiles import LearningProfileService
-from knowledgeops_agent.learning_tasks import LearningTaskService
-from knowledgeops_agent.preferences import MemoryService
-from knowledgeops_agent.publication_intent import ensure_publication_intent
-from knowledgeops_agent.run_resources import prepare_resources
+from knowledgeops_agent.harness.runtime.resources import prepare_resources
+from knowledgeops_agent.knowledge.intent import ensure_publication_intent
+from knowledgeops_agent.learning.profiles import LearningProfileService
+from knowledgeops_agent.learning.tasks import LearningTaskService
+from knowledgeops_agent.memory.service import MemoryService
+from knowledgeops_agent.persistence.files import FileStore
 
 runtime_services = _runtime_services
 
@@ -65,7 +65,7 @@ def test_learning_config_enters_real_graph_once_and_is_frozen(runtime_services, 
     value = json.loads(background.text.split("\n", 1)[1])
     assert value["learning"]["task"]["id"] == task["id"]
     assert "并发事务" in value["learning"]["configuration"]["profiles"][1]["content"]
-    assert memory["id"] not in {m["id"] for m in value["preferences"]}
+    assert memory["id"] not in {m["id"] for m in value.get("preferences", [])}
     assert background.text.count("独特习惯") == 1
     profiles.update(profile["id"], expected_revision=2, content="后来的修改")
     frozen = profiles.effective(context.resources["learning"]["profiles"])

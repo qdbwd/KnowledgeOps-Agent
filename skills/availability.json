@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "disabled": {
+    "bootstrap": "DeerFlow SOUL/USER 初始化约定不对应本应用已有的学习配置与长期记忆；保留模板，尚未适配写入入口。",
+    "chart-visualization": "脚本调用外部图表渲染服务，尚未核对服务部署、数据外发及输出合同。",
+    "claude-to-deerflow": "用于连接独立 DeerFlow 应用，不是本应用的子 Agent 接口；没有配置该服务。",
+    "data-analysis": "依赖 DuckDB/openpyxl 等未声明的运行环境，原脚本还会自动 pip 安装；待显式配置依赖并移除自动安装。",
+    "find-skills": "原安装器依赖 DeerFlow 安装位置与技能管理流程，尚未适配本应用。",
+    "image-generation": "需要额外图像模型服务、密钥及费用授权；本轮没有接入。",
+    "music-generation": "需要额外音乐生成服务和密钥；本轮没有接入。",
+    "podcast-generation": "需要语音生成服务、凭据及音频处理依赖；本轮没有接入。",
+    "ppt-generation": "依赖上游演示文稿脚本、资源路径及可选生图链路，尚未完成运行环境适配。",
+    "skill-creator": "依赖 DeerFlow skill_manage 及其用户目录/审查流程；本应用没有该工具。",
+    "skill-reviewer": "依赖 DeerFlow review_skill_package 工具；包内 evals 为审查测试材料，不能注册为正式技能。",
+    "systematic-literature-review": "含检索脚本与文献处理流程，尚未适配运行路径、工具及完整依赖。",
+    "vercel-deploy": "会向外部平台发布项目；没有配置本应用的部署授权及产物传输流程。",
+    "video-generation": "需要额外视频生成服务和密钥；本轮没有接入。"
+  }
+}

@@ -4,16 +4,16 @@ import importlib
 
 import pytest
 
-from knowledgeops_agent.file_store import FileStore
-from knowledgeops_agent.jobs import RunService
-from knowledgeops_agent.preferences import MemoryService
+from knowledgeops_agent.app.runs.service import RunService
+from knowledgeops_agent.memory.service import MemoryService
+from knowledgeops_agent.persistence.files import FileStore
 
 
 @pytest.fixture
 def learning(business_sessions, tmp_path):
     business_sessions.configure(info={"file_store": FileStore(tmp_path)})
-    tasks = importlib.import_module("knowledgeops_agent.learning_tasks")
-    profiles = importlib.import_module("knowledgeops_agent.learning_profiles")
+    tasks = importlib.import_module("knowledgeops_agent.learning.tasks")
+    profiles = importlib.import_module("knowledgeops_agent.learning.profiles")
     return (
         tasks.LearningTaskService(business_sessions),
         profiles.LearningProfileService(business_sessions),

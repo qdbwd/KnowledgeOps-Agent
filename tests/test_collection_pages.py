@@ -2,9 +2,9 @@
 
 from datetime import UTC, datetime, timedelta
 
-from knowledgeops_agent.db import ChangeSet, Run
-from knowledgeops_agent.jobs import RunService
-from knowledgeops_agent.knowledge import KnowledgeService
+from knowledgeops_agent.app.runs.service import RunService
+from knowledgeops_agent.knowledge.service import KnowledgeService
+from knowledgeops_agent.persistence.models import ChangeSet, Run
 
 
 def seed(sessions):

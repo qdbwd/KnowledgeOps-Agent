@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 
-from knowledgeops_agent.db import Evidence
+from knowledgeops_agent.persistence.models import Evidence
 
 runtime_services = _runtime_services
 

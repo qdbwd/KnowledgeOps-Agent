@@ -26,18 +26,19 @@ from sqlalchemy import select
 
 from evaluation.checks import cited_texts_complete, collect_citations, visible_citation_ids
 from evaluation.run import all_events, fingerprint, isolated_settings
-from knowledgeops_agent.config import Settings
-from knowledgeops_agent.db import KnowledgeVersion
-from knowledgeops_agent.evaluation import ReportService
-from knowledgeops_agent.mcp_calls import MCPCalls
-from knowledgeops_agent.mcp_registry import MCPRegistry
-from knowledgeops_agent.model_gateway import ModelGateway
-from knowledgeops_agent.preferences import PreferenceService
-from knowledgeops_agent.response_validation import visible_length
-from knowledgeops_agent.run_resources import ResourceService
-from knowledgeops_agent.services import create_services
-from knowledgeops_agent.task_queue import worker_lease
-from knowledgeops_agent.worker import execute_run
+from knowledgeops_agent.app.runs.children import ChildRuns
+from knowledgeops_agent.app.runs.queue import worker_lease
+from knowledgeops_agent.app.runs.worker import execute_run
+from knowledgeops_agent.app.services import create_services
+from knowledgeops_agent.core.config import Settings
+from knowledgeops_agent.diagnostics.reports import ReportService
+from knowledgeops_agent.harness.mcp.calls import MCPCalls
+from knowledgeops_agent.harness.mcp.registry import MCPRegistry
+from knowledgeops_agent.harness.models.gateway import ModelGateway
+from knowledgeops_agent.harness.models.validation import visible_length
+from knowledgeops_agent.harness.runtime.resources import ResourceService
+from knowledgeops_agent.memory.service import PreferenceService
+from knowledgeops_agent.persistence.models import KnowledgeVersion
 
 BUDGETS = {"model_requests": 12, "tool_calls": 60, "searches": 4, "active_seconds": 480}
 MATERIAL = (
@@ -162,7 +163,7 @@ class AuxiliaryExperiment(AgentMiddleware):
 @contextmanager
 def auxiliary_policy(mode):
     """在构图时插入实验中间件；退出后还原，避免污染下一任务或正式Web服务。"""
-    import knowledgeops_agent.runtime as runtime
+    import knowledgeops_agent.harness.runtime.agent as runtime
 
     original = runtime.create_agent
 
@@ -243,6 +244,26 @@ class Conversation:
         )
         if result is None:
             raise RuntimeError("evaluation queue rejected expected generation")
+        # 无常驻Celery的显式验收器也必须投递持久子Run，不能把主图等待当成完成。
+        # 这里复用生产worker；并发语义另由三槽worker用例证明。人工待办不自动批准。
+        for _ in range(run["budgets"]["tool_calls"] + 1):
+            if result["status"] != "waiting_children":
+                break
+            dispatched = False
+            for child in ChildRuns(self.services.jobs).list(run["id"]):
+                queued = self.services.jobs.get_run(child["task_id"])
+                if queued["status"] == "queued":
+                    execute_run(queued["id"], queued["generation"], services=self.services,
+                                worker_id=f"optimization-child:{queued['id']}")
+                    dispatched = True
+            result = self.services.jobs.get_run(run["id"])
+            if result["status"] == "queued":
+                result = execute_run(run["id"], result["generation"], services=self.services,
+                                     worker_id="optimization-evaluation")
+            elif not dispatched:
+                break
+        else:
+            raise RuntimeError("evaluation family exceeded its bounded dispatch allowance")
         data = capture(self.services, run["id"])
         self.turns.append(data)
         return data
@@ -527,8 +548,8 @@ def delegation_case(services, *, grouped_tools=False, model_budget=24):
     只在第二个子任务完成后模拟父回执丢失，不冒充进程kill。不同配置保留
     不同案例/报告身份，不能把新工具策略的结果回填原委派或业务验收。
     """
-    import knowledgeops_agent.delegation as module
-    from knowledgeops_agent.subagent_registry import SubagentRegistry
+    import knowledgeops_agent.harness.subagents.delegation as module
+    from knowledgeops_agent.harness.subagents.registry import SubagentRegistry
 
     left = services.sources.import_text("研究材料A", MATERIAL)
     right = services.sources.import_text(
@@ -736,7 +757,7 @@ def tool_policy_case(services):
     预算12是主子共享的硬上限；本例不修改正常应用策略，也不靠在线模型测试
     明确拒绝的越权调用。该拒绝已有离线覆盖，在线主要证明受限装配仍可工作。
     """
-    from knowledgeops_agent.tool_policy import ToolPolicyService
+    from knowledgeops_agent.harness.tools.policy import ToolPolicyService
 
     policy = ToolPolicyService(services.sessions).update(
         expected_revision=0,

@@ -13,7 +13,7 @@ runtime_services = _runtime_services
 
 
 def resource_service(context):
-    module = importlib.import_module("knowledgeops_agent.run_resources")
+    module = importlib.import_module("knowledgeops_agent.harness.runtime.resources")
     return module.ResourceService(context.jobs.sessions)
 
 
@@ -26,10 +26,10 @@ def test_snapshot_is_immutable_and_child_inherits_root_resources(runtime_service
     }
     assert first["policy"]["content"]
     # 部署新提示后，恢复/委派仍须使用原任务冻结的行为指令，不能暗换成新文案。
-    monkeypatch.setattr("knowledgeops_agent.runtime.SYSTEM_PROMPT", "部署后的新行为指令")
+    monkeypatch.setattr("knowledgeops_agent.harness.runtime.agent.SYSTEM_PROMPT", "部署后的新行为指令")
     assert first["prompts"]["system"] != "部署后的新行为指令"
     monkeypatch.setattr(
-        "knowledgeops_agent.run_resources.load_knowledge_policy",
+        "knowledgeops_agent.harness.runtime.resources.load_knowledge_policy",
         lambda: pytest.fail("a frozen run must not reload changed content"),
     )
     child = context.jobs.start_child(context.root_id, "核对来源", operation_key="child-resource")
@@ -38,7 +38,7 @@ def test_snapshot_is_immutable_and_child_inherits_root_resources(runtime_service
 
 
 def test_old_run_cannot_fabricate_resource_snapshot(runtime_services):
-    from knowledgeops_agent.db import Run
+    from knowledgeops_agent.persistence.models import Run
 
     _, context, _ = setup_run(runtime_services)
     with context.jobs.sessions.begin() as session:
@@ -51,7 +51,7 @@ def test_old_run_cannot_fabricate_resource_snapshot(runtime_services):
 def test_missing_required_policy_fails_before_intent_model_request(runtime_services, monkeypatch):
     from types import SimpleNamespace
 
-    from knowledgeops_agent.worker import execute_run
+    from knowledgeops_agent.app.runs.worker import execute_run
 
     jobs, knowledge, sources, ledger = runtime_services
     _, prepared, _ = setup_run(runtime_services, mode="ask")
@@ -59,14 +59,15 @@ def test_missing_required_policy_fails_before_intent_model_request(runtime_servi
     run = jobs.enqueue(
         jobs.create_conversation()["id"], "请解释知识库", request_key="missing-policy"
     )
-    policy = importlib.import_module("knowledgeops_agent.knowledge_policy")
+    policy = importlib.import_module("knowledgeops_agent.knowledge.policy")
     monkeypatch.setattr(policy, "_POLICY_PATH", policy._POLICY_PATH.with_name("missing.md"))
     services = SimpleNamespace(
         jobs=jobs,
         knowledge=knowledge,
         sources=sources,
         gateway=prepared.gateway,
-        settings=SimpleNamespace(workspace_root=None, workspace_execute_timeout=60),
+        settings=SimpleNamespace(workspace_root=None, workspace_execute_timeout=60,
+                                 workspace_output_limit_bytes=10485760),
     )
     result = execute_run(
         run["id"], 1, services=services, checkpointer=InMemorySaver(), worker_id="w"
@@ -76,8 +77,8 @@ def test_missing_required_policy_fails_before_intent_model_request(runtime_servi
 
 
 def test_resource_snapshot_has_no_live_clients_or_secrets_and_detects_corruption(runtime_services):
-    from knowledgeops_agent.db import RunResourceSnapshot
-    from knowledgeops_agent.tool_policy import baseline_policy
+    from knowledgeops_agent.harness.tools.policy import baseline_policy
+    from knowledgeops_agent.persistence.models import RunResourceSnapshot
 
     _, context, _ = setup_run(runtime_services)
     service = resource_service(context)
@@ -92,6 +93,7 @@ def test_resource_snapshot_has_no_live_clients_or_secrets_and_detects_corruption
         "preferences",
         "memory",
         "mcp",
+        "child_mcp",
         "subagents",
         "tool_policy",
         "web_search",
@@ -152,7 +154,7 @@ def test_actual_agent_reads_skill_and_records_version_receipt(runtime_services):
 
 
 def test_revoked_core_stops_and_revoked_skill_cannot_be_read(runtime_services):
-    from knowledgeops_agent.db import ResourceRevocation
+    from knowledgeops_agent.persistence.models import ResourceRevocation
 
     _, context, _ = setup_run(runtime_services)
     service = resource_service(context)

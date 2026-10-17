@@ -13,10 +13,10 @@ from psycopg.rows import dict_row
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-from knowledgeops_agent.checkpoint_cache import CachedPostgresSaver
-from knowledgeops_agent.event_stream import RedisEventBridge, iter_run_events
-from knowledgeops_agent.jobs import RunService
-from knowledgeops_agent.redis_support import RedisBlobCache
+from knowledgeops_agent.app.runs.events import RedisEventBridge, iter_run_events
+from knowledgeops_agent.app.runs.service import RunService
+from knowledgeops_agent.persistence.checkpoints import CachedPostgresSaver
+from knowledgeops_agent.persistence.redis import RedisBlobCache
 
 
 @pytest.fixture
@@ -334,7 +334,7 @@ def test_sse_http_contract_with_redis_enabled(business_sessions, redis_case):
 
     from fastapi.testclient import TestClient
 
-    from knowledgeops_agent.api import create_app
+    from knowledgeops_agent.app.application import create_app
 
     url, redis, prefix = redis_case
     bridge = RedisEventBridge(redis, url, prefix)
@@ -345,7 +345,9 @@ def test_sse_http_contract_with_redis_enabled(business_sessions, redis_case):
         jobs=jobs,
         event_bridge=bridge,
         sessions=business_sessions,
-        settings=SimpleNamespace(workspace_root=None),
+        settings=SimpleNamespace(
+            workspace_root=None, api_allowed_hosts="testserver,localhost,127.0.0.1"
+        ),
     )
     with TestClient(create_app(services=services, publish_jobs=False)) as client:
         response = client.get(f"/api/runs/{run['id']}/events", headers={"Last-Event-ID": "1"})

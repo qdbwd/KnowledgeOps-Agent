@@ -12,7 +12,7 @@ runtime_services = _runtime_services
 
 
 def registry(context):
-    return importlib.import_module("knowledgeops_agent.mcp_registry").MCPRegistry(
+    return importlib.import_module("knowledgeops_agent.harness.mcp.registry").MCPRegistry(
         context.jobs.sessions
     )
 
@@ -53,8 +53,8 @@ def test_successful_call_has_source_and_same_call_id_replays_without_external_ca
 ):
     _, context, _ = setup_run(runtime_services)
     configured(context)
-    from knowledgeops_agent.mcp_calls import MCPCalls
-    from knowledgeops_agent.run_resources import prepare_resources
+    from knowledgeops_agent.harness.mcp.calls import MCPCalls
+    from knowledgeops_agent.harness.runtime.resources import prepare_resources
 
     prepare_resources(context)
     calls = MCPCalls(context)
@@ -78,8 +78,8 @@ def test_side_effect_waits_for_bound_approval_and_unknown_result_is_never_retrie
 ):
     _, context, run = setup_run(runtime_services)
     configured(context, "confirm")
-    from knowledgeops_agent.mcp_calls import MCPApprovalRequired, MCPCalls
-    from knowledgeops_agent.run_resources import prepare_resources
+    from knowledgeops_agent.harness.mcp.calls import MCPApprovalRequired, MCPCalls
+    from knowledgeops_agent.harness.runtime.resources import prepare_resources
 
     prepare_resources(context)
     calls = MCPCalls(context)
@@ -92,7 +92,7 @@ def test_side_effect_waits_for_bound_approval_and_unknown_result_is_never_retrie
         calls.decide(receipt["id"], expected_hash="wrong", approve=True)
     calls.decide(receipt["id"], expected_hash=receipt["input_hash"], approve=True)
     # 模拟发出请求后进程死亡，回执已标running但没有外部结果。
-    from knowledgeops_agent.db import MCPCall
+    from knowledgeops_agent.persistence.models import MCPCall
 
     with context.jobs.sessions.begin() as session:
         session.get(MCPCall, receipt["id"]).status = "running"
@@ -109,24 +109,35 @@ def test_side_effect_waits_for_bound_approval_and_unknown_result_is_never_retrie
         calls.invoke(binding, "get_note", {"topic": "需要确认"}, call_id="new-id")
 
 
-def test_pending_approval_blocks_manual_resume_until_user_decides(runtime_services):
+@pytest.mark.parametrize("cancel", [False, True], ids=["pending", "cancelled"])
+def test_pending_approval_blocks_manual_resume_until_user_decides(runtime_services, cancel):
     _, context, run = setup_run(runtime_services)
     configured(context, "confirm")
-    from knowledgeops_agent.mcp_calls import MCPApprovalRequired, MCPCalls
-    from knowledgeops_agent.run_resources import prepare_resources
+    from knowledgeops_agent.harness.mcp.calls import MCPApprovalRequired, MCPCalls
+    from knowledgeops_agent.harness.runtime.resources import prepare_resources
 
     prepare_resources(context)
     calls = MCPCalls(context)
     with pytest.raises(MCPApprovalRequired):
         calls.invoke(context.resources["mcp"][0], "get_note", {"topic": "等待"}, call_id="wait")
-    context.jobs.cancel(run["id"])
     context.jobs.finish(
         run["id"], context.worker_id, status="interrupted", outcome={"kind": "waiting_approval"}
     )
+    if cancel:
+        # 现行合同：取消已撤回未执行提议；显式恢复不能复活旧许可。
+        context.jobs.cancel(run["id"])
+        receipt = calls.list()[0]
+        assert receipt["status"] == "denied"
+        with pytest.raises(ValueError, match="决定"):
+            calls.decide(receipt["id"], expected_hash=receipt["input_hash"], approve=True)
+        assert context.jobs.resume(run["id"])["status"] == "queued"
+        assert calls.list()[0]["status"] == "denied"
+        return
+    assert calls.list()[0]["status"] == "pending"
     with pytest.raises(ValueError, match="确认"):
         context.jobs.resume(run["id"])
     receipt = calls.list()[0]
-    # 取消不能使待确认记录永久无法拒绝；拒绝不会重新授权任何执行。
+    # 仍在等待的调用只能由明确决定继续；拒绝不授权执行外部动作。
     calls.decide(receipt["id"], expected_hash=receipt["input_hash"], approve=False)
     assert calls.list()[0]["status"] == "denied"
 
@@ -134,7 +145,7 @@ def test_pending_approval_blocks_manual_resume_until_user_decides(runtime_servic
 def test_knowledge_only_never_loads_mcp_tools(runtime_services):
     from dataclasses import replace
 
-    from knowledgeops_agent.run_resources import prepare_resources
+    from knowledgeops_agent.harness.runtime.resources import prepare_resources
 
     _, context, first = setup_run(runtime_services)
     configured(context)
@@ -145,6 +156,6 @@ def test_knowledge_only_never_loads_mcp_tools(runtime_services):
     context.jobs.claim(context.worker_id, run_id=run["id"], generation=1)
     context = replace(context, root_id=run["id"], run_id=run["id"])
     prepare_resources(context)
-    from knowledgeops_agent.mcp_calls import mcp_tools
+    from knowledgeops_agent.harness.mcp.calls import mcp_tools
 
     assert mcp_tools(context) == []

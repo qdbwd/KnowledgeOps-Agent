@@ -4,13 +4,13 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from test_model_gateway import ledger as _ledger
 
-from knowledgeops_agent.model_gateway import ModelGateway
+from knowledgeops_agent.harness.models.gateway import ModelGateway
 
 ledger = _ledger
 
 
 def profile():
-    from knowledgeops_agent.request_capacity import ModelCapacity
+    from knowledgeops_agent.harness.context.capacity import ModelCapacity
 
     return ModelCapacity(
         context_window=8192,
@@ -28,7 +28,7 @@ class Provider:
 
 @pytest.mark.parametrize("large_part", ["system", "tools", "protocol"])
 def test_complete_request_rejected_without_charge(ledger, large_part):
-    from knowledgeops_agent.request_capacity import ContextCapacityExceeded
+    from knowledgeops_agent.harness.context.capacity import ContextCapacityExceeded
 
     messages = [SystemMessage("small"), HumanMessage("任务")]
     tools = []
@@ -63,7 +63,7 @@ def test_output_reserve_and_capacity_evidence(ledger):
     assert evidence["capacity"]["estimated"] is True
     assert evidence["capacity"]["output_tokens"] == 256
     assert evidence["capacity"]["input_tokens"] > len("材料")
-    from knowledgeops_agent.request_capacity import ContextCapacityExceeded
+    from knowledgeops_agent.harness.context.capacity import ContextCapacityExceeded
 
     with pytest.raises(ContextCapacityExceeded, match="output"):
         gateway.invoke([HumanMessage("short")], root_id="root", run_id="run", max_tokens=3000)
@@ -71,7 +71,7 @@ def test_output_reserve_and_capacity_evidence(ledger):
 
 
 def test_final_provider_serializer_is_counted(ledger):
-    from knowledgeops_agent.request_capacity import ContextCapacityExceeded
+    from knowledgeops_agent.harness.context.capacity import ContextCapacityExceeded
 
     class ExtendedProvider(Provider):
         def _get_request_payload(self, messages, **kwargs):
@@ -84,7 +84,7 @@ def test_final_provider_serializer_is_counted(ledger):
 
 
 def test_profile_is_bound_to_the_verified_endpoint():
-    from knowledgeops_agent.request_capacity import load_model_capacity
+    from knowledgeops_agent.harness.context.capacity import load_model_capacity
 
     verified = load_model_capacity("deepseek-flash", "https://api.deepseek.com/v1")
     assert verified.context_window == 1048576
@@ -96,7 +96,7 @@ def test_profile_is_bound_to_the_verified_endpoint():
 
 
 def test_official_tokenizer_counts_model_prompt_instead_of_utf8_bytes():
-    from knowledgeops_agent.request_capacity import ModelCapacity
+    from knowledgeops_agent.harness.context.capacity import ModelCapacity
 
     payload = {
         "model": "deepseek-flash",
@@ -115,7 +115,7 @@ def test_official_tokenizer_counts_model_prompt_instead_of_utf8_bytes():
 
 
 def test_frozen_old_capacity_retains_original_counter():
-    from knowledgeops_agent.request_capacity import ModelCapacity
+    from knowledgeops_agent.harness.context.capacity import ModelCapacity
 
     original = profile().model_dump(exclude={"token_counter"})
     restored = ModelCapacity.from_snapshot(original)

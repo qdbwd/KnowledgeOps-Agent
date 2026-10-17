@@ -13,7 +13,7 @@ runtime_services = _runtime_services
 
 
 def enable_continuity(context):
-    from knowledgeops_agent.tool_policy import ToolPolicyService
+    from knowledgeops_agent.harness.tools.policy import ToolPolicyService
 
     service = ToolPolicyService(context.jobs.sessions)
     policy = service.get()
@@ -31,7 +31,7 @@ def test_note_schema_exposes_constraints_that_real_model_cannot_guess():
     """真实联调的中文key被拒绝；参数约束必须出现在模型实际收到的Schema中。"""
     from langchain_core.utils.function_calling import convert_to_openai_tool
 
-    from knowledgeops_agent.task_continuity import task_note
+    from knowledgeops_agent.harness.context.continuity import task_note
 
     properties = convert_to_openai_tool(task_note)["function"]["parameters"]["properties"]
     assert properties["key"]["pattern"] == "^[a-zA-Z0-9_-]{1,40}$"
@@ -46,7 +46,7 @@ def test_real_graph_identifies_bad_note_key_and_accepts_corrected_call(runtime_s
     """回放真实失败参数，验证错误指出key后可以修正，笔记进入下轮输入和快照。"""
     from langchain_core.messages import AIMessageChunk, ToolMessage
 
-    from knowledgeops_agent.continuation import from_state
+    from knowledgeops_agent.harness.context.continuation import from_state
 
     module, context, run = setup_run(runtime_services)
     enable_continuity(context)
@@ -104,7 +104,7 @@ def test_real_graph_search_read_note_survive_next_run_without_inheriting_authori
 
     from langchain_core.messages import AIMessageChunk, ToolMessage
 
-    from knowledgeops_agent.continuation import from_state
+    from knowledgeops_agent.harness.context.continuation import from_state
 
     module, context, run = setup_run(runtime_services)
     enable_continuity(context)
@@ -173,7 +173,7 @@ def test_real_graph_search_read_note_survive_next_run_without_inheriting_authori
 
 
 def test_role_filter_precedes_result_limit(runtime_services):
-    from knowledgeops_agent.task_history import capture_history, lookup_history
+    from knowledgeops_agent.harness.context.history import capture_history, lookup_history
 
     _, context, _ = setup_run(runtime_services)
     messages = [HumanMessage("回执只能查询不要重做", id="original")]
@@ -191,7 +191,7 @@ def test_old_snapshot_original_artifact_is_indexed_without_reintroducing_summary
 
     from langchain_core.messages import message_to_dict
 
-    from knowledgeops_agent.task_history import bootstrap_history, lookup_history
+    from knowledgeops_agent.harness.context.history import bootstrap_history, lookup_history
 
     _, context, _ = setup_run(runtime_services)
     original = HumanMessage("原始约束孤岛", id="original")
@@ -213,7 +213,7 @@ def test_unreadable_legacy_history_keeps_available_context_and_reports_gap(
 ):
     from langchain_core.messages import message_to_dict
 
-    from knowledgeops_agent.task_history import bootstrap_history, lookup_history
+    from knowledgeops_agent.harness.context.history import bootstrap_history, lookup_history
 
     _, context, _ = setup_run(runtime_services)
     artifact = context.jobs.save_artifact(context.run_id, "context_original", "not-json")
@@ -248,7 +248,7 @@ def test_compaction_then_new_turn_can_read_original_omitted_from_summary(runtime
 
     from langchain_core.messages import AIMessageChunk, ToolMessage
 
-    from knowledgeops_agent.continuation import from_state
+    from knowledgeops_agent.harness.context.continuation import from_state
 
     module, context, run = setup_run(runtime_services)
     enable_continuity(context)
@@ -325,7 +325,7 @@ def test_compaction_then_new_turn_can_read_original_omitted_from_summary(runtime
 
 
 def test_compacted_history_can_recover_exact_chinese_source_and_paginate(runtime_services):
-    from knowledgeops_agent.task_history import capture_history, lookup_history
+    from knowledgeops_agent.harness.context.history import capture_history, lookup_history
 
     _, context, _ = setup_run(runtime_services)
     text = "订单写入超时，先查回执。" + "早期详细解释。" * 1000 + "末尾定位词孤岛"
@@ -336,7 +336,7 @@ def test_compacted_history_can_recover_exact_chinese_source_and_paginate(runtime
     assert len(found["results"]) == 1
     source_id = found["results"][0]["id"]
     assert lookup_history(context, state, query="孤岛")["results"][0]["id"] == source_id
-    from knowledgeops_agent.task_continuity import history_read
+    from knowledgeops_agent.harness.context.continuity import history_read
 
     runtime = SimpleNamespace(context=context, state=state)
     page = history_read.func(source_id=source_id, offset=4000, runtime=runtime)
@@ -346,7 +346,7 @@ def test_compacted_history_can_recover_exact_chinese_source_and_paginate(runtime
 
 
 def test_archive_reachability_is_checkpoint_and_scope_bound(runtime_services):
-    from knowledgeops_agent.task_history import capture_history, lookup_history
+    from knowledgeops_agent.harness.context.history import capture_history, lookup_history
 
     _, context, _ = setup_run(runtime_services)
     first = capture_history(context, {}, [HumanMessage("原约束", id="first")])
@@ -361,7 +361,7 @@ def test_archive_reachability_is_checkpoint_and_scope_bound(runtime_services):
 
 
 def test_capture_is_idempotent_and_source_allowlist_omits_reasoning(runtime_services):
-    from knowledgeops_agent.task_history import capture_history, lookup_history
+    from knowledgeops_agent.harness.context.history import capture_history, lookup_history
 
     _, context, _ = setup_run(runtime_services)
     visible = AIMessage(
@@ -388,8 +388,8 @@ def test_capture_is_idempotent_and_source_allowlist_omits_reasoning(runtime_serv
 def test_task_note_checks_sources_and_supports_deletion_without_granting_authority(
     runtime_services,
 ):
-    from knowledgeops_agent.task_continuity import task_note
-    from knowledgeops_agent.task_history import lookup_history
+    from knowledgeops_agent.harness.context.continuity import task_note
+    from knowledgeops_agent.harness.context.history import lookup_history
     from knowledgeops_agent.vendor.deerflow.task_continuity_state import merge_task_notes
 
     _, context, _ = setup_run(runtime_services)
@@ -411,7 +411,7 @@ def test_task_note_checks_sources_and_supports_deletion_without_granting_authori
 
 
 def test_parallel_notes_do_not_evict_existing_keys(runtime_services):
-    from knowledgeops_agent.task_continuity import task_note
+    from knowledgeops_agent.harness.context.continuity import task_note
 
     _, context, _ = setup_run(runtime_services)
     notes = {f"n{i}": {"content": str(i), "source_ids": []} for i in range(7)}

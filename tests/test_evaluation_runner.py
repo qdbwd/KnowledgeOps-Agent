@@ -343,7 +343,7 @@ def test_optimization_checks_agent_fixed_version_not_the_latest_user_version(
     published_clickable,
 ):
     """后来的用户修改、种子内容不得替代或污染当时的Agent发布正文验收。"""
-    from knowledgeops_agent.db import KnowledgeDocument, KnowledgeVersion
+    from knowledgeops_agent.persistence.models import KnowledgeDocument, KnowledgeVersion
 
     runner = importlib.import_module("evaluation.optimization")
     source = services.sources.import_text("固定历史", "发布产生不可变历史版本。")

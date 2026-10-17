@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from knowledgeops_agent.db import Base
+from knowledgeops_agent.persistence.models import Base
 
 
 @pytest.fixture(autouse=True)

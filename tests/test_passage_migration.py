@@ -51,9 +51,9 @@ def test_empty_database_enables_extension_and_builds_bm25_indexes():
 
 
 def test_nonempty_backfill_preserves_sources_and_searches_late_chunks():
-    from knowledgeops_agent.db import KnowledgeSearchChunk, TaskHistoryChunk
-    from knowledgeops_agent.knowledge import KnowledgeService
-    from knowledgeops_agent.retrieval_index import rebuild_history_index
+    from knowledgeops_agent.knowledge.service import KnowledgeService
+    from knowledgeops_agent.persistence.models import KnowledgeSearchChunk, TaskHistoryChunk
+    from knowledgeops_agent.retrieval.index import rebuild_history_index
 
     engine = create_engine(os.environ["TEST_DATABASE_URL"])
     assert engine.url.database == "knowledgeops_test"

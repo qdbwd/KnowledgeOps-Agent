@@ -4,7 +4,7 @@ import pytest
 from test_api_worker import client as _client
 from test_api_worker import services as _services
 
-from knowledgeops_agent.file_store import FileStore
+from knowledgeops_agent.persistence.files import FileStore
 
 services = _services
 client = _client

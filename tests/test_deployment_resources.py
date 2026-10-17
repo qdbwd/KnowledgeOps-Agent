@@ -4,14 +4,17 @@ import json
 
 import pytest
 
-from knowledgeops_agent.config import Settings
-from knowledgeops_agent.request_capacity import load_model_capacity
-from knowledgeops_agent.run_resources import ResourceUnavailable, load_skills, skill_catalog
-from knowledgeops_agent.web_search_config import load_web_search_config
+from knowledgeops_agent.core.config import Settings
+from knowledgeops_agent.harness.context.capacity import load_model_capacity
+from knowledgeops_agent.harness.runtime.resources import (
+    load_skills,
+    skill_catalog,
+)
+from knowledgeops_agent.sources.search_config import load_web_search_config
 
 
 def test_custom_skill_directory_uses_content_revision_and_real_read_backend(tmp_path, monkeypatch):
-    from knowledgeops_agent.skill_resources import build_skill_middleware
+    from knowledgeops_agent.harness.skills.resources import build_skill_middleware
 
     root = tmp_path / "skills"
     (root / "example").mkdir(parents=True)
@@ -27,12 +30,12 @@ def test_custom_skill_directory_uses_content_revision_and_real_read_backend(tmp_
     assert backend.download_files([rows[0]["resource"]])[0].content.decode() == text
     assert load_skills()[0]["sha256"] != rows[0]["sha256"]
     monkeypatch.setenv("SKILLS_DIRECTORY", str(tmp_path / "missing"))
-    with pytest.raises(ResourceUnavailable, match="缺失"):
-        load_skills()
+    assert load_skills() == []
+    assert "缺失" in skill_catalog()[0]["unavailable_reason"]
 
 
 def test_environment_selects_validated_search_and_model_profile(tmp_path, monkeypatch):
-    from knowledgeops_agent.request_capacity import ModelCapacity
+    from knowledgeops_agent.harness.context.capacity import ModelCapacity
 
     search = tmp_path / "search.yaml"
     search.write_text("version: 1\nmax_results: 2\nregion: us-en\n", encoding="utf-8")
@@ -58,16 +61,21 @@ def test_invalid_imported_skill_has_actionable_configuration_error(tmp_path, mon
     directory.mkdir()
     (directory / "SKILL.md").write_text(f"---\n{declaration}\n---\nBody", encoding="utf-8")
     monkeypatch.setenv("SKILLS_DIRECTORY", str(tmp_path))
-    with pytest.raises(ResourceUnavailable, match="技能声明无效"):
-        skill_catalog()
+    row = skill_catalog()[0]
+    assert not row["enabled"] and "技能声明无效" in row["unavailable_reason"]
+    assert load_skills() == []
 
 
 def test_builtin_and_imported_skills_have_valid_tool_and_path_adaptations(monkeypatch):
+    from knowledgeops_agent.harness.skills.packages import is_skill_entry
+
     monkeypatch.delenv("SKILLS_DIRECTORY", raising=False)
     rows = load_skills()
-    assert {row["name"] for row in rows} == {
+    assert {row["name"] for row in rows if is_skill_entry(row)} == {
         "guided-learning", "knowledge-maintenance", "evidence-check",
         "code-documentation", "academic-paper-review",
+        "consulting-analysis", "deep-research", "frontend-design", "github-deep-research",
+        "newsletter-generation", "surprise-me", "web-design-guidelines",
     }
     for row in rows:
         assert "/mnt/user-data/" not in row["content"]

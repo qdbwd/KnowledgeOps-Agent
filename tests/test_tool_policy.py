@@ -20,7 +20,7 @@ def test_default_policy_read_does_not_create_configuration_or_grant_calls(client
     assert policy["resolved_main_tools"] is None
     assert policy["enabled"]["middleware:read_file"] is True
     assert policy["enabled"]["middleware:task"] is True
-    from knowledgeops_agent.db import ToolPolicy, ToolPolicyRevision
+    from knowledgeops_agent.persistence.models import ToolPolicy, ToolPolicyRevision
 
     with services.sessions() as session:
         assert session.scalar(select(func.count()).select_from(ToolPolicy)) == 0
@@ -29,7 +29,7 @@ def test_default_policy_read_does_not_create_configuration_or_grant_calls(client
 
 
 def test_policy_revisions_conflict_and_disable_enable_do_not_revive_old_binding(client, services):
-    from knowledgeops_agent.tool_policy import ToolPolicyService
+    from knowledgeops_agent.harness.tools.policy import ToolPolicyService
 
     service = ToolPolicyService(services.sessions)
     original = service.get()
@@ -70,6 +70,7 @@ def test_main_group_null_empty_and_explicit_selection_have_distinct_meaning(clie
     ).json()
     assert set(grouped["resolved_main_tools"]) == {
         "builtin:list_materials",
+        "builtin:list_evidence",
         "builtin:inspect_material",
         "builtin:read_source",
         "builtin:read_tool_result",
@@ -102,7 +103,7 @@ def test_policy_rejects_unknown_or_server_owned_fields(client, changes):
 
 
 def test_policy_first_write_race_has_one_winner_and_preserves_history(business_sessions):
-    from knowledgeops_agent.tool_policy import ToolPolicyService
+    from knowledgeops_agent.harness.tools.policy import ToolPolicyService
 
     def change(name):
         try:

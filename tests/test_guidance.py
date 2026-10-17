@@ -153,8 +153,8 @@ def test_guidance_during_model_request_is_applied_before_tools_or_final_answer(
 def test_applied_guidance_reconstructs_state_after_database_checkpoint_gap(runtime_services):
     from types import SimpleNamespace
 
-    from knowledgeops_agent.guidance import GuidanceMiddleware
-    from knowledgeops_agent.run_resources import prepare_resources
+    from knowledgeops_agent.app.runs.guidance import GuidanceMiddleware
+    from knowledgeops_agent.harness.runtime.resources import prepare_resources
 
     _, context, run = setup_run(runtime_services)
     prepare_resources(context)
@@ -170,7 +170,7 @@ def test_applied_guidance_reconstructs_state_after_database_checkpoint_gap(runti
 
 
 def test_draft_transaction_cannot_write_while_guidance_pending(runtime_services):
-    from knowledgeops_agent.jobs import SteeringPending
+    from knowledgeops_agent.app.runs.service import SteeringPending
 
     _, context, run = setup_run(runtime_services)
     queued = context.jobs.enqueue(run["conversation_id"], "等一下", request_key="no-new-draft")

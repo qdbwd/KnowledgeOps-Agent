@@ -51,8 +51,8 @@ def upgrade():
     )
     # 当前小型个人应用一次事务完成回填。失败时Alembic回滚表与数据，不能出现
     # 新版本已生效而一半旧材料搜不到的状态；较大部署应另做分批/双写迁移。
-    from knowledgeops_agent.db import KnowledgeVersion
-    from knowledgeops_agent.retrieval_index import add_history_chunks, add_knowledge_chunks
+    from knowledgeops_agent.persistence.models import KnowledgeVersion
+    from knowledgeops_agent.retrieval.index import add_history_chunks, add_knowledge_chunks
 
     session = Session(bind=op.get_bind())
     try:

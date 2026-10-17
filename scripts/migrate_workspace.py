@@ -7,12 +7,12 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from knowledgeops_agent.config import Settings
-from knowledgeops_agent.file_store import FileStore
-from knowledgeops_agent.knowledge_files import refresh_working_files, workspace_lock
-from knowledgeops_agent.tool_catalog import tool_options
-from knowledgeops_agent.tool_policy import ToolPolicyService
-from knowledgeops_agent.workspace_storage import migrate_content, sync_knowledge_projection
+from knowledgeops_agent.core.config import Settings
+from knowledgeops_agent.harness.tools.catalog import tool_options
+from knowledgeops_agent.harness.tools.policy import ToolPolicyService
+from knowledgeops_agent.knowledge.files import refresh_working_files, workspace_lock
+from knowledgeops_agent.persistence.files import FileStore
+from knowledgeops_agent.persistence.workspace import migrate_content, sync_knowledge_projection
 
 
 def main():

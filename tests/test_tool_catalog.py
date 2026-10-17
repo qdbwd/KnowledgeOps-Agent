@@ -13,8 +13,8 @@ from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 from test_subagent_runtime import role
 
-from knowledgeops_agent.db import Run
-from knowledgeops_agent.subagent_registry import options
+from knowledgeops_agent.harness.subagents.registry import options
+from knowledgeops_agent.persistence.models import Run
 
 runtime_services = _runtime_services
 
@@ -32,6 +32,7 @@ def test_role_options_describe_shared_groups_without_adding_write_tools():
         "knowledge_history",
         "read_knowledge",
         "list_materials",
+        "list_evidence",
         "inspect_material",
         "read_source",
         "read_tool_result",
@@ -49,6 +50,7 @@ def test_role_options_describe_shared_groups_without_adding_write_tools():
     groups = {row["id"]: row["tool_ids"] for row in result.get("tool_groups", [])}
     assert groups.get("materials_read") == [
         "builtin:list_materials",
+        "builtin:list_evidence",
         "builtin:inspect_material",
         "builtin:read_source",
     ]

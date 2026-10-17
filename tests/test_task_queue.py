@@ -9,12 +9,12 @@ import pytest
 from celery.contrib.testing.worker import start_worker
 from sqlalchemy import select, text
 
-from knowledgeops_agent.jobs import RunService
+from knowledgeops_agent.app.runs.service import RunService
 
 
 def test_explicit_broker_isolates_connections_from_parent_environment(monkeypatch):
     """测试实例的 broker 参数应生效，不能意外连接开发进程的 DB 0。"""
-    queue_module = importlib.import_module("knowledgeops_agent.task_queue")
+    queue_module = importlib.import_module("knowledgeops_agent.app.runs.queue")
     monkeypatch.setenv("CELERY_BROKER_URL", "redis://redis:6379/0")
     app = queue_module.create_queue("redis://redis:6379/15")
     try:
@@ -31,8 +31,8 @@ def make_run(sessions):
 
 
 def test_outbox_survives_publish_failure_without_losing_queued_run(business_sessions):
-    queue_module = importlib.import_module("knowledgeops_agent.task_queue")
-    db = importlib.import_module("knowledgeops_agent.db")
+    queue_module = importlib.import_module("knowledgeops_agent.app.runs.queue")
+    db = importlib.import_module("knowledgeops_agent.persistence.models")
     service, run = make_run(business_sessions)
 
     class FailingBroker:
@@ -49,7 +49,7 @@ def test_outbox_survives_publish_failure_without_losing_queued_run(business_sess
 
 
 def test_redis_delivery_and_duplicate_do_not_execute_twice(business_sessions):
-    queue_module = importlib.import_module("knowledgeops_agent.task_queue")
+    queue_module = importlib.import_module("knowledgeops_agent.app.runs.queue")
     service, run = make_run(business_sessions)
     queue_name = "test-" + uuid4().hex
     executed = []
@@ -100,7 +100,7 @@ def test_old_delivery_cannot_restart_interrupted_or_new_generation(business_sess
 
 
 def test_worker_lease_rejects_two_active_worker_processes(business_sessions):
-    queue_module = importlib.import_module("knowledgeops_agent.task_queue")
+    queue_module = importlib.import_module("knowledgeops_agent.app.runs.queue")
     engine = business_sessions.kw["bind"]
     with queue_module.worker_lease(engine):
         with pytest.raises(RuntimeError, match="worker"):
@@ -109,7 +109,7 @@ def test_worker_lease_rejects_two_active_worker_processes(business_sessions):
 
 
 def test_lost_lease_does_not_become_valid_after_connection_reconnect(business_sessions):
-    queue_module = importlib.import_module("knowledgeops_agent.task_queue")
+    queue_module = importlib.import_module("knowledgeops_agent.app.runs.queue")
     engine = business_sessions.kw["bind"]
     with queue_module.worker_lease(engine) as lease:
         lease.check()
@@ -123,7 +123,7 @@ def test_lost_lease_does_not_become_valid_after_connection_reconnect(business_se
 
 
 def test_lease_check_detects_unlocked_same_database_connection(business_sessions):
-    queue_module = importlib.import_module("knowledgeops_agent.task_queue")
+    queue_module = importlib.import_module("knowledgeops_agent.app.runs.queue")
     with queue_module.worker_lease(business_sessions.kw["bind"]) as lease:
         lease.connection.execute(text("SELECT pg_advisory_unlock_all()"))
         with pytest.raises(RuntimeError, match="lease"):

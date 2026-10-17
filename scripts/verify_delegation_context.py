@@ -16,9 +16,9 @@ import httpx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from knowledgeops_agent.db import ChatMessage, Run, utcnow
-from knowledgeops_agent.jobs import Budgets
-from knowledgeops_agent.task_queue import create_queue
+from knowledgeops_agent.app.runs.queue import create_queue
+from knowledgeops_agent.app.runs.service import Budgets
+from knowledgeops_agent.persistence.models import ChatMessage, Run, utcnow
 
 
 def main():

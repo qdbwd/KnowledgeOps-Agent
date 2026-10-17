@@ -5,8 +5,11 @@ import time
 
 import pytest
 
-from knowledgeops_agent.skill_resources import FrozenSkillBackend
-from knowledgeops_agent.workspace import WorkspaceBackend, build_workspace_middleware
+from knowledgeops_agent.harness.sandbox.workspace import (
+    WorkspaceBackend,
+    build_workspace_middleware,
+)
+from knowledgeops_agent.harness.skills.resources import FrozenSkillBackend
 
 
 def backend(tmp_path, **kwargs):

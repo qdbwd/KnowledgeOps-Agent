@@ -80,7 +80,7 @@ class ConfiguredReadersProvider(DraftProvider):
 
 
 def test_configured_d01_loses_receipt_once_then_reuses_completed_children(services, monkeypatch):
-    import knowledgeops_agent.worker as worker
+    import knowledgeops_agent.app.runs.worker as worker
 
     saver = InMemorySaver()
 
@@ -156,7 +156,7 @@ def test_business_child_recursion_check_rejects_standard_task(services):
 
 def test_restricted_tool_case_keeps_main_and_grouped_child_requests_separate(services, monkeypatch):
     """T01复用D01的真实图/恢复链；严格检查最终请求，不靠模型是否碰巧调用来判权限。"""
-    import knowledgeops_agent.worker as worker
+    import knowledgeops_agent.app.runs.worker as worker
     from evaluation import optimization
 
     saver = InMemorySaver()
@@ -178,6 +178,7 @@ def test_restricted_tool_case_keeps_main_and_grouped_child_requests_separate(ser
         assert set(role["resolved_tools"]) == {
             "read_tool_result",
             "list_materials",
+            "list_evidence",
             "inspect_material",
             "read_source",
         }

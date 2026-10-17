@@ -11,8 +11,8 @@ from sqlalchemy import select
 
 @pytest.fixture
 def jobs(business_sessions):
-    module = importlib.import_module("knowledgeops_agent.jobs")
-    db = importlib.import_module("knowledgeops_agent.db")
+    module = importlib.import_module("knowledgeops_agent.app.runs.service")
+    db = importlib.import_module("knowledgeops_agent.persistence.models")
     sessions = business_sessions
     now = [datetime(2026, 10, 8, tzinfo=UTC)]
     service = module.RunService(sessions, now=lambda: now[0])
@@ -92,6 +92,8 @@ def test_child_limit_and_shared_tool_search_budget(jobs):
     service.claim("worker")
     one = service.start_child(run["id"], "查找机制")
     two = service.start_child(run["id"], "查找反例")
+    assert service.claim("research-1", run_id=one["id"], generation=one["generation"])
+    assert service.claim("research-2", run_id=two["id"], generation=two["generation"])
     with pytest.raises(ValueError, match="two"):
         service.start_child(run["id"], "第三个")
     with pytest.raises(PermissionError, match="recursive"):
@@ -182,7 +184,8 @@ def test_delegation_replay_preserves_child_identity_and_completed_result(jobs):
     root = enqueue(service)
     service.claim("worker")
     child = service.start_child(root["id"], "检查资料", operation_key="delegation:0")
-    service.finish(child["id"], "worker", outcome={"answer": "已读证据"})
+    assert service.claim("child-worker", run_id=child["id"], generation=child["generation"])
+    service.finish(child["id"], "child-worker", outcome={"answer": "已读证据"})
     again = service.start_child(root["id"], "检查资料", operation_key="delegation:0")
     assert again["id"] == child["id"] and again["status"] == "completed"
     assert again["outcome"]["answer"] == "已读证据"
@@ -201,7 +204,8 @@ def test_root_resume_reuses_interrupted_child_checkpoint_and_new_owner(jobs):
     again = service.start_child(root["id"], "检查资料", operation_key="delegation:1")
     assert again["checkpoint_id"] == child["checkpoint_id"]
     assert again["generation"] == resumed["generation"]
-    assert service.guard(again["id"], worker_id="new")["id"] == root["id"]
+    assert service.claim("new-child", run_id=again["id"], generation=again["generation"])
+    assert service.guard(again["id"], worker_id="new-child")["id"] == root["id"]
 
 
 def test_cancel_during_last_model_call_cannot_finish_as_completed(jobs):

@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine, text
 
-from knowledgeops_agent import model_gateway as gateway
+from knowledgeops_agent.harness.models import gateway as gateway
 
 
 @pytest.fixture

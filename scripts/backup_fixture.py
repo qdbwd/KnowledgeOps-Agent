@@ -15,8 +15,12 @@ from uuid import uuid4
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.engine import make_url
 
-from knowledgeops_agent.config import Settings
-from knowledgeops_agent.db import (
+from knowledgeops_agent.app.runs.worker import open_checkpointer
+from knowledgeops_agent.app.services import create_services
+from knowledgeops_agent.core.config import Settings
+from knowledgeops_agent.diagnostics.reports import ReportService
+from knowledgeops_agent.harness.models.gateway import call_links, requests, roots
+from knowledgeops_agent.persistence.models import (
     Base,
     Evidence,
     KnowledgeVersion,
@@ -25,10 +29,6 @@ from knowledgeops_agent.db import (
     RunArtifact,
     SourceVersion,
 )
-from knowledgeops_agent.evaluation import ReportService
-from knowledgeops_agent.model_gateway import call_links, requests, roots
-from knowledgeops_agent.services import create_services
-from knowledgeops_agent.worker import open_checkpointer
 
 
 def settings_for(database: str, storage: Path, workspace: Path | None = None):
@@ -75,10 +75,10 @@ def seed(settings):
         )
         services.jobs.claim("backup-fixture", run_id=run["id"], generation=run["generation"])
         # 新增控制数据也必须经过真实备份恢复；配置停用，不启动外部程序或模型。
-        from knowledgeops_agent.mcp_registry import MCPRegistry
-        from knowledgeops_agent.preferences import PreferenceService
-        from knowledgeops_agent.run_resources import prepare_resources
-        from knowledgeops_agent.runtime import RunContext
+        from knowledgeops_agent.harness.mcp.registry import MCPRegistry
+        from knowledgeops_agent.harness.runtime.agent import RunContext
+        from knowledgeops_agent.harness.runtime.resources import prepare_resources
+        from knowledgeops_agent.memory.service import PreferenceService
 
         PreferenceService(services.sessions).create(
             "先说明用途，再举例。", scope="global", topic=""
@@ -86,8 +86,8 @@ def seed(settings):
         # 新学习配置正文在工作区，索引/来源在PG；必须作为一组恢复。
         # 只生成业务数据，不调度自动任务或使用模型。
         if settings.workspace_root is not None:
-            from knowledgeops_agent.learning_profiles import LearningProfileService
-            from knowledgeops_agent.learning_tasks import LearningTaskService
+            from knowledgeops_agent.learning.profiles import LearningProfileService
+            from knowledgeops_agent.learning.tasks import LearningTaskService
 
             task = LearningTaskService(services.sessions).create(
                 conversation_id=chat["id"],

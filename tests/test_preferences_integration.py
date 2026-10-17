@@ -33,9 +33,9 @@ def test_preference_web_lifecycle_requires_revision_and_no_model(client, service
 def test_single_intent_call_extracts_preference_separately_from_publication(runtime_services):
     from test_preferences import proposal
 
-    from knowledgeops_agent.preferences import PreferenceService
-    from knowledgeops_agent.publication_intent import ensure_publication_intent
-    from knowledgeops_agent.run_resources import prepare_resources
+    from knowledgeops_agent.harness.runtime.resources import prepare_resources
+    from knowledgeops_agent.knowledge.intent import ensure_publication_intent
+    from knowledgeops_agent.memory.service import PreferenceService
 
     _, context, run = setup_run(runtime_services, task="以后请先解释机制。")
 

@@ -9,7 +9,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from knowledgeops_agent.preferences import MemoryService
+from knowledgeops_agent.memory.service import MemoryService
 
 
 def test_nonempty_memory_upgrade_preserves_old_identity_versions_and_receipts():

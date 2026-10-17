@@ -7,8 +7,8 @@
 import json
 from pathlib import Path
 
-from knowledgeops_agent.config import Settings
-from knowledgeops_agent.services import create_services
+from knowledgeops_agent.app.services import create_services
+from knowledgeops_agent.core.config import Settings
 
 
 def main():

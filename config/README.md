@@ -8,6 +8,7 @@
 | API/worker日志级别 | `.env` 的 `APP_LOG_LEVEL` | 开发重启dev.py，生产重新创建API/worker；支持critical/error/warning/info/debug |
 | 端口、工作目录、配置与技能挂载目录 | `.env` 的 Compose 参数 | 重新执行启动入口 |
 | 上下文窗口、输出预留、压缩比例、计数方法 | `model-capacity.json` | 重启当前模式的应用进程；已有任务保持容量快照 |
+| 思考档位、默认值与关闭支持 | `model-reasoning.json`，DeepSeek在线时优先GET /models | 能力缓存五分钟或重启API；发送时固定，主/子Agent及恢复沿用根快照 |
 | 搜索后端、地区、安全过滤、默认条数、超时 | `web-search.yaml` | 下一新根任务，恢复沿用旧快照 |
 | 知识库目的、整理及交互规则 | `knowledge-policy.md` | 下一新根任务；必须保留唯一版本声明 |
 | 技能方法 | 根目录 `skills/` | 下一新根任务；按需读取正文 |
@@ -26,6 +27,14 @@
 
 API 文本字段长度、文件管理区权限、子 Agent 只读边界、根预算共享、worker 独占租约等属于程序合同，不为了增加“配置数量”就做成任意开关。检索分段影响持久索引，调整需要索引版本及重建，不能作为即时环境参数偷偷更改已有数据。
 
-模型适配目前以 DeepSeek Chat Completions 为验证对象。其他设备可调整供应商地址、密钥及显式容量档案；未经验证不能声称支持任意提供商。不要把物理窗口、应用工作窗口和输出长度混为一项：默认继续为 262,144 tokens 工作窗口、90% 压缩阈值。
+模型适配默认使用DeepSeek Chat Completions，MODEL_PROVIDER=deepseek保留其协议修补；openai-compatible选择标准ChatOpenAI客户端。模型、端点和容量档案仍须匹配；其他模型应使用适用的计数方法，不沿用DeepSeek专用tokenizer。思考能力优先采用DeepSeek的effort元数据，没有该协议的渠道由部署者在model-reasoning.json声明实际档位；未知能力不展示自创档位。可用MODEL_REASONING_PATH覆盖文件位置。只有Chat Completions通道完成本轮离线合同检查，不宣称任意供应商原生协议兼容。
+
+聊天输入框可选思考强度，保存为会话默认值；新普通任务及自动学习任务冻结此选择，子Agent和恢复继承根快照。默认解析为当时已知的供应商档位；自动协调器在事务内使用已校验绑定或部署声明，不发网络请求。摘要等内部用途继续原配置。关闭思考不等于关闭模型调用。模型开关关闭时不查询远端能力，使用显式文件配置；接口返回provider/configuration/unavailable说明来源。改动模板同时为本机.env补齐MODEL_PROVIDER，保留已有凭据与其他值。
+
+不要把物理窗口、应用工作窗口和输出长度混为一项：默认继续为262,144 tokens工作窗口、90%压缩阈值。
+
+新版 `model-capacity.json` 的 `input_budget_version: 1` 开启完整输入预算。`compact_target_fraction: 0.8` 是压缩后完整输入目标，必须低于触发比例；`optional_background_tokens: 16384` 和 `optional_background_fraction: 0.125` 取较小值作为压力下的可选背景目标。当前任务和有效真人要求不被当作可选资料丢弃。`deferred_mcp_tools: true` 使已获许可的MCP工具通过 `tool_search` 按需载入参数定义；显式关闭发现工具时保留直接暴露Schema的兼容路径。这些参数固定到新Run，旧容量快照保留旧算法。
+
+`.env` 的 `WORKSPACE_OUTPUT_LIMIT_BYTES` 默认10485760（10 MiB），限制每次短命令产物保存量，不是模型上下文额度。超限继续排空管道并报告截断；保存范围内可通过原产物入口补读。开发修改后重启 `dev.py`，生产重新创建应用容器；已有Run沿用冻结值。
 
 自定义文件位置可用 `.env.example` 中的 `*_PATH`/`SKILLS_DIRECTORY` 容器路径。文件错误会在请求前报告，不能静默回退到其他渠道或默认规则。密钥始终在环境中，不写入本目录，不放入浏览器 `VITE_*` 变量。

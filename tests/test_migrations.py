@@ -9,7 +9,105 @@ from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
-from knowledgeops_agent.db import Base
+from knowledgeops_agent.persistence.models import Base
+
+
+def test_0022_upgrade_preserves_history_and_unfinished_run_without_inventing_grants():
+    """从实际上一版本升级，旧预算/资源/检查点身份不变，新会话字段安全缺省。"""
+    from sqlalchemy import MetaData, Table
+
+    from knowledgeops_agent.persistence.models import utcnow
+
+    engine = create_engine(os.environ["TEST_DATABASE_URL"])
+    assert engine.url.database == "knowledgeops_test"
+    schema = "execution_migration_" + uuid4().hex
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+            connection.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+            config = Config("alembic.ini")
+            config.attributes["connection"] = connection
+            command.upgrade(config, "0022")
+            metadata = MetaData()
+            conversations = Table("conversations", metadata, autoload_with=connection)
+            old_runs = Table("runs", metadata, autoload_with=connection)
+            old_messages = Table("chat_messages", metadata, autoload_with=connection)
+            old_resources = Table("run_resource_snapshots", metadata, autoload_with=connection)
+            connection.execute(
+                conversations.insert().values(
+                    id="old-conversation", title="原会话", created_at=utcnow()
+                )
+            )
+            connection.execute(
+                old_runs.insert().values(
+                    id="old-run",
+                    root_id="old-run",
+                    conversation_id="old-conversation",
+                    checkpoint_id="old-tools-checkpoint",
+                    format_version=2,
+                    kind="agent", outcome={}, cancel_requested=False,
+                    searches=0, event_sequence=0, created_at=utcnow(),
+                    task="旧任务",
+                    budgets={
+                        "model_requests": 10,
+                        "tool_calls": 20,
+                        "searches": 5,
+                        "active_seconds": 100,
+                    },
+                    status="interrupted",
+                    tool_calls=7,
+                    active_ms=4000,
+                    input_data={"reasoning": {"requested": "default"}},
+                )
+            )
+            connection.execute(
+                old_messages.insert().values(
+                    id="old-message",
+                    conversation_id="old-conversation",
+                    run_id="old-run",
+                    role="user",
+                    content="原始用户要求",
+                    created_at=utcnow(),
+                )
+            )
+            connection.execute(
+                old_resources.insert().values(
+                    root_id="old-run", content={"frozen": "original"}, content_hash="a" * 64,
+                    created_at=utcnow(),
+                )
+            )
+            tables = ("conversations", "runs", "chat_messages", "run_resource_snapshots")
+            before = {
+                name: dict(connection.execute(text(f'SELECT * FROM "{name}"')).mappings().one())
+                for name in tables
+            }
+            command.upgrade(config, "head")
+            command.upgrade(config, "head")
+            for name in tables:
+                after = dict(connection.execute(text(f'SELECT * FROM "{name}"')).mappings().one())
+                assert {key: after[key] for key in before[name]} == before[name]
+                if name == "conversations":
+                    assert after["runtime_settings"] == {} and after["runtime_revision"] == 0
+            for name in (
+                "execution_rules",
+                "execution_actions",
+                "command_executions",
+                "tool_budget_reservations",
+            ):
+                assert connection.execute(text(f'SELECT count(*) FROM "{name}"')).scalar_one() == 0
+            inspector = inspect(connection)
+            assert {"root_id", "run_id"} <= {
+                index["column_names"][0]
+                for index in inspector.get_indexes("execution_actions", schema=schema)
+            }
+            assert any(
+                item["column_names"] == ["run_id", "tool_call_id"]
+                for item in inspector.get_unique_constraints("command_executions", schema=schema)
+            )
+    finally:
+        with engine.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        engine.dispose()
 
 
 def test_fresh_migration_creates_all_business_tables_and_circular_fk():
@@ -73,8 +171,8 @@ def test_upgrade_keeps_old_draft_data_and_marks_ambiguous_metadata():
 
 def test_0015_preserves_old_role_binding_and_adds_empty_policy_tables():
     """新列允许NULL，旧角色和不可变修订不被补写成新的许可或资源哈希。"""
-    from knowledgeops_agent.db import SubagentDefinition
-    from knowledgeops_agent.subagent_registry import definition_view
+    from knowledgeops_agent.harness.subagents.registry import definition_view
+    from knowledgeops_agent.persistence.models import SubagentDefinition
 
     engine = create_engine(os.environ["TEST_DATABASE_URL"])
     assert engine.url.database == "knowledgeops_test"
@@ -141,7 +239,7 @@ def test_0015_preserves_old_role_binding_and_adds_empty_policy_tables():
 
 
 def test_0016_adds_continuity_without_expanding_frozen_zero_policy():
-    from knowledgeops_agent.tool_policy import baseline_policy
+    from knowledgeops_agent.harness.tools.policy import baseline_policy
 
     engine = create_engine(os.environ["TEST_DATABASE_URL"])
     assert engine.url.database == "knowledgeops_test"
@@ -171,12 +269,18 @@ def test_0016_adds_continuity_without_expanding_frozen_zero_policy():
                 == 2
             )
             command.upgrade(config, "head")
-            assert connection.execute(
-                text("SELECT content FROM tool_policy_revisions WHERE revision=0")
-            ).scalar_one() == previous
-            assert connection.execute(
-                text("SELECT content FROM tool_policy_revisions WHERE revision=1")
-            ).scalar_one() == current
+            assert (
+                connection.execute(
+                    text("SELECT content FROM tool_policy_revisions WHERE revision=0")
+                ).scalar_one()
+                == previous
+            )
+            assert (
+                connection.execute(
+                    text("SELECT content FROM tool_policy_revisions WHERE revision=1")
+                ).scalar_one()
+                == current
+            )
             latest = connection.execute(text("SELECT content FROM tool_policies")).scalar_one()
             assert latest["enabled"]["builtin:memory_search"] is True
             assert latest["enabled"]["builtin:memory_read"] is True

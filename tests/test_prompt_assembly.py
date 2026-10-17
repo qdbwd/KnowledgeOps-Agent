@@ -5,7 +5,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 
-from knowledgeops_agent.prompt_assembly import (
+from knowledgeops_agent.harness.context.assembly import (
     READ_ONLY_INSTRUCTION,
     RETRIEVAL_GUIDANCE,
     SYSTEM_TEMPLATE,

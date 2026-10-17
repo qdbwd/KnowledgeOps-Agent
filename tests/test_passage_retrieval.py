@@ -15,7 +15,7 @@ runtime_services = _runtime_services
 
 
 def test_splitter_preserves_content_and_late_chinese_offsets():
-    from knowledgeops_agent.retrieval import split_passages
+    from knowledgeops_agent.retrieval.search import split_passages
 
     text = "\n# 第一节\r\n\n" + "重复说明。" * 600 + "\n\n# 第二节\n末尾原话：绝不自动扣款。\n"
     chunks = split_passages(text)
@@ -32,8 +32,8 @@ def test_splitter_preserves_content_and_late_chinese_offsets():
 
 @pytest.mark.parametrize("archived", [False, True])
 def test_history_late_passage_rank_readback_and_no_duplicate_messages(runtime_services, archived):
-    from knowledgeops_agent.task_continuity import history_read, history_search
-    from knowledgeops_agent.task_history import capture_history
+    from knowledgeops_agent.harness.context.continuity import history_read, history_search
+    from knowledgeops_agent.harness.context.history import capture_history
 
     _, context, _ = setup_run(runtime_services)
     text = "背景介绍。" * 1600 + "\n\n旧约定：订单超时，先查回执，禁止直接重复扣款。"
@@ -56,7 +56,7 @@ def test_history_late_passage_rank_readback_and_no_duplicate_messages(runtime_se
 
 
 def test_knowledge_searches_unseen_body_chunks_and_replaces_index_atomically(services):
-    from knowledgeops_agent.db import KnowledgeSearchChunk
+    from knowledgeops_agent.persistence.models import KnowledgeSearchChunk
 
     _, sources, knowledge, sessions = services
     _, evidence = evidence_for(sources)
@@ -136,8 +136,8 @@ def test_current_history_cache_is_idempotent_and_does_not_grant_old_state_access
     """索引缓存不是权限目录：新消息已进数据库，旧State仍不能搜到/读到。"""
     from sqlalchemy import func
 
-    from knowledgeops_agent.db import TaskHistoryBatch, TaskHistoryChunk
-    from knowledgeops_agent.task_history import lookup_history
+    from knowledgeops_agent.harness.context.history import lookup_history
+    from knowledgeops_agent.persistence.models import TaskHistoryBatch, TaskHistoryChunk
 
     _, context, _ = setup_run(runtime_services)
     state = {"messages": [HumanMessage("新安排：明日采用蓝绿部署。", id="new-only")]}

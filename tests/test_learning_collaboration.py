@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from fixtures.subagent_dispatch import drive_delegation, drive_graph
 from langchain_core.messages import AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.checkpoint.memory import InMemorySaver
@@ -11,15 +12,15 @@ from sqlalchemy import select
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 
-from knowledgeops_agent.db import LearningUnit, Run, SubagentDefinition
-from knowledgeops_agent.file_store import FileStore
-from knowledgeops_agent.learning_collaboration import (
+from knowledgeops_agent.harness.subagents.registry import SubagentRegistry
+from knowledgeops_agent.harness.tools.policy import ToolPolicyService
+from knowledgeops_agent.learning.collaboration import (
     LearningCollaborationService,
     learning_feedback,
 )
-from knowledgeops_agent.learning_tasks import LearningTaskService
-from knowledgeops_agent.subagent_registry import SubagentRegistry
-from knowledgeops_agent.tool_policy import ToolPolicyService
+from knowledgeops_agent.learning.tasks import LearningTaskService
+from knowledgeops_agent.persistence.files import FileStore
+from knowledgeops_agent.persistence.models import LearningUnit, Run, SubagentDefinition
 
 runtime_services = _runtime_services
 
@@ -154,10 +155,9 @@ def run_collaboration(fixture, *, publish=False):
     provider = CollaborationProvider(draft["id"], publish=publish)
     context.gateway.client = provider
     graph = module.build_agent(context, checkpointer=InMemorySaver())
-    graph.invoke(
+    drive_graph(
+        context, graph,
         {"messages": [HumanMessage(run["task"])]},
-        {"configurable": {"thread_id": run["id"]}},
-        context=context,
     )
     return provider
 
@@ -176,12 +176,12 @@ def test_real_children_read_entire_material_and_share_publication_gate(collabora
         unit = session.get(LearningUnit, task["units"][0]["id"])
         assert unit.status == "published" and unit.result_version_id
     count = len(context.gateway.ledger.records())
-    replay = learning_feedback.func(
+    replay = drive_delegation(context, lambda: learning_feedback.func(
         role="reviewer",
         changeset_id=draft["id"],
         expected_revision=1,
         runtime=SimpleNamespace(context=context, tool_call_id="review-call"),
-    )
+    ), identity="review-replay")
     assert replay["id"] == rows[1]["id"] and len(context.gateway.ledger.records()) == count
 
 
@@ -215,12 +215,12 @@ def test_unread_material_never_counts_as_successful_reader(collaboration):
     context.gateway.client = CollaborationProvider(draft["id"], skip_read=True)
     module.build_agent(context, checkpointer=InMemorySaver())
     for number in range(2):
-        report = learning_feedback.func(
+        report = drive_delegation(context, lambda number=number: learning_feedback.func(
             role="reader",
             changeset_id=draft["id"],
             expected_revision=1,
             runtime=SimpleNamespace(context=context, tool_call_id=f"bad-{number}"),
-        )
+        ), identity=f"invalid-reader-{number}")
         assert report["status"] == "invalid" and "完整" in report["error"]
     with context.jobs.sessions() as session:
         unit = session.get(LearningUnit, task["units"][0]["id"])
@@ -252,8 +252,8 @@ def test_requirement_change_invalidates_completed_review(collaboration):
 
 
 def test_general_file_sync_cannot_bypass_delegated_review(collaboration, tmp_path):
-    from knowledgeops_agent.db import KnowledgeVersion
-    from knowledgeops_agent.knowledge_files import synchronize
+    from knowledgeops_agent.knowledge.files import synchronize
+    from knowledgeops_agent.persistence.models import KnowledgeVersion
 
     _, context, _, _, _ = collaboration
     context.workspace_root = tmp_path / "workspace"
@@ -272,7 +272,7 @@ def test_general_file_sync_cannot_bypass_delegated_review(collaboration, tmp_pat
 
 @pytest.mark.parametrize("resource", ["role", "tool"])
 def test_disabled_collaboration_resource_stops_before_model_call(collaboration, resource):
-    from knowledgeops_agent.run_resources import ResourceUnavailable
+    from knowledgeops_agent.harness.runtime.resources import ResourceUnavailable
 
     module, context, _, _, _ = collaboration
     if resource == "role":

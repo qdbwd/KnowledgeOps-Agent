@@ -18,7 +18,7 @@ runtime_services = _runtime_services
 
 def test_enabled_mcp_is_described_in_actual_graph_without_changing_wire_name(runtime_services):
     """原MCP调用名仍可用于旧消息，同时提供不受截断影响的完整管理身份。"""
-    from knowledgeops_agent.run_resources import content_hash
+    from knowledgeops_agent.harness.runtime.resources import content_hash
 
     module, context, _ = setup_run(runtime_services)
     row = configured(context)
@@ -44,7 +44,7 @@ def test_catalog_api_reads_existing_mcp_state_without_connecting_or_granting(
     client, services, monkeypatch
 ):
     """统一入口读取原服务的最新许可，不建立另一份配置，也不因展示而激活服务。"""
-    from knowledgeops_agent.mcp_registry import MCPRegistry
+    from knowledgeops_agent.harness.mcp.registry import MCPRegistry
 
     row = configured(SimpleNamespace(jobs=services.jobs))
     registry = MCPRegistry(services.sessions)
@@ -52,7 +52,7 @@ def test_catalog_api_reads_existing_mcp_state_without_connecting_or_granting(
     def unexpected(*args, **kwargs):
         raise AssertionError("查看工具目录不能连接MCP服务")
 
-    monkeypatch.setattr("knowledgeops_agent.mcp_registry.connected_tools", unexpected)
+    monkeypatch.setattr("knowledgeops_agent.harness.mcp.registry.connected_tools", unexpected)
     response = client.get("/api/tools/catalog")
     assert response.status_code == 200
     body = response.json()
@@ -76,7 +76,7 @@ def test_catalog_api_reads_existing_mcp_state_without_connecting_or_granting(
 
 def test_catalog_rejects_duplicate_and_undeclared_tools_before_graph_dispatch(runtime_services):
     """名称分派不能静默覆盖已有工具；新工具也必须有明确的目录身份。"""
-    from knowledgeops_agent.tool_catalog import describe_toolset
+    from knowledgeops_agent.harness.tools.catalog import describe_toolset
 
     module, _, _ = setup_run(runtime_services)
     with pytest.raises(ValueError, match="名称冲突"):
@@ -95,8 +95,8 @@ def test_mcp_full_identity_survives_prefix_collision_but_graph_refuses_duplicate
     runtime_services,
 ):
     """完整ID区分连接，旧协议的短名称若真的碰撞则拒绝装配，不能覆盖执行对象。"""
-    from knowledgeops_agent.mcp_calls import mcp_tools
-    from knowledgeops_agent.tool_catalog import describe_toolset, mcp_tool_options
+    from knowledgeops_agent.harness.mcp.calls import mcp_tools
+    from knowledgeops_agent.harness.tools.catalog import describe_toolset, mcp_tool_options
 
     _, context, _ = setup_run(runtime_services)
     bindings = [

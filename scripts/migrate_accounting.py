@@ -1,16 +1,17 @@
-"""已批准额度的显式运维迁移；在独立容器中运行，绝不发送模型请求。"""
+"""模型回执库的显式增量迁移；在开发/维护容器中运行，绝不发送模型请求。"""
 
 import argparse
 import json
 
 from sqlalchemy import create_engine
 
-from knowledgeops_agent.config import get_settings
-from knowledgeops_agent.model_gateway import (
+from knowledgeops_agent.core.config import get_settings
+from knowledgeops_agent.harness.models.gateway import (
     remove_accounting_budget_limit,
     retire_project_usage,
     upgrade_accounting_budget,
     upgrade_accounting_call_links,
+    upgrade_accounting_lifecycle,
 )
 
 
@@ -21,10 +22,14 @@ def main() -> None:
     mode.add_argument("--total-limit", type=int, choices=(1200, 1600, 2000))
     mode.add_argument("--remove-total-limit", action="store_true")
     mode.add_argument("--retire-project-usage", action="store_true")
+    mode.add_argument("--lifecycle", action="store_true", help="增加清理封闭标记；不删除旧回执或重置额度")
     args = parser.parse_args()
     settings = get_settings()
     engine = create_engine(settings.accounting_database_url)
     try:
+        if args.lifecycle:
+            print(json.dumps(upgrade_accounting_lifecycle(engine), ensure_ascii=False))
+            return
         if args.retire_project_usage:
             print(json.dumps(retire_project_usage(engine), ensure_ascii=False))
             return

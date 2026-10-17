@@ -7,9 +7,9 @@ from test_api_worker import client as _client
 from test_api_worker import services as _services
 from test_runtime import setup_run
 
-from knowledgeops_agent.db import Run, ToolPolicy
-from knowledgeops_agent.subagent_registry import SubagentRegistry
-from knowledgeops_agent.tool_policy import ToolPolicyService
+from knowledgeops_agent.harness.subagents.registry import SubagentRegistry
+from knowledgeops_agent.harness.tools.policy import ToolPolicyService
+from knowledgeops_agent.persistence.models import Run, ToolPolicy
 
 client = _client
 services = _services
@@ -110,7 +110,7 @@ def test_child_groups_ignore_main_selection_but_respect_global_and_task_limits(c
 
 
 def test_preview_mcp_uses_original_permission_without_connecting(client, services, monkeypatch):
-    from knowledgeops_agent.mcp_registry import MCPRegistry
+    from knowledgeops_agent.harness.mcp.registry import MCPRegistry
 
     registry = MCPRegistry(services.sessions)
     connection = registry.create(

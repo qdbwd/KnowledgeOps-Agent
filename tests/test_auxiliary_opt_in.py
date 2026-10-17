@@ -7,7 +7,7 @@ import pytest
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 
-from knowledgeops_agent.db import Run
+from knowledgeops_agent.persistence.models import Run
 
 runtime_services = _runtime_services
 
@@ -22,7 +22,7 @@ def context_with_choice(runtime_services, choice):
         else:
             inputs["auxiliary"] = choice
         row.input_data = inputs
-    from knowledgeops_agent.run_resources import prepare_resources
+    from knowledgeops_agent.harness.runtime.resources import prepare_resources
 
     prepare_resources(context)
     return module, context
@@ -34,6 +34,7 @@ def test_auxiliary_registry_uses_root_choice(runtime_services, monkeypatch, choi
     module, context = context_with_choice(runtime_services, choice)
     if child:
         row = context.jobs.start_child(context.root_id, "只读核对")
+        assert context.jobs.claim(context.worker_id, run_id=row["id"], generation=row["generation"])
         context = replace(context, run_id=row["id"])
         # 子记录不能以自身值扩大或改变根选择。
         with context.jobs.sessions.begin() as session:
@@ -60,13 +61,14 @@ def test_disabled_auxiliary_service_rejects_before_artifacts_or_charge(
     _, context = context_with_choice(runtime_services, choice)
     if child:
         row = context.jobs.start_child(context.root_id, "只读核对")
+        assert context.jobs.claim(context.worker_id, run_id=row["id"], generation=row["generation"])
         context = replace(context, run_id=row["id"])
         with context.jobs.sessions.begin() as session:
             stored = session.get(Run, row["id"])
             stored.input_data = {**stored.input_data, "auxiliary": True}
     provider = CapturingProvider()
     context.gateway.client = provider
-    module = importlib.import_module("knowledgeops_agent.auxiliary_model")
+    module = importlib.import_module("knowledgeops_agent.harness.models.auxiliary")
     before = context.jobs.events(context.run_id)
     with pytest.raises(PermissionError, match="auxiliary.*disabled"):
         module.call_auxiliary(context, "核对材料", [], "disabled-tool")
@@ -82,10 +84,11 @@ def test_enabled_auxiliary_child_inherits_root_choice_and_replays(runtime_servic
     _, context = context_with_choice(runtime_services, True)
     row = context.jobs.start_child(context.root_id, "核对指定材料")
     assert row["input"]["auxiliary"] is True
+    assert context.jobs.claim(context.worker_id, run_id=row["id"], generation=row["generation"])
     context = replace(context, run_id=row["id"])
     provider = CapturingProvider()
     context.gateway.client = provider
-    module = importlib.import_module("knowledgeops_agent.auxiliary_model")
+    module = importlib.import_module("knowledgeops_agent.harness.models.auxiliary")
     result = module.call_auxiliary(context, "列出材料不足之处", [], "child-aux")
     assert module.call_auxiliary(context, "列出材料不足之处", [], "child-aux") == result
     records = context.gateway.ledger.records(root_id=context.root_id)

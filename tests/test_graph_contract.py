@@ -1,5 +1,5 @@
-from knowledgeops_agent.graph import build_contract_graph
-from knowledgeops_agent.state import initial_state
+from knowledgeops_agent.legacy.graph import build_contract_graph
+from knowledgeops_agent.legacy.state import initial_state
 
 
 def test_m0_graph_normalizes_and_stops_without_agent_claims() -> None:

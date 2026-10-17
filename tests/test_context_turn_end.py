@@ -8,13 +8,18 @@ from langgraph.checkpoint.memory import InMemorySaver
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 
-from knowledgeops_agent.context_management import ContextMiddleware, working_messages
+from knowledgeops_agent.harness.context.management import ContextMiddleware, working_messages
 
 runtime_services = _runtime_services
 
 
-def test_real_graph_runs_compaction_after_final_answer_crosses_the_threshold(runtime_services):
+def test_real_graph_runs_compaction_after_final_answer_crosses_the_threshold(
+    runtime_services, tmp_path, monkeypatch
+):
     """只替换供应商，真实图/计数/轮末钩子证明不需要第二条用户消息来触发。"""
+    # 精准构造轮末才越阈值的输入：用户新装技能会增加目录提示，不能使此
+    # 用例在主回复之前就超容量。技能加载合同另有独立真实图覆盖。
+    monkeypatch.setenv("SKILLS_DIRECTORY", str(tmp_path))
     module, context, run = setup_run(runtime_services)
     context.gateway.capacity = context.gateway.capacity.model_copy(
         update={

@@ -8,9 +8,9 @@ import argparse
 import json
 from pathlib import Path
 
-from knowledgeops_agent.config import Settings
-from knowledgeops_agent.evaluation import ReportService, export_json
-from knowledgeops_agent.services import create_services
+from knowledgeops_agent.app.services import create_services
+from knowledgeops_agent.core.config import Settings
+from knowledgeops_agent.diagnostics.reports import ReportService, export_json
 
 
 def main():

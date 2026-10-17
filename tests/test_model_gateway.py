@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, text
 
 @pytest.fixture
 def ledger():
-    module = importlib.import_module("knowledgeops_agent.model_gateway")
+    module = importlib.import_module("knowledgeops_agent.harness.models.gateway")
     # 每例独立命名空间，连接必须指向隔离测试库，绝不使用真实验收账本。
     url = os.environ["TEST_DATABASE_URL"]
     assert url.rsplit("/", 1)[-1] == "knowledgeops_test"
@@ -35,7 +35,7 @@ def ledger():
 
 
 def test_reservations_survive_restart_and_only_enforce_root_limit(ledger):
-    module = importlib.import_module("knowledgeops_agent.model_gateway")
+    module = importlib.import_module("knowledgeops_agent.harness.models.gateway")
     first = ledger.reserve("root-a", "run-a", "agent", [], root_limit=2)
     ledger.finish(first, response={"content": "ok"}, usage=None)
     reopened = module.ModelLedger(ledger.engine, scope=ledger.scope)
@@ -51,8 +51,19 @@ def test_reservations_survive_restart_and_only_enforce_root_limit(ledger):
     assert records[0]["status"] == "succeeded"
 
 
+def test_lifecycle_pending_query_does_not_hide_unknown_calls_or_cross_root_scope(ledger):
+    unknown = ledger.reserve("lifecycle-root", "child", "agent", [], root_limit=5)
+    completed = ledger.reserve("lifecycle-root", "main", "agent", [], root_limit=5)
+    failed = ledger.reserve("lifecycle-root", "main", "agent", [], root_limit=5)
+    ledger.reserve("other-root", "other-child", "agent", [], root_limit=5)
+    ledger.finish(completed, response={"content": "完成"}, usage=None)
+    ledger.finish(failed, error="已知失败")
+    assert ledger.pending_root_calls("lifecycle-root") == [unknown]
+    assert ledger.summary("lifecycle-root")["root_used"] == 3
+
+
 def test_concurrent_children_cannot_exceed_shared_root_budget(ledger):
-    module = importlib.import_module("knowledgeops_agent.model_gateway")
+    module = importlib.import_module("knowledgeops_agent.harness.models.gateway")
 
     def reserve(index):
         try:
@@ -67,15 +78,36 @@ def test_concurrent_children_cannot_exceed_shared_root_budget(ledger):
 
 
 def test_disabled_model_does_not_reserve_or_contact_provider(ledger):
-    module = importlib.import_module("knowledgeops_agent.model_gateway")
+    module = importlib.import_module("knowledgeops_agent.harness.models.gateway")
     gateway = module.ModelGateway(ledger, enabled=False, client=None)
     with pytest.raises(module.ModelCallsDisabled):
         gateway.invoke([HumanMessage("hello")], root_id="root", run_id="run")
     assert ledger.records() == []
 
 
+def test_concurrent_children_preserve_one_root_request_across_ledger_reopen(ledger):
+    module = importlib.import_module("knowledgeops_agent.harness.models.gateway")
+
+    def reserve(index):
+        try:
+            return ledger.reserve_call("root", f"child-{index}", "research", [], root_limit=5, root_reserve=1)
+        except module.ModelBudgetExceeded:
+            return None
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        reservations = list(pool.map(reserve, range(6)))
+    assert sum(row is not None for row in reservations) == 4
+    reopened = module.ModelLedger(ledger.engine, scope=ledger.scope)
+    with pytest.raises(module.ModelBudgetExceeded):
+        reopened.reserve_call("root", "child-last", "research", [], root_limit=5, root_reserve=1)
+    reopened.reserve_call("root", "root", "agent", [], root_limit=5)
+    assert reopened.summary("root") == {"root_used": 5, "root_limit": 5}
+    with pytest.raises(module.ModelBudgetExceeded):
+        reopened.reserve_call("root", "root", "agent", [], root_limit=5)
+
+
 def test_provider_failure_is_charged_and_secret_is_redacted(ledger):
-    module = importlib.import_module("knowledgeops_agent.model_gateway")
+    module = importlib.import_module("knowledgeops_agent.harness.models.gateway")
     secret = "fictional-key-never-log-this"
 
     class UnavailableProvider:
@@ -95,7 +127,7 @@ def test_provider_failure_is_charged_and_secret_is_redacted(ledger):
 
 
 def test_success_preserves_real_response_and_reported_usage(ledger):
-    module = importlib.import_module("knowledgeops_agent.model_gateway")
+    module = importlib.import_module("knowledgeops_agent.harness.models.gateway")
 
     class Provider:
         def invoke(self, messages, **kwargs):
@@ -117,7 +149,7 @@ def test_success_preserves_real_response_and_reported_usage(ledger):
 
 
 def test_streaming_records_first_content_and_combines_response(ledger):
-    module = importlib.import_module("knowledgeops_agent.model_gateway")
+    module = importlib.import_module("knowledgeops_agent.harness.models.gateway")
 
     class Provider:
         def stream(self, messages, **kwargs):
@@ -137,7 +169,7 @@ def test_streaming_records_first_content_and_combines_response(ledger):
 
 
 def test_canary_uses_its_root_budget_without_a_lifetime_counter(ledger):
-    module = importlib.import_module("knowledgeops_agent.model_gateway")
+    module = importlib.import_module("knowledgeops_agent.harness.models.gateway")
     canary = module.ModelLedger(ledger.engine, scope=f"canary-{uuid4().hex}")
     for index in range(10):
         canary.reserve("canary", f"attempt-{index}", "canary", [], root_limit=20)
@@ -157,7 +189,7 @@ def test_canary_uses_its_root_budget_without_a_lifetime_counter(ledger):
 
 
 def test_explicit_root_extension_preserves_spent_quota(ledger):
-    module = importlib.import_module("knowledgeops_agent.model_gateway")
+    module = importlib.import_module("knowledgeops_agent.harness.models.gateway")
     ledger.reserve("root", "run", "agent", [], root_limit=1)
     # 仅换一个更大的调用参数不会隐式扩额；必须经过可信恢复入口。
     with pytest.raises(module.ModelBudgetExceeded):
@@ -173,7 +205,7 @@ def test_explicit_root_extension_preserves_spent_quota(ledger):
 
 
 def test_request_evidence_contains_tools_and_stream_updates(ledger):
-    module = importlib.import_module("knowledgeops_agent.model_gateway")
+    module = importlib.import_module("knowledgeops_agent.harness.models.gateway")
     from langchain_core.tools import tool
 
     @tool

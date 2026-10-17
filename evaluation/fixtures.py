@@ -11,9 +11,9 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
-from knowledgeops_agent.db import ChatMessage, Run, utcnow
-from knowledgeops_agent.jobs import Budgets
-from knowledgeops_agent.pdf_sources import parse_pdf
+from knowledgeops_agent.app.runs.service import Budgets
+from knowledgeops_agent.persistence.models import ChatMessage, Run, utcnow
+from knowledgeops_agent.sources.pdf import parse_pdf
 
 MATERIALS = {
     "budget": (

@@ -14,7 +14,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 
-from knowledgeops_agent.config import Settings
+from knowledgeops_agent.core.config import Settings
 
 
 def row_hashes(connection, table, columns):

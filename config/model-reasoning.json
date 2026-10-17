@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "endpoint_host": "api.deepseek.com",
+      "levels": ["low", "high", "max"],
+      "default_level": "high",
+      "can_disable": true
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro",
+      "endpoint_host": "api.deepseek.com",
+      "levels": ["low", "high", "max"],
+      "default_level": "high",
+      "can_disable": true
+    }
+  ]
+}

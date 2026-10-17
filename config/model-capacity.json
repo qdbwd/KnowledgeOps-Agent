@@ -9,6 +9,11 @@
   "summary_fraction": 0.9,
   "summary_trigger_basis": "input_tokens",
   "compact_after_turn": true,
+  "input_budget_version": 1,
+  "compact_target_fraction": 0.8,
+  "optional_background_tokens": 16384,
+  "optional_background_fraction": 0.125,
+  "deferred_mcp_tools": true,
   "token_counter": "deepseek_v41_tokenizer_v1",
   "source": "GET /models, verified against https://api-docs.deepseek.com/api/list-models/; raw allowlisted result: artifacts/verification/optimization/model-profile-discovery.json",
   "verified_at": "2026-10-09"

@@ -12,7 +12,7 @@ services = _services
 
 
 def test_role_group_expands_without_replacing_explicit_tools_and_shrink_revokes(client, services):
-    from knowledgeops_agent.subagent_registry import SubagentRegistry
+    from knowledgeops_agent.harness.subagents.registry import SubagentRegistry
 
     response = client.post(
         "/api/subagents",
@@ -24,6 +24,7 @@ def test_role_group_expands_without_replacing_explicit_tools_and_shrink_revokes(
     assert set(first["resolved_tools"]) == {
         "read_tool_result",
         "list_materials",
+        "list_evidence",
         "inspect_material",
         "read_source",
     }
@@ -38,14 +39,14 @@ def test_role_group_expands_without_replacing_explicit_tools_and_shrink_revokes(
 
 
 def test_saved_group_members_do_not_expand_on_catalog_or_prompt_edit(client, services, monkeypatch):
-    from knowledgeops_agent.subagent_registry import SubagentRegistry
+    from knowledgeops_agent.harness.subagents.registry import SubagentRegistry
 
     response = client.post(
         "/api/subagents", json=definition(tools=[], tool_groups=["materials_read"], enabled=True)
     )
     assert response.status_code == 201
     first = response.json()
-    catalog = importlib.import_module("knowledgeops_agent.tool_catalog")
+    catalog = importlib.import_module("knowledgeops_agent.harness.tools.catalog")
     monkeypatch.setattr(
         catalog,
         "STATIC_TOOLS",
@@ -65,11 +66,25 @@ def test_saved_group_members_do_not_expand_on_catalog_or_prompt_edit(client, ser
 
 
 @pytest.mark.parametrize(
-    "group", ["knowledge_maintenance", "delegation", "skills", "mcp", "missing"]
+    "group", ["knowledge_maintenance", "delegation", "skills", "missing"]
 )
-def test_role_groups_cannot_add_write_recursive_or_external_permissions(client, group):
+def test_role_groups_cannot_add_write_recursive_or_unknown_permissions(client, group):
     response = client.post("/api/subagents", json=definition(tool_groups=[group]))
     assert response.status_code == 422
+
+
+def test_mcp_group_is_only_an_inheritance_selector_and_removal_revokes(client, services):
+    from knowledgeops_agent.harness.subagents.registry import SubagentRegistry
+
+    response = client.post("/api/subagents", json=definition(tools=[], tool_groups=["mcp"], enabled=True))
+    assert response.status_code == 201
+    first = response.json()
+    assert first["resolved_tools"] == []
+    narrowed = client.patch(f"/api/subagents/{first['id']}", json={"expected_revision": 1, "tool_groups": []})
+    assert narrowed.status_code == 200
+    assert narrowed.json()["authorization_epoch"] == first["authorization_epoch"] + 1
+    with pytest.raises(PermissionError, match="撤回"):
+        SubagentRegistry(services.sessions).validate_binding(first)
 
 
 def test_role_group_null_clears_groups_but_omission_keeps_them(client):

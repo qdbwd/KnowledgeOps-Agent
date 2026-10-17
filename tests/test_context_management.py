@@ -13,8 +13,8 @@ runtime_services = _runtime_services
 
 
 def test_recent_history_retention_uses_capacity_not_an_eight_message_ceiling():
-    from knowledgeops_agent.context_management import capacity_history_split
-    from knowledgeops_agent.request_capacity import ModelCapacity
+    from knowledgeops_agent.harness.context.capacity import ModelCapacity
+    from knowledgeops_agent.harness.context.management import capacity_history_split
 
     capacity = ModelCapacity(working_window=100000)
     messages = [HumanMessage("较早资料" * 20000, id="old")]
@@ -117,7 +117,7 @@ def test_tool_observation_and_event_redact_known_secrets(runtime_services):
 
 def test_context_compaction_keeps_tool_calls_and_results_together(runtime_services):
     module, context, _ = setup_run(runtime_services)
-    from knowledgeops_agent.context_management import split_history
+    from knowledgeops_agent.harness.context.management import split_history
 
     messages = [HumanMessage("原始任务"), AIMessage("较早输出")]
     messages += [
@@ -169,7 +169,7 @@ def test_long_recent_messages_are_compacted_by_capacity_not_fixed_count(runtime_
 
 @pytest.mark.parametrize("failure", ["empty", "truncated", "network"])
 def test_invalid_summary_does_not_replace_history(runtime_services, failure):
-    from knowledgeops_agent.request_capacity import ContextCapacityExceeded
+    from knowledgeops_agent.harness.context.capacity import ContextCapacityExceeded
 
     module, context, run = setup_run(runtime_services)
     context.gateway.capacity = context.gateway.capacity.model_copy(update={"working_window": 32768})
@@ -204,7 +204,7 @@ def test_invalid_summary_does_not_replace_history(runtime_services, failure):
 
 
 def test_large_system_rules_are_checked_even_with_short_history(runtime_services, monkeypatch):
-    from knowledgeops_agent.request_capacity import ContextCapacityExceeded
+    from knowledgeops_agent.harness.context.capacity import ContextCapacityExceeded
 
     module, context, run = setup_run(runtime_services)
     context.gateway.capacity = context.gateway.capacity.model_copy(update={"working_window": 32768})

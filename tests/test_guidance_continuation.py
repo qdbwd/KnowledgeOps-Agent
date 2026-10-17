@@ -8,8 +8,8 @@ runtime_services = _runtime_services
 
 
 def test_applied_guidance_is_captured_and_marks_covered_user_sequence(runtime_services):
-    from knowledgeops_agent.continuation import from_state
-    from knowledgeops_agent.guidance import apply_decision
+    from knowledgeops_agent.app.runs.guidance import apply_decision
+    from knowledgeops_agent.harness.context.continuation import from_state
 
     _, context, run = setup_run(runtime_services)
     queued = context.jobs.enqueue(

@@ -2,8 +2,12 @@
 
 from sqlalchemy import select
 
-from knowledgeops_agent.citations import citation_placeholders, clickable_evidence_ids, evidence_ids
-from knowledgeops_agent.db import Evidence, KnowledgeVersion, SearchEntry
+from knowledgeops_agent.knowledge.citations import (
+    citation_placeholders,
+    clickable_evidence_ids,
+    evidence_ids,
+)
+from knowledgeops_agent.persistence.models import Evidence, KnowledgeVersion, SearchEntry
 
 
 def collect_citations(services, texts: list[str]) -> tuple[list[dict], bool]:

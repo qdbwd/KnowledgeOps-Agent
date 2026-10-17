@@ -8,6 +8,7 @@ import json
 from dataclasses import replace
 
 import pytest
+from fixtures.subagent_dispatch import drive_delegation
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
@@ -58,7 +59,7 @@ class CappedProvider:
 @pytest.mark.parametrize("shape", ["text", "tool", "invalid_tool"])
 def test_capped_worker_response_stops_without_tools_or_billable_retry(services, monkeypatch, shape):
     """保留原始响应及消费，同时禁止截断文本成功交付和截断调用执行。"""
-    from knowledgeops_agent import worker
+    from knowledgeops_agent.app.runs import worker as worker
 
     services.gateway.enabled = True
     services.gateway.client = CappedProvider(shape)
@@ -127,7 +128,7 @@ def test_capped_worker_response_stops_without_tools_or_billable_retry(services, 
 @pytest.mark.parametrize("finish_reason", ["stop", None])
 def test_normal_short_answer_is_not_guessed_to_be_truncated(services, monkeypatch, finish_reason):
     """判断来自供应商元数据，不能凭正文看起来未写完或缺少元数据就拒绝。"""
-    from knowledgeops_agent import worker
+    from knowledgeops_agent.app.runs import worker as worker
 
     services.gateway.enabled = True
     services.gateway.client = CappedProvider(finish_reason=finish_reason)
@@ -147,13 +148,14 @@ def test_normal_short_answer_is_not_guessed_to_be_truncated(services, monkeypatc
 
 
 def test_capped_child_returns_failure_instead_of_successful_report(runtime_services):
-    from knowledgeops_agent.delegation import delegate_one
+    from knowledgeops_agent.harness.subagents.delegation import delegate_one
 
     module, context, root = setup_run(runtime_services)
     context.gateway.client = CappedProvider()
     module.build_agent(context, checkpointer=InMemorySaver())
     definition = context.resources["subagents"][0]
-    result = delegate_one(context, definition, "核对材料", "capped-child")
+    result = drive_delegation(context,
+        lambda: delegate_one(context, definition, "核对材料", "capped-child"), identity="capped-child")
     assert result["status"] == "failed"
     assert result["answer"] == ""
     assert "输出上限" in result["error"]
@@ -164,7 +166,7 @@ def test_capped_child_returns_failure_instead_of_successful_report(runtime_servi
 
 def test_next_turn_receives_capped_text_with_explicit_application_notice(runtime_services):
     """原片段仍可作为背景，但下一轮不能把它误当成上一轮完整交付。"""
-    from knowledgeops_agent.continuation import from_state
+    from knowledgeops_agent.harness.context.continuation import from_state
 
     module, context, root = setup_run(runtime_services)
     state = {
@@ -213,7 +215,7 @@ def completed_old_graph(saver, checkpoint_id):
 
 
 def test_completed_old_checkpoint_cannot_bypass_worker_output_check(services, monkeypatch):
-    from knowledgeops_agent import worker
+    from knowledgeops_agent.app.runs import worker as worker
 
     conversation = services.jobs.create_conversation()
     run = services.jobs.enqueue(conversation["id"], "恢复旧结果", request_key="old-capped")
@@ -233,7 +235,7 @@ def test_completed_old_checkpoint_cannot_bypass_worker_output_check(services, mo
 def test_completed_old_child_checkpoint_cannot_return_truncated_report(
     runtime_services, monkeypatch
 ):
-    from knowledgeops_agent.delegation import delegate_one
+    from knowledgeops_agent.harness.subagents.delegation import delegate_one
 
     module, context, root = setup_run(runtime_services)
     saver = InMemorySaver()
@@ -250,8 +252,11 @@ def test_completed_old_child_checkpoint_cannot_return_truncated_report(
     context.jobs.recover_on_startup()
     resumed = context.jobs.resume(root["id"])
     context.jobs.claim(context.worker_id, run_id=root["id"], generation=resumed["generation"])
-    monkeypatch.setattr(module, "build_agent", lambda context, checkpointer: graph)
-    result = delegate_one(context, definition, "核对材料", "old-capped-child")
+    import knowledgeops_agent.app.runs.worker as worker
+
+    monkeypatch.setattr(worker, "build_agent", lambda context, checkpointer: graph)
+    result = drive_delegation(context,
+        lambda: delegate_one(context, definition, "核对材料", "old-capped-child"), identity="old-capped-child")
     assert result["run_id"] == child["id"]
     assert result["status"] == "failed"
     assert result["answer"] == ""

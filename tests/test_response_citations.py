@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from test_runtime import runtime_services, setup_run  # noqa: F401
 
-from knowledgeops_agent.response_validation import FinalAnswerValidation
+from knowledgeops_agent.harness.models.validation import FinalAnswerValidation
 
 
 def test_final_verified_marker_is_rendered_without_losing_protocol_metadata(runtime_services):  # noqa: F811

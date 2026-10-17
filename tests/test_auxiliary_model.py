@@ -27,7 +27,7 @@ def setup(runtime_services):
     _, context, _ = setup_run(runtime_services, auxiliary=True)
     provider = CapturingProvider()
     context.gateway.client = provider
-    return importlib.import_module("knowledgeops_agent.auxiliary_model"), context, provider
+    return importlib.import_module("knowledgeops_agent.harness.models.auxiliary"), context, provider
 
 
 def test_isolated_input_fixed_version_and_durable_result_replay(runtime_services):
@@ -59,7 +59,7 @@ def test_isolated_input_fixed_version_and_durable_result_replay(runtime_services
 
 
 def test_reference_scope_and_input_conflict_do_not_make_new_model_request(runtime_services):
-    from knowledgeops_agent.model_gateway import ModelReplayConflict
+    from knowledgeops_agent.harness.models.gateway import ModelReplayConflict
 
     module, context, provider = setup(runtime_services)
     other = context.jobs.enqueue(
