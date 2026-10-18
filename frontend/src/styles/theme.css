@@ -1,0 +1,23 @@
+/* 沿用原来的绿色视觉、字号和 760/1100px 布局边界。 */
+@theme {
+  --font-sans: Inter, 'Noto Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'Microsoft YaHei', monospace;
+  --color-brand: #225d4d;
+  --color-canvas: #f6f7f3;
+  --color-ink: #24332f;
+  --color-sidebar: #102d28;
+  --color-line: #dfe5dd;
+  --color-muted: #748078;
+  --color-control: #506c60;
+  --color-danger: #a03e36;
+  --breakpoint-*: initial;
+  --breakpoint-md: 760px;
+  --breakpoint-lg: 1100px;
+  /* 删除字号工具自带的行距，保留正文与控件分别声明的行距。 */
+  --text-xs--line-height: initial;
+  --text-sm--line-height: initial;
+  --text-base--line-height: initial;
+  --text-lg--line-height: initial;
+  --text-xl--line-height: initial;
+  --text-2xl--line-height: initial;
+}

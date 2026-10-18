@@ -1,3 +1,4 @@
+import { Button } from './Button';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -26,16 +27,16 @@ export function Markdown({
             // 交付文件先进入全文阅读器；下载按钮在阅读器中仍走原HTTP接口。
             if (href?.startsWith('/api/workspace/download?')) {
               return (
-                <Link to={href.replace('/api/workspace/download?', '/files?')}>
-                  {children}
-                </Link>
+                <Link to={href.replace('/api/workspace/download?', '/files?')}>{children}</Link>
               );
             }
             if (embeddedEvidence && href?.startsWith('/api/evidence/')) {
               return <a href={`#evidence-${href.slice('/api/evidence/'.length)}`}>{children}</a>;
             }
             if (href?.startsWith('/api/evidence/')) {
-              return <EvidenceLink id={href.slice('/api/evidence/'.length)}>{children}</EvidenceLink>;
+              return (
+                <EvidenceLink id={href.slice('/api/evidence/'.length)}>{children}</EvidenceLink>
+              );
             }
             const local = href?.replace(/^\/api\/evidence\//, '/evidence/');
             return local?.startsWith('/') ? (
@@ -61,7 +62,10 @@ export function Markdown({
 
 export function ErrorBox({ message }: { message?: string }) {
   return message ? (
-    <div className="error-box" role="alert">
+    <div
+      className="error-box mb-4 flex items-start gap-[9px] rounded-[7px] border border-[#efd1c6] bg-[#fff1ec] px-3.5 py-[11px] text-[13px] text-[#8b3434] [overflow-wrap:anywhere] [&>svg]:mt-0.5 [&>svg]:shrink-0"
+      role="alert"
+    >
       <AlertCircle size={18} />
       <span>{message}</span>
     </div>
@@ -69,22 +73,42 @@ export function ErrorBox({ message }: { message?: string }) {
 }
 export function Loading() {
   return (
-    <div className="loading" role="status">
-      <LoaderCircle className="spin" size={18} />
+    <div
+      className="loading flex items-center justify-center gap-2.5 px-5 py-10 text-sm text-[#7c8c7e]"
+      role="status"
+    >
+      <LoaderCircle
+        className="spin animate-spin [animation-duration:1.5s] motion-reduce:animate-none"
+        size={18}
+      />
       正在加载…
     </div>
   );
 }
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <div className="empty">
+    <div className="empty my-5 rounded-[10px] border border-dashed border-[#ced9ce] px-[25px] py-[55px] text-center text-[#809080] [&>h3]:text-base [&>h3]:text-[#516354] [&>p]:mb-0 [&>p]:text-[13px]">
       <h3>{title}</h3>
       {children && <p>{children}</p>}
     </div>
   );
 }
 export function Badge({ status }: { status: string }) {
-  return <span className={`badge status-${status}`}>{statusText[status] ?? status}</span>;
+  // 完整的静态类名供 Tailwind 构建扫描；不根据服务端状态拼接颜色类。
+  const tone = ['running', 'published', 'answered'].includes(status)
+    ? 'bg-[#e7f1e8] text-[#347044]'
+    : ['failed', 'rejected'].includes(status)
+      ? 'bg-[#f8e9e4] text-[#a44b40]'
+      : ['interrupted', 'budget_exhausted', 'draft', 'draft_ready'].includes(status)
+        ? 'bg-[#f5eedc] text-[#96772d]'
+        : 'bg-[#edf1eb] text-[#5f7765]';
+  return (
+    <span
+      className={`badge inline-flex items-center rounded-[5px] px-[9px] py-[3px] text-[11px] leading-[1.6] whitespace-nowrap status-${status} ${tone}`}
+    >
+      {statusText[status] ?? status}
+    </span>
+  );
 }
 export function PageTitle({
   eyebrow,
@@ -96,9 +120,11 @@ export function PageTitle({
   children?: ReactNode;
 }) {
   return (
-    <header className="page-title">
+    <header className="page-title mb-7 flex items-center justify-between gap-5 max-lg:items-start max-md:mb-5 max-md:flex-col max-md:gap-3">
       <div>
-        <p className="eyebrow">{eyebrow}</p>
+        <p className="eyebrow mb-2 text-[10px] font-[650] tracking-[1.9px] text-[#86968b] max-md:text-[9px]">
+          {eyebrow}
+        </p>
         <h1>{title}</h1>
       </div>
       {children}
@@ -132,14 +158,14 @@ export function KnowledgeEditor({
     }
   }
   return (
-    <section className="editor card">
-      <div className="row between">
+    <section className="editor [&_.row_h2]:mb-0 [&_.row.between]:mb-5 card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
+      <div className="row flex items-center gap-3 between justify-between">
         <h2>
-          编辑文章 <span className="muted">基于 v{article.version}</span>
+          编辑文章 <span className="muted text-muted">基于 v{article.version}</span>
         </h2>
-        <button className="quiet" onClick={() => setPreview(!preview)}>
+        <Button className="quiet button-quiet" onClick={() => setPreview(!preview)}>
           {preview ? '返回编辑' : '预览正文'}
-        </button>
+        </Button>
       </div>
       <ErrorBox message={error} />
       <label>
@@ -149,7 +175,7 @@ export function KnowledgeEditor({
           onChange={(e) => setValue({ ...value, title: e.target.value })}
         />
       </label>
-      <div className="two-columns">
+      <div className="two-columns grid grid-cols-2 gap-5.5 max-lg:gap-[15px] max-md:grid-cols-1">
         <label>
           分类
           <input
@@ -179,20 +205,20 @@ export function KnowledgeEditor({
         <label>
           Markdown 正文
           <textarea
-            className="code-input"
+            className="code-input font-mono text-[13px]"
             rows={20}
             value={value.body}
             onChange={(e) => setValue({ ...value, body: e.target.value })}
           />
         </label>
       )}
-      <div className="row">
-        <button onClick={save} disabled={busy || !value.title.trim() || !value.body.trim()}>
+      <div className="row flex items-center gap-3">
+        <Button onClick={save} disabled={busy || !value.title.trim() || !value.body.trim()}>
           {busy ? '保存中…' : '保存新版本'}
-        </button>
-        <button className="secondary" disabled={busy} onClick={onCancel}>
+        </Button>
+        <Button className="secondary button-secondary" disabled={busy} onClick={onCancel}>
           取消编辑
-        </button>
+        </Button>
       </div>
     </section>
   );
@@ -225,19 +251,22 @@ export function ChangeReview({
   const pending = ['draft', 'approved'].includes(draft.status);
   return (
     <div className="review">
-      <div className="card">
-        <div className="row between">
+      <div className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
+        <div className="row flex items-center gap-3 between justify-between">
           <h2>
-            变更概览 <span className="muted">修订 {draft.revision}</span>
+            变更概览 <span className="muted text-muted">修订 {draft.revision}</span>
           </h2>
           <Badge status={draft.status} />
         </div>
-        <p className="muted">
+        <p className="muted text-muted">
           共 {draft.operations.length} 篇文章。
           {draft.proactive ? '这是 Agent 主动提出的维护建议。' : '以下是本次任务准备的完整变更。'}
         </p>
         {draft.operations.map((item) => (
-          <div className="impact-row" key={item.document_id}>
+          <div
+            className="impact-row flex items-center gap-[15px] border-t border-[#edf0e7] py-3 text-[13px] [&>span]:w-10 [&>span]:text-[11px] [&>span]:text-[#8c9c7e] [&>strong]:flex-1"
+            key={item.document_id}
+          >
             <span>{actionLabels[item.action]}</span>
             <strong>
               {draft.after?.[item.document_id]?.title ||
@@ -250,7 +279,10 @@ export function ChangeReview({
         ))}
       </div>
       {operations.map((item, index) => (
-        <section className="card article" key={item.document_id}>
+        <section
+          className="card article mb-5.5 rounded-[11px] border border-line bg-white px-10 py-8 max-lg:p-[25px] max-md:p-4.5 [&>.tags]:mb-5.5"
+          key={item.document_id}
+        >
           <h2>
             {actionLabels[item.action]} ·{' '}
             {draft.after?.[item.document_id]?.title ||
@@ -295,9 +327,9 @@ export function ChangeReview({
               }
             />
           )}
-          <details>
+          <details className="mt-5">
             <summary>查看与原文的差异</summary>
-            <pre className="diff">
+            <pre className="diff border-l-2 border-[#afc69d] text-xs">
               {draft.differences.find((d) => d.document_id === item.document_id)?.diff ||
                 '没有正文差异'}
             </pre>
@@ -305,9 +337,9 @@ export function ChangeReview({
         </section>
       ))}
       {pending && (
-        <div className="review-actions card">
+        <div className="review-actions [&_.check]:mb-5 [&>p]:mt-3.5 [&>p]:mb-0 card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
           {draft.requires_impact_confirmation && (
-            <label className="check">
+            <label className="check m-0 flex-row items-center gap-2 font-normal">
               <input
                 type="checkbox"
                 checked={confirmed}
@@ -316,10 +348,10 @@ export function ChangeReview({
               我已核对以上受影响文章，确认合并、拆分或归档范围
             </label>
           )}
-          <div className="row wrap">
+          <div className="row flex items-center gap-3 wrap flex-wrap">
             {editing ? (
               <>
-                <button
+                <Button
                   disabled={busy}
                   onClick={() =>
                     void onEdit(operations)
@@ -328,35 +360,43 @@ export function ChangeReview({
                   }
                 >
                   保存草稿修订
-                </button>
-                <button
-                  className="secondary"
+                </Button>
+                <Button
+                  className="secondary button-secondary"
                   onClick={() => {
                     setOperations(draft.operations);
                     setEditing(false);
                   }}
                 >
                   取消编辑
-                </button>
+                </Button>
               </>
             ) : (
               <>
-                <button
+                <Button
                   disabled={busy || (draft.requires_impact_confirmation && !confirmed)}
                   onClick={() => onPublish(confirmed)}
                 >
                   确认并发布
-                </button>
-                <button className="secondary" disabled={busy} onClick={() => setEditing(true)}>
+                </Button>
+                <Button
+                  className="secondary button-secondary"
+                  disabled={busy}
+                  onClick={() => setEditing(true)}
+                >
                   编辑草稿
-                </button>
-                <button className="quiet danger" disabled={busy} onClick={onReject}>
+                </Button>
+                <Button
+                  className="quiet button-quiet danger text-danger"
+                  disabled={busy}
+                  onClick={onReject}
+                >
                   拒绝本次变更
-                </button>
+                </Button>
               </>
             )}
           </div>
-          <p className="muted small">
+          <p className="muted text-muted small text-xs">
             发布会创建新版本。已有历史和来源引用保留；拒绝后 Agent 无法再自动发布这份草稿。
           </p>
         </div>

@@ -1,8 +1,16 @@
+import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, FileCheck2 } from 'lucide-react';
 import { messageOf, send, usePagedResource, useResource } from '../../shared/api/api';
-import { Badge, ChangeReview, Empty, ErrorBox, Loading, PageTitle } from '../../shared/ui/components';
+import {
+  Badge,
+  ChangeReview,
+  Empty,
+  ErrorBox,
+  Loading,
+  PageTitle,
+} from '../../shared/ui/components';
 import type { ChangeSet } from '../../shared/types/types';
 import { useWorkspace } from '../../shared/state/workspace';
 
@@ -12,18 +20,22 @@ export function ChangesPage() {
   return (
     <>
       <PageTitle eyebrow="REVIEW & TRACE" title="变更与运行">
-        <Link className="button secondary" to="/runs">
+        <Link className="button secondary button-secondary" to="/runs">
           查看运行记录 →
         </Link>
       </PageTitle>
-      <p className="intro">完整草稿、修改差异与发布决定，都在这里留有记录。</p>
+      <p className="intro text-muted">完整草稿、修改差异与发布决定，都在这里留有记录。</p>
       <ErrorBox message={result.error} />
       {result.loading && !result.data.length ? (
         <Loading />
       ) : result.data?.length ? (
-        <div className="list-cards">
+        <div className="list-cards grid gap-3">
           {result.data.map((draft) => (
-            <Link to={`/changes/${draft.id}`} className="list-card" key={draft.id}>
+            <Link
+              to={`/changes/${draft.id}`}
+              className="list-card flex items-center gap-[17px] rounded-[9px] border border-line bg-white px-[23px] py-4.5 text-[#5c7057] hover:border-[#aec2a5] hover:no-underline max-md:flex-wrap max-md:gap-3 max-md:p-4 [&>div]:min-w-0 [&>div]:flex-1 [&_h3]:mt-0 [&_h3]:mb-[5px] [&_h3]:text-[#344c37] [&_h3]:[overflow-wrap:anywhere] max-md:[&_h3]:text-[13px] [&_p]:m-0 [&_p]:text-[11px] [&_p]:text-[#85917e] [&_p]:[overflow-wrap:anywhere] [&>span:last-child]:text-[11px] [&>span:last-child]:whitespace-nowrap max-md:[&>span:last-child]:hidden"
+              key={draft.id}
+            >
               <FileCheck2 size={21} />
               <div>
                 <h3>{draft.operations[0]?.title || '知识维护变更'}</h3>
@@ -41,9 +53,13 @@ export function ChangesPage() {
         <Empty title="暂无知识变更">Agent 准备的草稿和你保存的编辑会显示在这里。</Empty>
       )}
       {result.next && (
-        <button className="secondary" disabled={result.loading} onClick={result.loadMore}>
+        <Button
+          className="secondary button-secondary"
+          disabled={result.loading}
+          onClick={result.loadMore}
+        >
           {result.loading ? '正在加载…' : '加载更多变更'}
-        </button>
+        </Button>
       )}
     </>
   );
@@ -71,7 +87,7 @@ export function ChangePage() {
   const draft = result.data;
   return (
     <>
-      <Link className="back-link" to="/changes">
+      <Link className="back-link mb-[15px] inline-flex items-center gap-1.5 text-xs" to="/changes">
         <ArrowLeft size={15} />
         全部变更
       </Link>

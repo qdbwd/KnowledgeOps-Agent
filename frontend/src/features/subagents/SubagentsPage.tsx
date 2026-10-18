@@ -1,3 +1,4 @@
+import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { messageOf, send, useResource } from '../../shared/api/api';
@@ -73,9 +74,9 @@ function Choices({
   return (
     <div role="group" aria-label={title}>
       <h3>{title}</h3>
-      {available.length === 0 && <p className="muted">暂无可选项。</p>}
+      {available.length === 0 && <p className="muted text-muted">暂无可选项。</p>}
       {available.map((item) => (
-        <label className="check" key={item.name}>
+        <label className="check m-0 flex-row items-center gap-2 font-normal" key={item.name}>
           <input
             type="checkbox"
             checked={selected.includes(item.name)}
@@ -90,11 +91,11 @@ function Choices({
           />
           <span>
             {item.label ?? item.name}{' '}
-            {item.description && <span className="muted">— {item.description}</span>}
+            {item.description && <span className="muted text-muted">— {item.description}</span>}
           </span>
         </label>
       ))}
-      <p className="muted small">
+      <p className="muted text-muted small text-xs">
         已选 {selected.length} 项；空列表表示不授予任何{title}。
       </p>
     </div>
@@ -114,12 +115,11 @@ function RoleFields({
   disabled: boolean;
   creating?: boolean;
 }) {
-  const selectedGroups = value.tool_groups ?? (
-    options.tool_groups?.some((group) => group.id === 'mcp') ? ['mcp'] : []
-  );
+  const selectedGroups =
+    value.tool_groups ?? (options.tool_groups?.some((group) => group.id === 'mcp') ? ['mcp'] : []);
   return (
     <>
-      <div className="two-columns">
+      <div className="two-columns grid grid-cols-2 gap-5.5 max-lg:gap-[15px] max-md:grid-cols-1">
         <label>
           稳定名称
           <input
@@ -142,7 +142,7 @@ function RoleFields({
         </label>
       </div>
       {creating && (
-        <p className="muted small">
+        <p className="muted text-muted small text-xs">
           名称为 1–64
           位小写英文、数字或连字符，首位为英文或数字。创建后不可修改，删除后也不复用；显示名称可调整。
         </p>
@@ -166,7 +166,7 @@ function RoleFields({
           onChange={(event) => onChange({ ...value, system_prompt: event.target.value })}
         />
       </label>
-      <div className="two-columns">
+      <div className="two-columns grid grid-cols-2 gap-5.5 max-lg:gap-[15px] max-md:grid-cols-1">
         <Choices
           title="工具组"
           options={(options.tool_groups ?? []).map((group) => ({
@@ -194,7 +194,7 @@ function RoleFields({
         />
       </div>
       {selectedGroups.length > 0 && (
-        <p className="muted small">
+        <p className="muted text-muted small text-xs">
           所选组的当前成员：
           {(options.tool_groups ?? [])
             .filter((group) => selectedGroups.includes(group.id))
@@ -205,12 +205,12 @@ function RoleFields({
         </p>
       )}
       {selectedGroups.includes('mcp') && (
-        <p className="muted small">
+        <p className="muted text-muted small text-xs">
           MCP 成员在新任务开始时取自已允许的只读服务目录；可在“工具与能力”查看。
           不增加外部服务或写入权限，既有任务保持原冻结范围。
         </p>
       )}
-      <p className="muted small">
+      <p className="muted text-muted small text-xs">
         工具组和单独选择的工具合并，Skills
         需另行选择。核心系统规则始终生效；联网与辅助模型还受主任务开关限制。
       </p>
@@ -222,12 +222,12 @@ function RoleContent({ row }: { row: Role }) {
   return (
     <>
       <p>{row.description}</p>
-      <p className="muted small">
+      <p className="muted text-muted small text-xs">
         已保存工具：{(row.resolved_tools ?? row.tools).join('、') || '无'} · Skills：
         {row.skills.join('、') || '无'}
       </p>
       {(row.tool_groups ?? []).length > 0 && (
-        <p className="muted small">工具组：{row.tool_groups?.join('、')}</p>
+        <p className="muted text-muted small text-xs">工具组：{row.tool_groups?.join('、')}</p>
       )}
       <pre>{row.system_prompt}</pre>
     </>
@@ -270,22 +270,25 @@ function RoleCard({
     }
   }
   return (
-    <section className="card" aria-label={row.display_name}>
-      <div className="row wrap between">
+    <section
+      className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
+      aria-label={row.display_name}
+    >
+      <div className="row flex items-center gap-3 wrap flex-wrap between justify-between">
         <h2>{row.display_name}</h2>
         <span>
           {row.builtin ? '内置 · 只读 · ' : ''}
           {row.enabled ? '已启用' : '已停用'} · 修订 {row.revision}
         </span>
       </div>
-      <p className="muted small">
+      <p className="muted text-muted small text-xs">
         <code>{row.name}</code>
       </p>
       <p>{row.description}</p>
       <ErrorBox message={error} />
       {error && (
-        <button
-          className="secondary"
+        <Button
+          className="secondary button-secondary"
           disabled={busy}
           onClick={() => {
             setFields(fieldsOf(row));
@@ -296,52 +299,60 @@ function RoleCard({
           }}
         >
           放弃本地修改并刷新
-        </button>
+        </Button>
       )}
       {busy && <p role="status">正在保存配置…</p>}
-      <div className="row wrap">
+      <div className="row flex items-center gap-3 wrap flex-wrap">
         {!row.builtin && (
           <>
-            <button
-              className="secondary"
+            <Button
+              className="secondary button-secondary"
               disabled={busy || !options}
               onClick={() => setEditing(!editing)}
             >
               {editing ? '收起编辑' : '编辑配置'}
-            </button>
-            <button
-              className="secondary"
+            </Button>
+            <Button
+              className="secondary button-secondary"
               disabled={busy}
               onClick={() => void act({ enabled: !row.enabled })}
             >
               {row.enabled ? '停用' : '启用'}
-            </button>
-            <button className="quiet danger" disabled={busy} onClick={() => setConfirming(true)}>
+            </Button>
+            <Button
+              className="quiet button-quiet danger text-danger"
+              disabled={busy}
+              onClick={() => setConfirming(true)}
+            >
               删除
-            </button>
+            </Button>
           </>
         )}
-        <button className="secondary" onClick={() => showHistory(row.id)}>
+        <Button className="secondary button-secondary" onClick={() => showHistory(row.id)}>
           查看历史
-        </button>
+        </Button>
         <Link to={`/tools?role_id=${encodeURIComponent(row.id)}`}>查看有效工具</Link>
       </div>
       {confirming && (
-        <div className="notice">
+        <div className="notice border-l-[3px] border-[#c0a76b] bg-[#f5f0e0] px-4 py-3 text-[13px] [overflow-wrap:anywhere]">
           <p>
             确认删除「{row.display_name}」（{row.name}）？旧绑定将停止，配置历史保留，名称不可复用。
           </p>
-          <div className="row wrap">
-            <button
-              className="danger secondary"
+          <div className="row flex items-center gap-3 wrap flex-wrap">
+            <Button
+              className="danger text-danger secondary button-secondary"
               disabled={busy}
               onClick={() => void act({ deleted: true })}
             >
               确认删除此角色
-            </button>
-            <button className="secondary" disabled={busy} onClick={() => setConfirming(false)}>
+            </Button>
+            <Button
+              className="secondary button-secondary"
+              disabled={busy}
+              onClick={() => setConfirming(false)}
+            >
               取消删除
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -362,10 +373,10 @@ function RoleCard({
           }}
         >
           <RoleFields value={fields} onChange={setFields} options={options} disabled={busy} />
-          <button disabled={busy}>保存配置</button>
+          <Button disabled={busy}>保存配置</Button>
         </form>
       ) : (
-        <details>
+        <details className="mt-5">
           <summary>查看提示与许可</summary>
           <RoleContent row={row} />
         </details>
@@ -394,17 +405,19 @@ export function SubagentsPage() {
   return (
     <>
       <PageTitle eyebrow="SUBAGENTS" title="子Agent">
-        <button className="secondary" onClick={changed}>
+        <Button className="secondary button-secondary" onClick={changed}>
           刷新
-        </button>
+        </Button>
       </PageTitle>
       <Link to="/tools">返回工具与能力</Link>
       <p>
         为不同研究分工保存角色提示、工具和
         Skills。配置不会自动启动任务；聊天中勾选“允许子Agent分工”后，主 Agent 才可按需委派。
       </p>
-      <p className="muted">所有子Agent只读、无递归，继承主任务的模型并共享其预算，最多两个并发。</p>
-      <p className="muted">
+      <p className="muted text-muted">
+        所有子Agent只读、无递归，继承主任务的模型并共享其预算，最多两个并发。
+      </p>
+      <p className="muted text-muted">
         新任务使用新配置。停用、删除、收窄工具或 Skills
         许可，都会让旧绑定在下一次调用时停止；重新启用也不会恢复旧绑定。
       </p>
@@ -424,23 +437,31 @@ export function SubagentsPage() {
         />
       ))}
       {historyId && (
-        <section className="card" aria-label="配置历史">
-          <div className="row between">
+        <section
+          className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
+          aria-label="配置历史"
+        >
+          <div className="row flex items-center gap-3 between justify-between">
             <h2>配置历史</h2>
-            <button className="quiet" onClick={() => setSearch({})}>
+            <Button className="quiet button-quiet" onClick={() => setSearch({})}>
               关闭历史
-            </button>
+            </Button>
           </div>
-          <p className="muted">历史快照只供核对，包含已删除角色；当前地址可用于再次查看。</p>
+          <p className="muted text-muted">
+            历史快照只供核对，包含已删除角色；当前地址可用于再次查看。
+          </p>
           <ErrorBox message={history.error} />
           {history.loading && <Loading />}
           {!history.loading && history.data?.length === 0 && <p>暂无历史版本。</p>}
           {history.data?.map((row) => (
-            <article className="card" key={row.revision}>
+            <article
+              className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
+              key={row.revision}
+            >
               <h3>
                 {row.display_name} · 修订 {row.revision}
               </h3>
-              <p className="muted small">
+              <p className="muted text-muted small text-xs">
                 {row.name} · {row.deleted ? '已删除' : row.enabled ? '已启用' : '已停用'}
               </p>
               <RoleContent row={row} />
@@ -448,7 +469,7 @@ export function SubagentsPage() {
           ))}
         </section>
       )}
-      <section className="card">
+      <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
         <h2>创建子Agent</h2>
         <ErrorBox message={error} />
         <form
@@ -482,7 +503,7 @@ export function SubagentsPage() {
             disabled={busy || !optionsReady}
             creating
           />
-          <label className="check">
+          <label className="check m-0 flex-row items-center gap-2 font-normal">
             <input
               type="checkbox"
               checked={enabled}
@@ -491,9 +512,9 @@ export function SubagentsPage() {
             />
             创建后启用
           </label>
-          <button disabled={busy || !optionsReady || result.loading || Boolean(result.error)}>
+          <Button disabled={busy || !optionsReady || result.loading || Boolean(result.error)}>
             {busy ? '正在创建…' : '创建子Agent'}
-          </button>
+          </Button>
         </form>
       </section>
     </>

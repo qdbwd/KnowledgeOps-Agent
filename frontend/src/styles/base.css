@@ -1,0 +1,103 @@
+/* Preflight 之后显式定义应用基础排版；utilities 层可在组件内覆盖。 */
+@layer base {
+  :root {
+    @apply bg-canvas font-sans text-ink leading-[1.6];
+    font-synthesis: none;
+  }
+  a {
+    @apply text-brand no-underline hover:underline;
+  }
+  button,
+  a,
+  summary {
+    @apply focus-visible:outline-[3px] focus-visible:outline-offset-3 focus-visible:outline-[#b5cdb4];
+  }
+  input,
+  textarea,
+  select {
+    @apply max-w-full rounded-[7px] border border-[#d7dfd7] bg-white px-3 py-2.5 text-[#26382f];
+    font: inherit;
+    &:focus {
+      @apply border-[#729d83] outline-2 outline-[#c4d9cc];
+    }
+  }
+  input:not([type='checkbox']):not([type='file']),
+  textarea {
+    @apply w-full;
+  }
+  input[type='checkbox'] {
+    @apply size-[15px] shrink-0 accent-brand;
+  }
+  textarea {
+    @apply resize-y leading-[1.75];
+  }
+  select {
+    @apply px-[9px] py-[7px] text-[13px];
+  }
+  label {
+    @apply mb-3.5 flex flex-col gap-1.5 text-[13px] font-[550];
+  }
+  h1 {
+    @apply m-0 text-[28px] leading-[1.4] font-[650] tracking-[-0.65px] [overflow-wrap:anywhere] max-lg:text-[25px] max-md:text-[23px];
+  }
+  h2 {
+    @apply mt-0 mb-[0.83em] text-[19px] leading-[1.5] font-semibold;
+  }
+  h3 {
+    @apply mt-0 mb-[1em] text-[15px] font-semibold;
+  }
+  h4,
+  h5,
+  h6 {
+    @apply my-[1em] font-bold;
+  }
+  h5 {
+    font-size: 0.83em;
+  }
+  h6 {
+    font-size: 0.67em;
+  }
+  p {
+    @apply mt-0 mb-[1em];
+  }
+  ul,
+  ol {
+    @apply my-[1em] pl-10;
+  }
+  ul {
+    @apply list-disc;
+  }
+  ol {
+    @apply list-decimal;
+  }
+  dl {
+    @apply my-[1em];
+  }
+  dd {
+    @apply ml-10;
+  }
+  strong {
+    font-weight: bolder;
+  }
+  small {
+    font-size: 80%;
+  }
+  summary {
+    @apply cursor-pointer text-xs text-[#738767];
+  }
+  fieldset {
+    margin-inline: 2px;
+    padding: 0.35em 0.75em 0.625em;
+    border: 2px groove;
+  }
+  legend {
+    padding-inline: 2px;
+  }
+  hr {
+    margin-block: 0.5em;
+    border-top: 1px solid var(--color-line);
+  }
+  pre {
+    @apply my-[1em] overflow-x-auto rounded-[7px] bg-[#f5f7f2] p-[17px] font-mono text-xs leading-[1.7] whitespace-pre-wrap [overflow-wrap:anywhere];
+  }
+}

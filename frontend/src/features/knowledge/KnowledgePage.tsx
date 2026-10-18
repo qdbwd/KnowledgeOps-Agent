@@ -1,8 +1,16 @@
+import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Download, Search, Pencil, ArrowLeft, BookOpen } from 'lucide-react';
 import { messageOf, send, useResource } from '../../shared/api/api';
-import { Empty, ErrorBox, KnowledgeEditor, Loading, Markdown, PageTitle } from '../../shared/ui/components';
+import {
+  Empty,
+  ErrorBox,
+  KnowledgeEditor,
+  Loading,
+  Markdown,
+  PageTitle,
+} from '../../shared/ui/components';
 import type { ChangeSet, Knowledge } from '../../shared/types/types';
 import { useWorkspace } from '../../shared/state/workspace';
 
@@ -18,14 +26,14 @@ export function KnowledgePage() {
   return (
     <>
       <PageTitle eyebrow="YOUR KNOWLEDGE, CONNECTED" title="知识库">
-        <a className="button secondary" href="/api/knowledge/export">
+        <a className="button secondary button-secondary" href="/api/knowledge/export">
           <Download size={16} />
           导出 Markdown
         </a>
       </PageTitle>
-      <div className="row between toolbar">
+      <div className="row flex items-center gap-3 between justify-between toolbar mb-6 flex-wrap">
         <form
-          className="search"
+          className="search flex min-w-[230px] max-w-[620px] flex-1 items-center gap-[9px] rounded-lg border border-line bg-white py-[3px] pr-[9px] pl-[15px] text-[#8fa08f] [&>input]:border-0 [&>input]:bg-transparent [&>input]:pl-0 [&>input]:text-[13px] [&>button]:whitespace-nowrap"
           onSubmit={(e) => {
             e.preventDefault();
             setSearch(query);
@@ -38,9 +46,9 @@ export function KnowledgePage() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="搜索标题、关键词与正文"
           />
-          <button className="quiet">检索</button>
+          <Button className="quiet button-quiet">检索</Button>
         </form>
-        <label className="check">
+        <label className="check m-0 flex-row items-center gap-2 font-normal">
           <input
             type="checkbox"
             checked={archived && !search}
@@ -50,27 +58,31 @@ export function KnowledgePage() {
           含归档（仅浏览）
         </label>
       </div>
-      {search && <p className="muted small">搜索覆盖未归档文章；清空搜索后可浏览归档内容。</p>}
+      {search && (
+        <p className="muted text-muted small text-xs">
+          搜索覆盖未归档文章；清空搜索后可浏览归档内容。
+        </p>
+      )}
       <ErrorBox message={result.error} />
       {result.error ? null : result.loading ? (
         <Loading />
       ) : result.data?.length ? (
-        <div className="article-grid">
+        <div className="article-grid grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-4.5">
           {result.data.map((item) => (
             <Link
-              className="article-card"
+              className="article-card flex flex-col rounded-[10px] border border-line bg-white p-5.5 text-[#2c4333] hover:border-[#a6bba1] hover:no-underline [&>h2]:mt-4.5 [&>h2]:mb-2.5 [&>h2]:text-[17px] [&>p]:flex-1 [&>p]:text-xs [&>p]:leading-[1.8] [&>p]:text-[#81907e] [&>p]:[overflow-wrap:anywhere]"
               to={`/knowledge/${item.id || item.document_id}`}
               key={item.id || item.document_id}
             >
-              <div className="row between">
+              <div className="row flex items-center gap-3 between justify-between">
                 <BookOpen size={18} />
-                <span className="muted small">
+                <span className="muted text-muted small text-xs">
                   {item.archived ? '已归档' : `v${item.version ?? '·'}`}
                 </span>
               </div>
               <h2>{item.title}</h2>
               <p>{item.summary || item.snippet || item.body?.slice(0, 120)}</p>
-              <div className="tags">
+              <div className="tags flex flex-wrap gap-[7px] [&>span]:rounded-sm [&>span]:bg-[#f1f4ec] [&>span]:px-2 [&>span]:py-[3px] [&>span]:text-[10px] [&>span]:text-[#798971]">
                 {item.category && <span>{item.category}</span>}
                 {item.tags?.slice(0, 3).map((tag) => (
                   <span key={tag}>#{tag}</span>
@@ -131,12 +143,15 @@ export function ArticlePage() {
   }
   return (
     <>
-      <Link className="back-link" to="/knowledge">
+      <Link
+        className="back-link mb-[15px] inline-flex items-center gap-1.5 text-xs"
+        to="/knowledge"
+      >
         <ArrowLeft size={15} />
         返回知识库
       </Link>
       <PageTitle eyebrow={`KNOWLEDGE / VERSION ${item.version}`} title={item.title}>
-        <div className="row">
+        <div className="row flex items-center gap-3">
           <select
             aria-label="文章历史版本"
             value={item.version_id}
@@ -152,33 +167,35 @@ export function ArticlePage() {
               </option>
             ))}
           </select>
-          <button className="secondary" onClick={() => setEditing(!editing)}>
+          <Button className="secondary button-secondary" onClick={() => setEditing(!editing)}>
             <Pencil size={15} />
             编辑
-          </button>
+          </Button>
           {latest && !latest.archived && item.version_id === latest.version_id && (
-            <button
-              className="secondary"
+            <Button
+              className="secondary button-secondary"
               disabled={actionBusy}
               onClick={() => prepareAction('archive')}
             >
               归档文章
-            </button>
+            </Button>
           )}
           {latest && (latest.archived || item.version_id !== latest.version_id) && (
-            <button
-              className="secondary"
+            <Button
+              className="secondary button-secondary"
               disabled={actionBusy}
               onClick={() => prepareAction('restore')}
             >
               恢复为此版本
-            </button>
+            </Button>
           )}
         </div>
       </PageTitle>
       <ErrorBox message={actionError} />
       {selected && selected !== history.data?.[0]?.version_id && (
-        <p className="notice">正在查看历史版本。编辑保存时仍会检查当前版本，防止覆盖新内容。</p>
+        <p className="notice border-l-[3px] border-[#c0a76b] bg-[#f5f0e0] px-4 py-3 text-[13px] [overflow-wrap:anywhere]">
+          正在查看历史版本。编辑保存时仍会检查当前版本，防止覆盖新内容。
+        </p>
       )}
       {editing ? (
         <KnowledgeEditor
@@ -202,8 +219,8 @@ export function ArticlePage() {
           }}
         />
       ) : (
-        <article className="card article">
-          <div className="tags">
+        <article className="card article mb-5.5 rounded-[11px] border border-line bg-white px-10 py-8 max-lg:p-[25px] max-md:p-4.5 [&>.tags]:mb-5.5">
+          <div className="tags flex flex-wrap gap-[7px] [&>span]:rounded-sm [&>span]:bg-[#f1f4ec] [&>span]:px-2 [&>span]:py-[3px] [&>span]:text-[10px] [&>span]:text-[#798971]">
             {item.category && <span>{item.category}</span>}
             {item.tags.map((tag) => (
               <span key={tag}>#{tag}</span>
@@ -212,7 +229,7 @@ export function ArticlePage() {
           </div>
           <Markdown text={item.body} />
           {Boolean(item.relations?.length) && (
-            <aside className="related">
+            <aside className="related mt-[25px] grid gap-1.5 border-t border-line pt-5 text-[13px] [&>h3]:mb-0">
               <h3>相关阅读</h3>
               {item.relations?.map((link) => (
                 <Link key={link.target_id} to={`/knowledge/${link.target_id}`}>

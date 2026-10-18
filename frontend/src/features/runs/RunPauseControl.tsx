@@ -1,3 +1,4 @@
+import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
 import { Pause, Play } from 'lucide-react';
 import { messageOf, send } from '../../shared/api/api';
@@ -8,20 +9,29 @@ import { ErrorBox } from '../../shared/ui/components';
 export function RunPauseControl({ run, onChanged }: { run: Run; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  if (run.parent_id || run.kind !== 'agent' || !['queued', 'running', 'paused', 'waiting_input', 'waiting_children', 'interrupted'].includes(run.status))
+  if (
+    run.parent_id ||
+    run.kind !== 'agent' ||
+    !['queued', 'running', 'paused', 'waiting_input', 'waiting_children', 'interrupted'].includes(
+      run.status,
+    )
+  )
     return null;
   const paused = run.status === 'paused';
   const pending = !paused && run.pause_requested;
   return (
     <div>
-      <button
-        className="quiet small"
+      <Button
+        className="quiet button-quiet small text-xs"
         disabled={busy || pending || run.cancel_requested}
         onClick={async () => {
           setBusy(true);
           setError('');
           try {
-            await send(`/api/runs/${run.id}/${paused ? 'resume' : 'pause'}`, paused ? { budgets: {} } : {});
+            await send(
+              `/api/runs/${run.id}/${paused ? 'resume' : 'pause'}`,
+              paused ? { budgets: {} } : {},
+            );
             onChanged();
           } catch (error) {
             setError(messageOf(error));
@@ -32,7 +42,7 @@ export function RunPauseControl({ run, onChanged }: { run: Run; onChanged: () =>
       >
         {paused ? <Play size={12} /> : <Pause size={12} />}
         {pending ? '正在收尾暂停…' : paused ? '继续任务' : '暂停任务'}
-      </button>
+      </Button>
       <ErrorBox message={error} />
     </div>
   );

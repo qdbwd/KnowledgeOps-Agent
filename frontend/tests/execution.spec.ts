@@ -58,6 +58,7 @@ test('approval survives refresh and continues the original command once; modes a
   await page.reload();
   await expect(page.getByRole('combobox', { name: '执行权限' })).toHaveValue('auto');
   await expect(page.getByRole('combobox', { name: '思考强度' })).toHaveValue('low');
+  await page.getByRole('button', { name: '更多设置与材料' }).click();
   await page.getByRole('link', { name: '命令规则', exact: true }).click();
   await page.getByText('手动添加规则', { exact: true }).click();
   await page.getByRole('combobox', { name: '作用域' }).selectOption('session');

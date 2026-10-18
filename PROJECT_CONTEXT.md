@@ -1,12 +1,16 @@
 # KnowledgeOps 项目上下文
 
-更新：2026-10-17。开发对象：D:\codes\KnowledgeOps Agent。
+更新：2026-10-18。开发对象：D:\codes\KnowledgeOps Agent。
 
 ## 当前接续状态
 
+2026-10-18已完成 Tailwind CSS 4.3.3 迁移，用户确认继续保留 React + Vite + React Router 的 SPA。官方Vite插件生成静态CSS，页面布局、状态和窄屏规则归组件；styles分为主题、基础排版/表单、共享按钮及Markdown/源码阅读样式。保留原绿色风格和聊天底栏，不改变后端协议、部署进程或业务流程。实现说明见architecture的“Tailwind 样式组织”、frontend/README.md及决策0030；验证覆盖构建、lint、72项组件及13条不同浏览器场景，原始失败和定向修复证据在progress。
+
+当前dev、PG、Redis容器运行，普通API/Vite端口8000/5173未监听，未启动正常应用；验证使用自动结束的隔离API/Vite和模型替身，无付费模型调用。新前端依赖已在dev安装；日常仍从dev容器运行 `uv run scripts/dev.py`。本轮没有改.env、迁移正常数据库或操作业务材料；Git修改尚未提交推送，原有未跟踪Skills目录保留。以下2026-10-17及更早内容说明既有功能与历史交付，不代表当前应用正在运行。
+
 2026-10-17按用户截图调整聊天与来源阅读：固定底部输入框，权限在左，右侧依次为上下文圆环、模型名称、思考强度与发送，统一居中对齐；模型文字从侧栏移入输入框，原模型状态保留在名称悬停提示中。其余设置放加号；历史独立滚动与回到底部。主动压缩用独立context_compaction Run复用原outbox/worker/摘要器/快照，不创建聊天消息、不推进学习任务；有未结束任务时不可并发压缩。来源引用默认打开网页原网址或完整固定版本，工作区文件有全文预览与代码行号；来源删除为逻辑移除，原件/版本/Evidence保留，不释放磁盘空间。详细设计与检索切片区别见architecture的“输入框、主动压缩和全文阅读”。
 
-正常业务库0030、回执库仍为0003_lifecycle。dev、PG、Redis保持原容器；原开发应用空闲后经dev.py优雅停止并重启，API/worker/Vite已就绪，http://127.0.0.1:8787可访问。当前由docker exec后台运行原scripts/dev.py，日志为容器内/tmp/knowledgeops-ui-dev-20261017.log；未更改.env模型开关。只读核对原4份材料仍可见，未删除正常材料。验证继续使用隔离PG/文件、供应商替身与浏览器，没有付费模型调用，也没有Git提交推送或个人知识库写入；本轮验证入口见docs/progress.md。
+正常业务库0030、回执库仍为0003_lifecycle。2026-10-17交付时原开发应用经dev.py优雅重启并就绪，未更改.env模型开关；当时只读核对原4份材料仍可见，未删除正常材料。那轮验证使用隔离PG/文件、供应商替身与浏览器，没有付费模型调用；当前启动状态及本轮验证入口以上文和docs/progress.md为准。
 
 此前2026-10-16“临时数据生命周期与清理机制”A–F及L01—L12已经完成，范围在docs/implementation-plan.md，交付为docs/lifecycle-delivery.md，证据索引为artifacts/verification/lifecycle-delivery.json。数据分类、纳管、详情回收、会话删除与资产保留规则继续有效，本轮没有重开该长期目标或改变保留期限。以下更早条目是历史交付，不能作为当前运行状态。
 
@@ -48,7 +52,7 @@ MCP连接池增量沿用2026-10-14用户确认的官方`langchain.mcp.MCPAdapter
 
 - 本机.env与模板保持公开配置字段同步，模型与凭据值保留；APP_LOG_LEVEL同时控制API/worker，宿主工作区用AGENT_WORKSPACE_HOST。开发dev只保留两个识别标志，不注入应用配置；dev.py每次读取当前.env并生成基础服务/测试连接与内部目录，显式进程覆盖仍优先。单独调试、维护及需环境的测试使用python scripts/dev.py --run 命令；端口、挂载仍由Docker管理。最终24项定向离线检查及Compose/真实dev读取链通过；已按最终配置重新创建dev，未构建镜像、安装依赖、执行业务迁移或启动应用。证据见progress中的dev-dotenv-v2记录。
 - LangChain create_agent / LangGraph，直接依赖Deep Agents 0.7.23，按具体职责借鉴DeerFlow；不整体二开DeerFlow。上游引用与适配区别在[开发实现说明](docs/architecture.md)。
-- Python3.12/FastAPI/SQLAlchemy/Alembic、React/TypeScript/Vite、PG17+pg_search、Celery+Redis。只用本项目容器组；运行部署为api/worker/web/postgres/redis，开发为dev/postgres/redis（应用三进程在dev内），init准备完成后退出。开发.venv实际在项目根，运行镜像使用镜像内依赖。Windows用于编辑、Git和容器控制；日常开发启动不需要回宿主执行脚本。
+- Python3.12/FastAPI/SQLAlchemy/Alembic、React/TypeScript/Vite/Tailwind CSS v4、PG17+pg_search、Celery+Redis。前端保留SPA。只用本项目容器组；运行部署为api/worker/web/postgres/redis，开发为dev/postgres/redis（应用三进程在dev内），init准备完成后退出。开发.venv实际在项目根，运行镜像使用镜像内依赖。Windows用于编辑、Git和容器控制；日常开发启动不需要回宿主执行脚本。
 - Redis承载broker、SSE事件桥和确定检查点的可丢弃缓存；PG保存事实。正文/原件/配置需要与PG一起备份。模型回执库保留根预算与重放身份，不恢复已废弃的项目累计用量。
 - 原工作窗口262144 tokens、90%压缩保留。根Run预算和单元跨Run预算都保留；单元默认40模型请求、80工具、20搜索、1200秒活跃时间，恢复不清零。服务重启等待人工恢复，关闭浏览器不自动取消后台任务。
 - worker内LocalShellBackend用于可信本地任务，执行期间检查取消并回收普通子进程；不宣称操作系统级安全隔离，不新增AIO容器。

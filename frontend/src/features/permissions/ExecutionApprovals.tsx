@@ -1,3 +1,4 @@
+import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { messageOf, send, useResource } from '../../shared/api/api';
@@ -24,8 +25,14 @@ type Command = {
   request: { args: { command: string }; cwd: string };
 };
 type FileReceipt = {
-  id: string; path: string; operation: string; status: string; revision: number;
-  matches_expected: boolean; current_preview?: string; inspection_error?: string;
+  id: string;
+  path: string;
+  operation: string;
+  status: string;
+  revision: number;
+  matches_expected: boolean;
+  current_preview?: string;
+  inspection_error?: string;
 };
 type Approvals = { actions: Action[]; commands: Command[]; mcp: Receipt[]; files?: FileReceipt[] };
 const names: Record<string, string> = {
@@ -48,29 +55,29 @@ function ActionCard({
 }) {
   const [match, setMatch] = useState('exact');
   return (
-    <article className="list-card">
+    <article className="list-card flex items-center gap-[17px] rounded-[9px] border border-line bg-white px-[23px] py-4.5 text-[#5c7057] hover:border-[#aec2a5] hover:no-underline max-md:flex-wrap max-md:gap-3 max-md:p-4 [&>div]:min-w-0 [&>div]:flex-1 [&_h3]:mt-0 [&_h3]:mb-[5px] [&_h3]:text-[#344c37] [&_h3]:[overflow-wrap:anywhere] max-md:[&_h3]:text-[13px] [&_p]:m-0 [&_p]:text-[11px] [&_p]:text-[#85917e] [&_p]:[overflow-wrap:anywhere] [&>span:last-child]:text-[11px] [&>span:last-child]:whitespace-nowrap max-md:[&>span:last-child]:hidden">
       <div>
         <strong>命令执行 · {names[row.status] ?? row.status}</strong>
         <pre>{String(row.arguments.command ?? '')}</pre>
-        <p className="muted small">
+        <p className="muted text-muted small text-xs">
           工作目录：{row.cwd} · <Link to={`/runs/${row.run_id}`}>查看执行者</Link>
         </p>
         {row.status === 'pending' && (
           <>
-            <div className="row wrap">
-              <button disabled={busy || !ready} onClick={() => decide(row, true, 'once', 'exact')}>
+            <div className="row flex items-center gap-3 wrap flex-wrap">
+              <Button disabled={busy || !ready} onClick={() => decide(row, true, 'once', 'exact')}>
                 允许一次
-              </button>
-              <button
-                className="secondary"
+              </Button>
+              <Button
+                className="secondary button-secondary"
                 disabled={busy || !ready}
                 onClick={() => decide(row, false, 'once', 'exact')}
               >
                 拒绝一次
-              </button>
+              </Button>
             </div>
             {row.rule_candidate ? (
-              <details>
+              <details className="mt-5">
                 <summary>减少重复询问</summary>
                 <label>
                   匹配方式
@@ -86,23 +93,25 @@ function ActionCard({
                     : '全部参数必须完全一致。'}
                 </p>
                 <pre>{JSON.stringify(row.rule_candidate.argv)}</pre>
-                <div className="row wrap">
-                  <button
+                <div className="row flex items-center gap-3 wrap flex-wrap">
+                  <Button
                     disabled={busy || !ready}
                     onClick={() => decide(row, true, 'session', match)}
                   >
                     本会话允许
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     disabled={busy || !ready}
                     onClick={() => decide(row, true, 'persistent', match)}
                   >
                     保存为跨会话规则
-                  </button>
+                  </Button>
                 </div>
               </details>
             ) : (
-              <p className="muted small">此命令包含脚本或复杂语法，需要逐次确认。</p>
+              <p className="muted text-muted small text-xs">
+                此命令包含脚本或复杂语法，需要逐次确认。
+              </p>
             )}
           </>
         )}
@@ -155,7 +164,7 @@ export function ExecutionApprovals({
   return (
     <>
       {(rows.length > 0 || unknown.length > 0 || files.length > 0 || (ready && mcpWaiting)) && (
-        <section className="card">
+        <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
           <h2>执行确认</h2>
           <ErrorBox message={error || result.error} />
           <p>
@@ -163,7 +172,7 @@ export function ExecutionApprovals({
               ? '处理决定后仍保持暂停，请明确继续任务后再执行。'
               : '所有待办处理后会自动继续原任务。拒绝会交给 Agent 选择其他方案；等待期间不占用执行时间。'}
           </p>
-          <p className="muted small">
+          <p className="muted text-muted small text-xs">
             命令在应用所在容器执行。批准只控制是否启动，不提供额外的文件或网络隔离。
           </p>
           {rows.map((row) => (
@@ -183,7 +192,10 @@ export function ExecutionApprovals({
             />
           ))}
           {unknown.map((row) => (
-            <article key={row.id} className="list-card">
+            <article
+              key={row.id}
+              className="list-card flex items-center gap-[17px] rounded-[9px] border border-line bg-white px-[23px] py-4.5 text-[#5c7057] hover:border-[#aec2a5] hover:no-underline max-md:flex-wrap max-md:gap-3 max-md:p-4 [&>div]:min-w-0 [&>div]:flex-1 [&_h3]:mt-0 [&_h3]:mb-[5px] [&_h3]:text-[#344c37] [&_h3]:[overflow-wrap:anywhere] max-md:[&_h3]:text-[13px] [&_p]:m-0 [&_p]:text-[11px] [&_p]:text-[#85917e] [&_p]:[overflow-wrap:anywhere] [&>span:last-child]:text-[11px] [&>span:last-child]:whitespace-nowrap max-md:[&>span:last-child]:hidden"
+            >
               <div>
                 <strong>执行结果未知 · 第 {row.attempt} 次尝试</strong>
                 <pre>{row.request.args.command}</pre>
@@ -191,8 +203,8 @@ export function ExecutionApprovals({
                 <p>
                   命令可能已产生修改，但结果没有完整保存。请先检查文件或外部结果，再选择；重试可能重复产生副作用。
                 </p>
-                <div className="row wrap">
-                  <button
+                <div className="row flex items-center gap-3 wrap flex-wrap">
+                  <Button
                     disabled={busy || !ready}
                     onClick={() =>
                       action(`/api/runs/${run.root_id}/commands/${row.id}/resolve`, {
@@ -202,9 +214,9 @@ export function ExecutionApprovals({
                     }
                   >
                     {paused ? '已核对，跳过（保持暂停）' : '已核对，跳过并继续'}
-                  </button>
-                  <button
-                    className="secondary"
+                  </Button>
+                  <Button
+                    className="secondary button-secondary"
                     disabled={busy || !ready}
                     onClick={() =>
                       action(`/api/runs/${run.root_id}/commands/${row.id}/resolve`, {
@@ -214,38 +226,75 @@ export function ExecutionApprovals({
                     }
                   >
                     已核对，明确重试一次
-                  </button>
+                  </Button>
                 </div>
               </div>
             </article>
           ))}
           {files.map((row) => (
-            <article key={row.id} className="list-card">
+            <article
+              key={row.id}
+              className="list-card flex items-center gap-[17px] rounded-[9px] border border-line bg-white px-[23px] py-4.5 text-[#5c7057] hover:border-[#aec2a5] hover:no-underline max-md:flex-wrap max-md:gap-3 max-md:p-4 [&>div]:min-w-0 [&>div]:flex-1 [&_h3]:mt-0 [&_h3]:mb-[5px] [&_h3]:text-[#344c37] [&_h3]:[overflow-wrap:anywhere] max-md:[&_h3]:text-[13px] [&_p]:m-0 [&_p]:text-[11px] [&_p]:text-[#85917e] [&_p]:[overflow-wrap:anywhere] [&>span:last-child]:text-[11px] [&>span:last-child]:whitespace-nowrap max-md:[&>span:last-child]:hidden"
+            >
               <div>
-                <strong>文件操作待核对 · {row.status === 'conflict' ? '内容冲突' : '结果未知'}</strong>
-                <p>{row.path} · {row.operation}</p>
-                <p>不会自动覆盖文件。保留现状并跳过会把未确认结果交给 Agent；重新核对只检查当前内容是否等于原预期，再补齐回执和知识同步。</p>
-                {row.current_preview && <details><summary>查看当前文件片段</summary><pre>{row.current_preview}</pre></details>}
-                <p className="muted small">{row.inspection_error || (row.matches_expected ? '当前内容与预期一致，可以重新核对。' : '当前内容不等于预期结果；可以保留现状跳过，或在外部核对后刷新。')}</p>
-                <div className="row wrap">
-                  <button disabled={busy || !ready} onClick={() => action(`/api/runs/${run.root_id}/files/${row.id}/resolve`, { expected_revision: row.revision, decision: 'skip' })}>
+                <strong>
+                  文件操作待核对 · {row.status === 'conflict' ? '内容冲突' : '结果未知'}
+                </strong>
+                <p>
+                  {row.path} · {row.operation}
+                </p>
+                <p>
+                  不会自动覆盖文件。保留现状并跳过会把未确认结果交给
+                  Agent；重新核对只检查当前内容是否等于原预期，再补齐回执和知识同步。
+                </p>
+                {row.current_preview && (
+                  <details className="mt-5">
+                    <summary>查看当前文件片段</summary>
+                    <pre>{row.current_preview}</pre>
+                  </details>
+                )}
+                <p className="muted text-muted small text-xs">
+                  {row.inspection_error ||
+                    (row.matches_expected
+                      ? '当前内容与预期一致，可以重新核对。'
+                      : '当前内容不等于预期结果；可以保留现状跳过，或在外部核对后刷新。')}
+                </p>
+                <div className="row flex items-center gap-3 wrap flex-wrap">
+                  <Button
+                    disabled={busy || !ready}
+                    onClick={() =>
+                      action(`/api/runs/${run.root_id}/files/${row.id}/resolve`, {
+                        expected_revision: row.revision,
+                        decision: 'skip',
+                      })
+                    }
+                  >
                     {paused ? '保留现状，跳过（保持暂停）' : '保留现状，跳过并继续'}
-                  </button>
-                  <button className="secondary" disabled={busy || !ready || !row.matches_expected} onClick={() => action(`/api/runs/${run.root_id}/files/${row.id}/resolve`, { expected_revision: row.revision, decision: 'verify' })}>
+                  </Button>
+                  <Button
+                    className="secondary button-secondary"
+                    disabled={busy || !ready || !row.matches_expected}
+                    onClick={() =>
+                      action(`/api/runs/${run.root_id}/files/${row.id}/resolve`, {
+                        expected_revision: row.revision,
+                        decision: 'verify',
+                      })
+                    }
+                  >
                     重新核对（不改文件）
-                  </button>
+                  </Button>
                 </div>
               </div>
             </article>
           ))}
           {ready && (
-            <button
-              className="secondary"
+            <Button
+              className="secondary button-secondary"
               disabled={busy}
               onClick={() => action(`/api/runs/${run.root_id}/cancel`, {})}
             >
               停止本次任务
-            </button>
+            </Button>
           )}
         </section>
       )}

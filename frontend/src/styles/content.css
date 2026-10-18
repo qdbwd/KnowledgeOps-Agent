@@ -1,0 +1,100 @@
+/* Markdown 来自运行时正文，不能在构建时逐个元素加类，保留有作用域的排版。 */
+@layer components {
+  .markdown {
+    font-size: 15px;
+    line-height: 1.9;
+    overflow-wrap: anywhere;
+    & > :last-child {
+      margin-bottom: 0;
+    }
+    & h1 {
+      font-size: 25px;
+      margin: 1.3em 0 0.7em;
+    }
+    & h2 {
+      font-size: 21px;
+      margin: 1.6em 0 0.8em;
+      border-bottom: 1px solid #e7ece2;
+      padding-bottom: 0.45em;
+    }
+    & h3 {
+      font-size: 17px;
+      margin: 1.4em 0 0.8em;
+    }
+    & p {
+      margin-bottom: 1em;
+    }
+    & a {
+      color: #3e8063;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+    & blockquote {
+      border-left: 3px solid #aac3a0;
+      margin: 20px 0;
+      padding: 8px 20px;
+      color: #6f8368;
+      background: #f5f8f1;
+    }
+    & code {
+      background: #f1f4ed;
+      border-radius: 3px;
+      padding: 2px 4px;
+      font-size: 0.85em;
+    }
+    & pre code {
+      padding: 0;
+    }
+    & table {
+      border-collapse: collapse;
+      display: block;
+      overflow-x: auto;
+      font-size: 13px;
+    }
+    & th,
+    & td {
+      border: 1px solid #d9e1d2;
+      padding: 9px 14px;
+    }
+  }
+  .source-text {
+    white-space: pre-wrap;
+    font:
+      14px/1.95 'Noto Sans SC',
+      'Microsoft YaHei',
+      sans-serif;
+    color: #445442;
+    padding: 22px;
+    border-left: 3px solid #ccdcbc;
+    background: #f7f9f3;
+    @media (width < 760px) {
+      padding: 13px;
+    }
+  }
+  /* 源码行号与正文保持一行，横向溢出只在阅读器内滚动。 */
+  .document-code {
+    padding: 12px 0;
+    margin: 0;
+    background: #f8faf6;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.8;
+    & > code > span {
+      display: flex;
+      min-width: 100%;
+      width: max-content;
+      padding-right: 16px;
+    }
+    & .line-number {
+      user-select: none;
+      color: #89968c;
+      text-align: right;
+      min-width: 4em;
+      padding: 0 1em 0 0.5em;
+      flex-shrink: 0;
+    }
+    & .focused-line {
+      background: #e8efd9;
+    }
+  }
+}

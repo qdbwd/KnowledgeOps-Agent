@@ -1,10 +1,26 @@
+import { Button } from '../../shared/ui/Button';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowUp, FileText, Sparkles, Square, Activity, ArrowDown } from 'lucide-react';
-import { api, messageOf, send, terminal, usePagedResource, useResource } from '../../shared/api/api';
+import {
+  api,
+  messageOf,
+  send,
+  terminal,
+  usePagedResource,
+  useResource,
+} from '../../shared/api/api';
 import type { CollectionPage } from '../../shared/api/api';
 import { Badge, Empty, ErrorBox, Loading, Markdown, PageTitle } from '../../shared/ui/components';
-import type { ChangeSet, Conversation, Guidance, Message, Run, RunEvent, Source } from '../../shared/types/types';
+import type {
+  ChangeSet,
+  Conversation,
+  Guidance,
+  Message,
+  Run,
+  RunEvent,
+  Source,
+} from '../../shared/types/types';
 import { useWorkspace } from '../../shared/state/workspace';
 import { ExecutionApprovals } from '../permissions/ExecutionApprovals';
 import { ContextUsage } from './ContextUsage';
@@ -19,7 +35,9 @@ type ConversationSettings = { permission_mode: string; reasoning_effort: string;
 /** 一个任务的流式观察，不承担运行生命周期；组件卸载只关闭连接，不取消 Agent。 */
 function LiveRun({ initial, onChanged }: { initial: Run; onChanged: () => void }) {
   const [run, setRun] = useState(initial);
-  const [activity, setActivity] = useState(initial.status === 'waiting_children' ? '等待子任务结果' : '等待执行');
+  const [activity, setActivity] = useState(
+    initial.status === 'waiting_children' ? '等待子任务结果' : '等待执行',
+  );
   const [partial, setPartial] = useState('');
   const [connection, setConnection] = useState('');
   const [error, setError] = useState('');
@@ -45,8 +63,21 @@ function LiveRun({ initial, onChanged }: { initial: Run; onChanged: () => void }
       if (event.kind === 'waiting_children') setActivity('等待子任务结果');
       if (event.kind === 'children_ready') setActivity('子结果已就绪，准备继续');
       if (event.kind === 'guidance_ready') setActivity('已收到新要求，准备继续');
-      if (['finished', 'paused', 'waiting_input', 'question_pending', 'waiting_children',
-        'child_started', 'child_finished', 'child_updated', 'children_ready', 'guidance_ready'].includes(event.kind)) onChanged();
+      if (
+        [
+          'finished',
+          'paused',
+          'waiting_input',
+          'question_pending',
+          'waiting_children',
+          'child_started',
+          'child_finished',
+          'child_updated',
+          'children_ready',
+          'guidance_ready',
+        ].includes(event.kind)
+      )
+        onChanged();
     });
     source.addEventListener('closed', () => {
       source.close();
@@ -74,16 +105,16 @@ function LiveRun({ initial, onChanged }: { initial: Run; onChanged: () => void }
     };
   }, [initial.id, onChanged]);
   return (
-    <div className="live-run card">
-      <div className="row between">
-        <span className="row">
+    <div className="live-run card mb-5.5 rounded-[11px] border border-[#c9dac5] bg-white px-5 py-4 text-[13px] max-md:p-4.5 [&>p]:mt-2.5 [&>p]:mb-0">
+      <div className="row flex items-center gap-3 between justify-between">
+        <span className="row flex items-center gap-3">
           <Activity size={17} />
           <strong>{activity}</strong>
           <Badge status={run.status} />
         </span>
         <RunPauseControl run={run} onChanged={onChanged} />
-        <button
-          className="quiet small"
+        <Button
+          className="quiet button-quiet small text-xs"
           disabled={run.cancel_requested}
           onClick={async () => {
             try {
@@ -95,15 +126,19 @@ function LiveRun({ initial, onChanged }: { initial: Run; onChanged: () => void }
         >
           <Square size={12} />
           {run.cancel_requested ? '正在取消…' : '取消任务'}
-        </button>
+        </Button>
       </div>
-      <p className="muted small">
+      <p className="muted text-muted small text-xs">
         {run.tool_calls} 次工具尝试 · <Link to={`/runs/${run.id}`}>查看运行详情</Link>
       </p>
-      {partial && <div className="stream-preview">{partial}</div>}
-      {connection && <p className="muted small">{connection}</p>}
+      {partial && (
+        <div className="stream-preview mt-3.5 max-h-[180px] overflow-auto leading-[1.8] whitespace-pre-wrap text-[#6c7a69]">
+          {partial}
+        </div>
+      )}
+      {connection && <p className="muted text-muted small text-xs">{connection}</p>}
       {guidance.map((item) => (
-        <p key={item.id} className="muted small">
+        <p key={item.id} className="muted text-muted small text-xs">
           引导消息 {item.user_sequence} ·{' '}
           {{ pending: '等待应用', applied: '已应用', stale: '未应用，目标已变化' }[item.status]}
           {item.result.reason || item.result.authorization_error}
@@ -169,11 +204,16 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
   }, [conversationId, toBottom]);
   useEffect(() => {
     // 流式内容增长时只跟随已在底部的读者，不把正在翻看旧消息的人拉回去。
-    const update = () => { if (following.current) toBottom(); };
+    const update = () => {
+      if (following.current) toBottom();
+    };
     const frame = requestAnimationFrame(update);
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
     if (historyArea.current) observer?.observe(historyArea.current);
-    return () => { cancelAnimationFrame(frame); observer?.disconnect(); };
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
   }, [messages.data, toBottom]);
   const [mode, setMode] = useState<'ask' | 'preview' | 'direct'>('ask');
   const [knowledgeOnly, setKnowledgeOnly] = useState(false);
@@ -298,240 +338,334 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
   }
   // 分别查询 running/waiting 时，任务可能正处于两次响应之间的 queued 阶段。
   // 保留列表中未终结的观察者，直到获取终态；否则会同时丢掉 SSE 和轮询。
-  const active = running.data?.items?.[0] ?? waitingChildren.data?.items?.[0]
-    ?? runs.data.find((run) => ['running', 'waiting_children', 'queued'].includes(run.status));
+  const active =
+    running.data?.items?.[0] ??
+    waitingChildren.data?.items?.[0] ??
+    runs.data.find((run) => ['running', 'waiting_children', 'queued'].includes(run.status));
   const guideTarget =
     (active?.kind === 'agent' ? active : undefined) ??
     runs.data.find(
-      (run) => run.kind === 'agent' && (['paused', 'waiting_input'].includes(run.status) ||
-        (run.status === 'interrupted' && run.outcome.kind === 'waiting_approval')),
+      (run) =>
+        run.kind === 'agent' &&
+        (['paused', 'waiting_input'].includes(run.status) ||
+          (run.status === 'interrupted' && run.outcome.kind === 'waiting_approval')),
     );
   const hasQueued = runs.data.some((run) => run.status === 'queued');
   const pending =
     drafts.data?.filter((draft) => ['draft', 'approved'].includes(draft.status)) ?? [];
   return (
-    <div className="chat-page">
-      <div className="chat-scroll" ref={scrollArea} onScroll={() => {
-        const area = scrollArea.current;
-        if (!area) return;
-        const away = area.scrollHeight - area.scrollTop - area.clientHeight > 80;
-        following.current = !away;
-        setAwayFromBottom(away);
-      }}>
-      <div className="chat-content" ref={historyArea}>
-      <PageTitle
-        eyebrow="THINK · RESEARCH · REMEMBER"
-        title={conversationId ? '继续这段思考' : '把探索变成可积累的知识'}
-      >
-        {conversationId ? (
-          <div className="row wrap">
-          <Link className="button secondary small" to={`/chat/${conversationId}/deletion`}>删除会话</Link>
-          </div>
-        ) : (
-          <span className="workspace-label">KnowledgeOps 工作台</span>
-        )}
-      </PageTitle>
-      {conversationId && <ConversationLearning conversationId={conversationId} />}
-      <div className="conversation">
-        {!conversationId && (
-          <div className="welcome">
-            <div className="welcome-mark">
-              <Sparkles size={28} />
-            </div>
-            <h2>从一个问题，或一份材料开始。</h2>
-            <p>一起研究、整理和维护知识。每一次结论，都可以回到它的来源。</p>
-            <div className="suggestions">
-              <button
-                onClick={() => setContent('帮我梳理知识库中已有的主题，指出值得补充的内容。')}
-              >
-                梳理已有知识 <ArrowUp size={14} />
-              </button>
-              <Link to="/sources">
-                导入学习材料 <FileText size={15} />
-              </Link>
-            </div>
-          </div>
-        )}
-        <ErrorBox
-          message={
-            messages.error || running.error || waitingChildren.error || runs.error || drafts.error || defaults.error || error
-          }
-        />
-        {messages.loading && !messages.data && <Loading />}
-        {conversationId && messages.data?.length === 0 && (
-          <Empty title="这段对话还没有消息">在下方写下问题，或关联材料开始整理。</Empty>
-        )}
-        {messages.data?.map((message) => (
-          <article className={`message ${message.role}`} key={message.id}>
-            <div className="message-label">
-              {message.role === 'user' ? '你' : 'KnowledgeOps'}
-              <span>
-                {new Date(message.created_at).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
-              </span>
-            </div>
-            <Markdown text={message.content} />
-          </article>
-        ))}
-        {active && <LiveRun key={active.id} initial={active} onChanged={onChanged} />}
-        {runs.data.filter((run) => ['paused', 'waiting_input'].includes(run.status)).map((run) => (
-          <section className="card" key={run.id}>
-            <div className="row between">
-              <span><Badge status={run.status} /> {run.task.slice(0, 80)}</span>
-              <RunPauseControl run={run} onChanged={refresh} />
-            </div>
-            <p className="muted small">进展已保留。<Link to={`/runs/${run.id}`}>查看详情或取消</Link></p>
-            {run.outcome.answer && <Markdown text={run.outcome.answer} />}
-          </section>
-        ))}
-        {runs.data.filter((run) => run.question_count).map((run) => (
-          <RunQuestions key={`questions-${run.id}`} run={run} refreshKey={version} onChanged={refresh} />
-        ))}
-        {runs.data.filter((run) => run.child_count).map((run) => (
-          <RunChildren key={`children-${run.id}`} run={run} refreshKey={version} onChanged={refresh} />
-        ))}
-        {runs.data
-          .filter(
-            (run) =>
-              ['waiting_approval', 'execution_unknown'].includes(run.outcome.kind ?? '') &&
-              ['interrupted', 'paused'].includes(run.status),
-          )
-          .map((run) => (
-            <div key={run.id}>
-              <ExecutionApprovals run={run} refreshKey={version} onChanged={refresh} />
-            </div>
-          ))}
-        {runs.data
-          .filter((run) => run.status === 'queued')
-          .map((run) => (
-            <p className="muted small" key={run.id}>
-              排队任务：{run.task.slice(0, 80)} · <Link to={`/runs/${run.id}`}>查看</Link>
-              <button
-                className="quiet small"
-                disabled={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  setError('');
-                  try {
-                    await send(`/api/runs/${run.id}/cancel`, {});
-                    refresh();
-                  } catch (error) {
-                    setError(messageOf(error));
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                取消排队
-              </button>
-              {guideTarget && (
-                <button
-                  className="quiet small"
-                  disabled={busy}
-                  onClick={async () => {
-                    setBusy(true);
-                    setError('');
-                    try {
-                      await send(`/api/runs/${run.id}/guide`, {
-                        target_root_id: guideTarget.id,
-                        target_generation: guideTarget.generation,
-                      });
-                      refresh();
-                    } catch (error) {
-                      setError(messageOf(error));
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                >
-                  引导当前任务
-                </button>
-              )}
-            </p>
-          ))}
-        {runs.data
-          .filter((run) => run.outcome.kind === 'guidance')
-          .map((run) => (
-            <p className="muted small" key={run.id}>
-              已转为引导：{run.task.slice(0, 80)} ·{' '}
-              <Link to={`/runs/${run.outcome.target_root_id}`}>查看投递记录</Link>
-            </p>
-          ))}
-        {!active && runs.data?.[0] && (
-          <div className="run-summary">
-            <Badge status={runs.data[0].status} />
-            {runs.data[0].outcome.kind && <Badge status={runs.data[0].outcome.kind} />}
-            <Link to={`/runs/${runs.data[0].id}`}>运行记录 →</Link>
-            {runs.data[0].stop_reason && <p>{runs.data[0].stop_reason}</p>}
-          </div>
-        )}
-        {pending.map((draft) => (
-          <Link className="draft-link" to={`/changes/${draft.id}`} key={draft.id}>
-            <FileText size={20} />
-            <span>
-              <strong>{draft.operations[0]?.title || '知识维护草稿'}</strong>
-              <small>{draft.operations.length} 篇文章 · 等待你的选择</small>
-            </span>
-            <span>审阅 →</span>
-          </Link>
-        ))}
-        {drafts.next && (
-          <button className="quiet" disabled={drafts.loading} onClick={drafts.loadMore}>
-            加载更多会话变更
-          </button>
-        )}
-        {runs.next && (
-          <button className="quiet" disabled={runs.loading} onClick={runs.loadMore}>
-            加载更多会话任务
-          </button>
-        )}
-      </div>
-      </div>
-      </div>
-      <div className="composer-dock">
-      {awayFromBottom && <button type="button" className="scroll-to-bottom secondary" aria-label="回到最新消息" onClick={toBottom}>
-        <ArrowDown size={19} />
-      </button>}
-      <form
-        className="composer"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
+    <div className="chat-page mx-auto flex min-h-0 w-full max-w-[1080px] flex-1 flex-col">
+      <div
+        className="chat-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges]"
+        ref={scrollArea}
+        onScroll={() => {
+          const area = scrollArea.current;
+          if (!area) return;
+          const away = area.scrollHeight - area.scrollTop - area.clientHeight > 80;
+          following.current = !away;
+          setAwayFromBottom(away);
         }}
       >
-        <label className="sr-only" htmlFor="message">
-          发送给 KnowledgeOps 的消息
-        </label>
-        <textarea
-          id="message"
-          placeholder="提出问题，或说明希望如何整理知识…"
-          rows={3}
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          onKeyDown={(event) => {
-            // 普通 Enter 保留换行；中文输入法选字期间不能误发送。
-            if (
-              event.key === 'Enter' &&
-              (event.ctrlKey || event.metaKey) &&
-              !event.nativeEvent.isComposing
-            ) {
-              event.preventDefault();
-              if (!busy && content.trim()) void submit();
-            }
+        <div className="chat-content px-3 pb-6 max-md:px-0.5" ref={historyArea}>
+          <PageTitle
+            eyebrow="THINK · RESEARCH · REMEMBER"
+            title={conversationId ? '继续这段思考' : '把探索变成可积累的知识'}
+          >
+            {conversationId ? (
+              <div className="row flex items-center gap-3 wrap flex-wrap">
+                <Link
+                  className="button secondary button-secondary small text-xs"
+                  to={`/chat/${conversationId}/deletion`}
+                >
+                  删除会话
+                </Link>
+              </div>
+            ) : (
+              <span className="workspace-label rounded-[5px] border border-line px-2.5 py-[5px] text-[11px] whitespace-nowrap text-[#7b887f] max-lg:hidden">
+                KnowledgeOps 工作台
+              </span>
+            )}
+          </PageTitle>
+          {conversationId && <ConversationLearning conversationId={conversationId} />}
+          <div className="conversation mx-auto w-full max-w-[840px] flex-1">
+            {!conversationId && (
+              <div className="welcome px-5 pt-[55px] pb-[70px] text-center max-md:px-0 max-md:pt-[30px] max-md:pb-[45px] [&>h2]:mb-[13px] [&>h2]:text-2xl [&>h2]:tracking-[-0.5px] max-md:[&>h2]:text-xl [&>p]:mb-7 [&>p]:text-[13px] [&>p]:text-[#7c8c7d] max-md:[&>p]:text-xs">
+                <div className="welcome-mark mx-auto mb-[23px] grid size-[58px] place-items-center rounded-2xl bg-[#e6eddf] text-[#5b7b52]">
+                  <Sparkles size={28} />
+                </div>
+                <h2>从一个问题，或一份材料开始。</h2>
+                <p>一起研究、整理和维护知识。每一次结论，都可以回到它的来源。</p>
+                <div className="suggestions flex flex-wrap justify-center gap-3 [&>a]:flex [&>a]:items-center [&>a]:gap-3 [&>a]:rounded-lg [&>a]:border [&>a]:border-[#dce4d6] [&>a]:bg-[#fafbf7] [&>a]:px-[15px] [&>a]:py-3 [&>a]:text-xs [&>a]:font-normal [&>a]:text-[#6d7e6b] [&>button]:flex [&>button]:gap-3 [&>button]:border-[#dce4d6] [&>button]:bg-[#fafbf7] [&>button]:px-[15px] [&>button]:py-3 [&>button]:text-xs [&>button]:font-normal [&>button]:text-[#6d7e6b]">
+                  <Button
+                    onClick={() => setContent('帮我梳理知识库中已有的主题，指出值得补充的内容。')}
+                  >
+                    梳理已有知识 <ArrowUp size={14} />
+                  </Button>
+                  <Link to="/sources">
+                    导入学习材料 <FileText size={15} />
+                  </Link>
+                </div>
+              </div>
+            )}
+            <ErrorBox
+              message={
+                messages.error ||
+                running.error ||
+                waitingChildren.error ||
+                runs.error ||
+                drafts.error ||
+                defaults.error ||
+                error
+              }
+            />
+            {messages.loading && !messages.data && <Loading />}
+            {conversationId && messages.data?.length === 0 && (
+              <Empty title="这段对话还没有消息">在下方写下问题，或关联材料开始整理。</Empty>
+            )}
+            {messages.data?.map((message) => (
+              <article
+                className={`message mt-[15px] mb-6.5 [&_.markdown]:text-sm ${message.role} ${message.role === 'user' ? 'ml-[12%] rounded-[10px] bg-[#eaf0e6] px-5.5 py-4.5 max-md:ml-[5%]' : 'py-3'}`}
+                key={message.id}
+              >
+                <div className="message-label mb-3 flex justify-between text-xs font-semibold text-[#45644a] [&>span]:text-[10px] [&>span]:font-normal [&>span]:text-[#a3aca0]">
+                  {message.role === 'user' ? '你' : 'KnowledgeOps'}
+                  <span>
+                    {new Date(message.created_at).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </span>
+                </div>
+                <Markdown text={message.content} />
+              </article>
+            ))}
+            {active && <LiveRun key={active.id} initial={active} onChanged={onChanged} />}
+            {runs.data
+              .filter((run) => ['paused', 'waiting_input'].includes(run.status))
+              .map((run) => (
+                <section
+                  className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
+                  key={run.id}
+                >
+                  <div className="row flex items-center gap-3 between justify-between">
+                    <span>
+                      <Badge status={run.status} /> {run.task.slice(0, 80)}
+                    </span>
+                    <RunPauseControl run={run} onChanged={refresh} />
+                  </div>
+                  <p className="muted text-muted small text-xs">
+                    进展已保留。<Link to={`/runs/${run.id}`}>查看详情或取消</Link>
+                  </p>
+                  {run.outcome.answer && <Markdown text={run.outcome.answer} />}
+                </section>
+              ))}
+            {runs.data
+              .filter((run) => run.question_count)
+              .map((run) => (
+                <RunQuestions
+                  key={`questions-${run.id}`}
+                  run={run}
+                  refreshKey={version}
+                  onChanged={refresh}
+                />
+              ))}
+            {runs.data
+              .filter((run) => run.child_count)
+              .map((run) => (
+                <RunChildren
+                  key={`children-${run.id}`}
+                  run={run}
+                  refreshKey={version}
+                  onChanged={refresh}
+                />
+              ))}
+            {runs.data
+              .filter(
+                (run) =>
+                  ['waiting_approval', 'execution_unknown'].includes(run.outcome.kind ?? '') &&
+                  ['interrupted', 'paused'].includes(run.status),
+              )
+              .map((run) => (
+                <div key={run.id}>
+                  <ExecutionApprovals run={run} refreshKey={version} onChanged={refresh} />
+                </div>
+              ))}
+            {runs.data
+              .filter((run) => run.status === 'queued')
+              .map((run) => (
+                <p className="muted text-muted small text-xs" key={run.id}>
+                  排队任务：{run.task.slice(0, 80)} · <Link to={`/runs/${run.id}`}>查看</Link>
+                  <Button
+                    className="quiet button-quiet small text-xs"
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      setError('');
+                      try {
+                        await send(`/api/runs/${run.id}/cancel`, {});
+                        refresh();
+                      } catch (error) {
+                        setError(messageOf(error));
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    取消排队
+                  </Button>
+                  {guideTarget && (
+                    <Button
+                      className="quiet button-quiet small text-xs"
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        setError('');
+                        try {
+                          await send(`/api/runs/${run.id}/guide`, {
+                            target_root_id: guideTarget.id,
+                            target_generation: guideTarget.generation,
+                          });
+                          refresh();
+                        } catch (error) {
+                          setError(messageOf(error));
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      引导当前任务
+                    </Button>
+                  )}
+                </p>
+              ))}
+            {runs.data
+              .filter((run) => run.outcome.kind === 'guidance')
+              .map((run) => (
+                <p className="muted text-muted small text-xs" key={run.id}>
+                  已转为引导：{run.task.slice(0, 80)} ·{' '}
+                  <Link to={`/runs/${run.outcome.target_root_id}`}>查看投递记录</Link>
+                </p>
+              ))}
+            {!active && runs.data?.[0] && (
+              <div className="run-summary mt-2.5 mb-5 flex flex-wrap items-center gap-[9px] text-xs [&>p]:m-0 [&>p]:w-full [&>p]:text-[#8c594b]">
+                <Badge status={runs.data[0].status} />
+                {runs.data[0].outcome.kind && <Badge status={runs.data[0].outcome.kind} />}
+                <Link to={`/runs/${runs.data[0].id}`}>运行记录 →</Link>
+                {runs.data[0].stop_reason && <p>{runs.data[0].stop_reason}</p>}
+              </div>
+            )}
+            {pending.map((draft) => (
+              <Link
+                className="draft-link my-3.5 flex items-center gap-[15px] rounded-lg border border-[#d8e1d0] bg-[#f8faf1] px-5 py-4.5 text-[#52673f] [&>span:nth-child(2)]:flex-1 [&_strong]:block [&_small]:mt-1 [&_small]:block [&_small]:text-[11px] [&_small]:text-[#879375] [&>span:last-child]:text-xs"
+                to={`/changes/${draft.id}`}
+                key={draft.id}
+              >
+                <FileText size={20} />
+                <span>
+                  <strong>{draft.operations[0]?.title || '知识维护草稿'}</strong>
+                  <small>{draft.operations.length} 篇文章 · 等待你的选择</small>
+                </span>
+                <span>审阅 →</span>
+              </Link>
+            ))}
+            {drafts.next && (
+              <Button
+                className="quiet button-quiet"
+                disabled={drafts.loading}
+                onClick={drafts.loadMore}
+              >
+                加载更多会话变更
+              </Button>
+            )}
+            {runs.next && (
+              <Button
+                className="quiet button-quiet"
+                disabled={runs.loading}
+                onClick={runs.loadMore}
+              >
+                加载更多会话任务
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="composer-dock relative mx-auto w-full max-w-[840px] shrink-0 pt-3">
+        {awayFromBottom && (
+          <Button
+            type="button"
+            className="scroll-to-bottom absolute top-[-39px] left-[calc(50%_-_18px)] z-[4] size-9 rounded-full p-0 shadow-[0_3px_12px_#254b3518] secondary button-secondary"
+            aria-label="回到最新消息"
+            onClick={toBottom}
+          >
+            <ArrowDown size={19} />
+          </Button>
+        )}
+        <form
+          className="composer relative m-0 w-full max-w-[840px] rounded-[18px] border border-[#cddaca] bg-white px-4.5 pt-4 pb-3 shadow-[0_7px_22px_#2a4f3810] focus-within:border-[#789985] focus-within:shadow-[0_0_0_3px_#78998520] max-md:px-2.5 max-md:pt-3 max-md:pb-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit();
           }}
-        />
-        <ComposerControls conversationId={conversationId} permission={chosenPermission} model={model} modelEnabled={modelEnabled}
-          reasoning={chosenReasoning} settingBusy={settingBusy || Boolean(conversationId && !defaults.data)}
-          changeSetting={(field, value) => void changeSetting(field, value)} capabilities={capabilities.data}
-          mode={mode} setMode={setMode} knowledgeOnly={knowledgeOnly} setKnowledgeOnly={setKnowledgeOnly}
-          delegation={delegation} setDelegation={setDelegation} auxiliary={auxiliary} setAuxiliary={setAuxiliary}
-          materials={materials.data ?? []} selected={selected} setSelected={setSelected}
-          busy={busy} disabled={busy || settingBusy || Boolean(conversationId && defaults.loading) || !content.trim()}
-          context={conversationId ? <ContextUsage key={conversationId} conversationId={conversationId}
-            active={Boolean(active) || hasQueued} version={version} onChanged={refresh} /> : null} />
-      </form>
+        >
+          <label className="sr-only" htmlFor="message">
+            发送给 KnowledgeOps 的消息
+          </label>
+          <textarea
+            id="message"
+            className="min-h-16 max-h-[min(260px,30dvh)] resize-y border-0 p-0 text-[15px] placeholder:text-[#9aa69a] focus:outline-none"
+            placeholder="提出问题，或说明希望如何整理知识…"
+            rows={3}
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            onKeyDown={(event) => {
+              // 普通 Enter 保留换行；中文输入法选字期间不能误发送。
+              if (
+                event.key === 'Enter' &&
+                (event.ctrlKey || event.metaKey) &&
+                !event.nativeEvent.isComposing
+              ) {
+                event.preventDefault();
+                if (!busy && content.trim()) void submit();
+              }
+            }}
+          />
+          <ComposerControls
+            conversationId={conversationId}
+            permission={chosenPermission}
+            model={model}
+            modelEnabled={modelEnabled}
+            reasoning={chosenReasoning}
+            settingBusy={settingBusy || Boolean(conversationId && !defaults.data)}
+            changeSetting={(field, value) => void changeSetting(field, value)}
+            capabilities={capabilities.data}
+            mode={mode}
+            setMode={setMode}
+            knowledgeOnly={knowledgeOnly}
+            setKnowledgeOnly={setKnowledgeOnly}
+            delegation={delegation}
+            setDelegation={setDelegation}
+            auxiliary={auxiliary}
+            setAuxiliary={setAuxiliary}
+            materials={materials.data ?? []}
+            selected={selected}
+            setSelected={setSelected}
+            busy={busy}
+            disabled={
+              busy || settingBusy || Boolean(conversationId && defaults.loading) || !content.trim()
+            }
+            context={
+              conversationId ? (
+                <ContextUsage
+                  key={conversationId}
+                  conversationId={conversationId}
+                  active={Boolean(active) || hasQueued}
+                  version={version}
+                  onChanged={refresh}
+                />
+              ) : null
+            }
+          />
+        </form>
       </div>
     </div>
   );

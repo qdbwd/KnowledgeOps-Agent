@@ -1,3 +1,4 @@
+import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, messageOf, send, useResource } from '../../shared/api/api';
@@ -106,14 +107,14 @@ function PreferenceCard({
     }
   }
   return (
-    <section className="card">
-      <div className="row between">
+    <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
+      <div className="row flex items-center gap-3 between justify-between">
         <strong>
           {categoryLabel[row.category ?? 'preference']} · {statusLabel[row.status]}
         </strong>
-        <span className="muted small">修订 {row.revision}</span>
+        <span className="muted text-muted small text-xs">修订 {row.revision}</span>
       </div>
-      <p className="muted small">
+      <p className="muted text-muted small text-xs">
         来源：
         {{ manual: '手动设置', explicit: '用户明确表达', inferred: '根据对话推测' }[
           row.source.kind
@@ -127,7 +128,9 @@ function PreferenceCard({
       </p>
       {row.source.quote && <blockquote>{row.source.quote}</blockquote>}
       {row.needs_review && (
-        <p className="notice">这条背景或目标已有一段时间未确认，请检查是否仍然适用。</p>
+        <p className="notice border-l-[3px] border-[#c0a76b] bg-[#f5f0e0] px-4 py-3 text-[13px] [overflow-wrap:anywhere]">
+          这条背景或目标已有一段时间未确认，请检查是否仍然适用。
+        </p>
       )}
       <ErrorBox message={error} />
       <label>
@@ -140,7 +143,7 @@ function PreferenceCard({
           onChange={(e) => setContent(e.target.value)}
         />
       </label>
-      <div className="row wrap">
+      <div className="row flex items-center gap-3 wrap flex-wrap">
         <CategorySelect
           value={category}
           onChange={setCategory}
@@ -169,18 +172,18 @@ function PreferenceCard({
           </label>
         )}
         {row.status !== 'deleted' && (
-          <button
+          <Button
             disabled={busy || !content.trim() || (scope === 'topic' && !topic.trim())}
             onClick={() =>
               void update({ content, category, scope, topic: scope === 'global' ? '' : topic })
             }
           >
             保存修改
-          </button>
+          </Button>
         )}
       </div>
       {row.status === 'pending' && (
-        <div className="row wrap">
+        <div className="row flex items-center gap-3 wrap flex-wrap">
           <label>
             确认时取代
             <select value={replace} onChange={(e) => setReplace(e.target.value)}>
@@ -194,46 +197,46 @@ function PreferenceCard({
                 ))}
             </select>
           </label>
-          <button
+          <Button
             disabled={busy}
             onClick={() =>
               void update({ status: 'active', ...(replace ? { supersedes_id: replace } : {}) })
             }
           >
             确认生效
-          </button>
+          </Button>
         </div>
       )}
-      <div className="row wrap">
+      <div className="row flex items-center gap-3 wrap flex-wrap">
         {row.status === 'active' && (
-          <button
-            className="secondary"
+          <Button
+            className="secondary button-secondary"
             disabled={busy}
             onClick={() => void update({ status: 'inactive' })}
           >
             停用
-          </button>
+          </Button>
         )}
         {row.status === 'inactive' && (
-          <button
-            className="secondary"
+          <Button
+            className="secondary button-secondary"
             disabled={busy}
             onClick={() => void update({ status: 'active' })}
           >
             重新启用
-          </button>
+          </Button>
         )}
         {row.status !== 'deleted' && (
-          <button
-            className="quiet"
+          <Button
+            className="quiet button-quiet"
             disabled={busy}
             onClick={() => void update({ status: 'deleted' })}
           >
             删除记忆
-          </button>
+          </Button>
         )}
-        <button
-          className="quiet"
+        <Button
+          className="quiet button-quiet"
           onClick={async () => {
             try {
               setHistory(await api<Preference[]>(`/api/memories/${row.id}/history`));
@@ -243,9 +246,9 @@ function PreferenceCard({
           }}
         >
           查看修订记录
-        </button>
-        <button
-          className="quiet"
+        </Button>
+        <Button
+          className="quiet button-quiet"
           onClick={async () => {
             try {
               setEvidence((await api<Preference>(`/api/memories/${row.id}`)).evidence ?? []);
@@ -255,11 +258,15 @@ function PreferenceCard({
           }}
         >
           查看来源证据
-        </button>
+        </Button>
         {row.source.merged_from && row.status === 'active' && (
-          <button className="secondary" disabled={busy} onClick={() => void action('undo-merge')}>
+          <Button
+            className="secondary button-secondary"
+            disabled={busy}
+            onClick={() => void action('undo-merge')}
+          >
             撤销合并
-          </button>
+          </Button>
         )}
       </div>
       {evidence && (
@@ -283,13 +290,13 @@ function PreferenceCard({
             <li key={item.revision}>
               修订 {item.revision} · {statusLabel[item.status]} · {item.content}
               {row.status !== 'deleted' && item.revision !== row.revision && (
-                <button
-                  className="quiet"
+                <Button
+                  className="quiet button-quiet"
                   disabled={busy}
                   onClick={() => void action('rollback', { target_revision: item.revision })}
                 >
                   恢复修订 {item.revision}
-                </button>
+                </Button>
               )}
             </li>
           ))}
@@ -328,10 +335,12 @@ export function PreferencesPage() {
       <p>
         管理你明确提供的背景、偏好、习惯和持续目标。当前任务的明确要求优先；记忆不会增加操作权限或预算。
       </p>
-      <p className="muted small">停用或删除会停止后续注入；历史修订和原聊天仍保留，可用于核对。</p>
+      <p className="muted text-muted small text-xs">
+        停用或删除会停止后续注入；历史修订和原聊天仍保留，可用于核对。
+      </p>
       <ErrorBox message={error || rows.error} />
       <form
-        className="card"
+        className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
@@ -357,10 +366,10 @@ export function PreferencesPage() {
           />
         </label>
         <CategorySelect value={category} onChange={setCategory} />
-        <button disabled={busy || !content.trim()}>新增记忆</button>
+        <Button disabled={busy || !content.trim()}>新增记忆</Button>
       </form>
       <form
-        className="card row wrap"
+        className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5 row flex items-center gap-3 wrap flex-wrap"
         onSubmit={(e) => {
           e.preventDefault();
           setSearchPath(
@@ -376,15 +385,15 @@ export function PreferencesPage() {
           适用主题（可留空）
           <input value={topic} onChange={(e) => setTopic(e.target.value)} maxLength={200} />
         </label>
-        <button disabled={!query.trim()}>检索记忆</button>
+        <Button disabled={!query.trim()}>检索记忆</Button>
         {searchPath && (
-          <button type="button" className="quiet" onClick={() => setSearchPath(null)}>
+          <Button type="button" className="quiet button-quiet" onClick={() => setSearchPath(null)}>
             返回全部记录
-          </button>
+          </Button>
         )}
       </form>
       <ErrorBox message={matches.error} />
-      <label className="check">
+      <label className="check m-0 flex-row items-center gap-2 font-normal">
         <input
           type="checkbox"
           checked={showDeleted}
@@ -401,7 +410,7 @@ export function PreferencesPage() {
       {(searchPath ? matches.data : rows.data)?.map((row) => (
         <div key={`${row.id}:${row.revision}`}>
           {['active', 'pending'].includes(row.status) && (
-            <label className="check">
+            <label className="check m-0 flex-row items-center gap-2 font-normal">
               <input
                 type="checkbox"
                 aria-label={`选择合并 ${row.id}`}
@@ -423,7 +432,7 @@ export function PreferencesPage() {
       ))}
       {Object.keys(selected).length >= 2 && (
         <form
-          className="card"
+          className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
           onSubmit={async (e) => {
             e.preventDefault();
             setBusy(true);
@@ -451,12 +460,12 @@ export function PreferencesPage() {
               onChange={(e) => setMergedContent(e.target.value)}
             />
           </label>
-          <button disabled={busy || !mergedContent.trim() || Object.keys(selected).length > 10}>
+          <Button disabled={busy || !mergedContent.trim() || Object.keys(selected).length > 10}>
             确认合并
-          </button>
-          <button type="button" className="quiet" onClick={() => setSelected({})}>
+          </Button>
+          <Button type="button" className="quiet button-quiet" onClick={() => setSelected({})}>
             取消选择
-          </button>
+          </Button>
         </form>
       )}
     </>

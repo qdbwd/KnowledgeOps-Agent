@@ -1,3 +1,4 @@
+import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, messageOf, send, useResource } from '../../shared/api/api';
@@ -42,9 +43,9 @@ function TaskConfigurationEditor({ task, changed }: { task: LearningTask; change
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   return (
-    <section className="card">
+    <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
       <h2>本任务具体要求</h2>
-      <p className="muted small">
+      <p className="muted text-muted small text-xs">
         这些要求只用于本任务，不自动提升为通用偏好，也不覆盖上方人工文档。
       </p>
       <ErrorBox message={error} />
@@ -62,7 +63,7 @@ function TaskConfigurationEditor({ task, changed }: { task: LearningTask; change
           )}
         </label>
       ))}
-      <button
+      <Button
         disabled={busy}
         onClick={async () => {
           setBusy(true);
@@ -83,7 +84,7 @@ function TaskConfigurationEditor({ task, changed }: { task: LearningTask; change
         }}
       >
         保存本任务要求
-      </button>
+      </Button>
     </section>
   );
 }
@@ -115,9 +116,9 @@ function TaskConfigurationPanel({ taskId, onChanged }: { taskId: string; onChang
           }}
         />
       )}
-      <button className="quiet" onClick={() => setTick((value) => value + 1)}>
+      <Button className="quiet button-quiet" onClick={() => setTick((value) => value + 1)}>
         重新加载任务要求（放弃未保存修改）
-      </button>
+      </Button>
     </>
   );
 }
@@ -131,7 +132,7 @@ function ConfigurationReuse({ task, changed }: { task: LearningTask; changed: ()
   const [error, setError] = useState('');
   const selected = history.data?.find((row) => String(row.revision) === revision);
   return (
-    <details className="card">
+    <details className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
       <summary>比较、恢复或复用任务要求</summary>
       <p>
         选择固定版本后预览；应用会替换本任务具体要求。不会复制任务进度、预算、授权或人工角色正文。人工正文可以通过上方导入、导出复用。
@@ -184,7 +185,7 @@ function ConfigurationReuse({ task, changed }: { task: LearningTask; changed: ()
               ))}
             </tbody>
           </table>
-          <button
+          <Button
             disabled={busy}
             onClick={async () => {
               setBusy(true);
@@ -204,7 +205,7 @@ function ConfigurationReuse({ task, changed }: { task: LearningTask; changed: ()
             }}
           >
             应用已预览的任务要求
-          </button>
+          </Button>
         </>
       )}
     </details>
@@ -233,9 +234,9 @@ function ProfileEditor({ profile, changed }: { profile: Profile; changed: () => 
   }
   const previous = history?.find((row) => row.revision === compareRevision);
   return (
-    <section className="card">
+    <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
       <h2>{profile.task_id ? '任务个性化配置' : '通用学习配置'}</h2>
-      <p className="muted small">
+      <p className="muted text-muted small text-xs">
         {profile.enabled ? '已启用' : '已停用'} · 修订 {profile.revision} · 来源：
         {profile.source.kind === 'import'
           ? `导入 ${profile.source.filename}`
@@ -258,18 +259,18 @@ function ProfileEditor({ profile, changed }: { profile: Profile; changed: () => 
           }
         />
       </label>
-      <p className="muted small">
+      <p className="muted text-muted small text-xs">
         自动记忆不会改写这里的正文。普通修改供下一次运行使用，停用从下一次相关调用开始检查。
       </p>
-      <div className="row wrap">
-        <button
+      <div className="row flex items-center gap-3 wrap flex-wrap">
+        <Button
           disabled={busy}
           onClick={() => void change('', { expected_revision: profile.revision, content }, 'PATCH')}
         >
           保存配置
-        </button>
-        <button
-          className="secondary"
+        </Button>
+        <Button
+          className="secondary button-secondary"
           disabled={busy}
           onClick={() =>
             void change(
@@ -280,12 +281,12 @@ function ProfileEditor({ profile, changed }: { profile: Profile; changed: () => 
           }
         >
           {profile.enabled ? '停用配置' : '启用配置'}
-        </button>
+        </Button>
         <a href={`/api/learning-profiles/${profile.id}/export`} download>
           导出人工配置
         </a>
-        <button
-          className="quiet"
+        <Button
+          className="quiet button-quiet"
           onClick={async () => {
             try {
               const rows = await api<Profile[]>(`/api/learning-profiles/${profile.id}/history`);
@@ -297,7 +298,7 @@ function ProfileEditor({ profile, changed }: { profile: Profile; changed: () => 
           }}
         >
           比较与恢复版本
-        </button>
+        </Button>
       </div>
       <label>
         导入 Markdown / SKILL.md
@@ -330,12 +331,12 @@ function ProfileEditor({ profile, changed }: { profile: Profile; changed: () => 
         />
       </label>
       {preview && (
-        <div className="card">
+        <div className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
           <h3>待应用的导入内容</h3>
           <p>{preview.notice}</p>
           <p>仅作为角色说明文本使用；不会执行脚本或开启工具。导入后会替换这一层人工正文。</p>
           <Markdown text={preview.content} />
-          <button
+          <Button
             disabled={busy}
             onClick={() =>
               void change('/import-apply', {
@@ -345,10 +346,10 @@ function ProfileEditor({ profile, changed }: { profile: Profile; changed: () => 
             }
           >
             确认应用导入
-          </button>
-          <button className="quiet" onClick={() => setPreview(null)}>
+          </Button>
+          <Button className="quiet button-quiet" onClick={() => setPreview(null)}>
             放弃导入
-          </button>
+          </Button>
         </div>
       )}
       {history && (
@@ -367,19 +368,19 @@ function ProfileEditor({ profile, changed }: { profile: Profile; changed: () => 
             </select>
           </label>
           {previous && (
-            <div className="row wrap">
-              <section className="card">
+            <div className="row flex items-center gap-3 wrap flex-wrap">
+              <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
                 <h3>历史修订 {previous.revision}</h3>
                 <Markdown text={previous.content || '（无人工配置）'} />
               </section>
-              <section className="card">
+              <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
                 <h3>当前修订 {profile.revision}</h3>
                 <Markdown text={profile.content || '（无人工配置）'} />
               </section>
             </div>
           )}
           {previous && previous.revision !== profile.revision && (
-            <button
+            <Button
               disabled={busy}
               onClick={() =>
                 void change('/rollback', {
@@ -389,7 +390,7 @@ function ProfileEditor({ profile, changed }: { profile: Profile; changed: () => 
               }
             >
               恢复为修订 {previous.revision} 的内容
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -417,9 +418,9 @@ function ProfilePanel({ taskId, onChanged }: { taskId?: string; onChanged: () =>
           }}
         />
       )}
-      <button className="quiet" onClick={() => setTick((value) => value + 1)}>
+      <Button className="quiet button-quiet" onClick={() => setTick((value) => value + 1)}>
         重新加载配置（放弃未保存修改）
-      </button>
+      </Button>
     </>
   );
 }
@@ -453,7 +454,7 @@ export function LearningProfilesPage() {
         <Link to="/memories">维护自动部分的记忆来源</Link>
       </p>
       {
-        <section className="card">
+        <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
           <h2>{taskId ? '本任务有效配置预览' : '通用有效配置预览'}</h2>
           <a
             href={`/api/learning-profiles/effective/export${taskId ? `?task_id=${encodeURIComponent(taskId)}` : ''}`}
@@ -482,7 +483,7 @@ export function LearningProfilesPage() {
                   {entry.value}
                 </p>
               ))}
-              <p className="muted small">
+              <p className="muted text-muted small text-xs">
                 由当前有效记忆选择，运行时会根据具体问题调整。修改或停用请进入长期记忆页面。
               </p>
               <ul>

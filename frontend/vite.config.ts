@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 // 开发页面与 API 同源；生产由 Nginx 转发，浏览器不接触容器服务名。
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     watch: { usePolling: process.env.DEV_WATCH_POLLING === 'true', interval: 500 },
     proxy: {

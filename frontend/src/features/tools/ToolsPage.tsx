@@ -1,3 +1,4 @@
+import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { messageOf, send, useResource } from '../../shared/api/api';
@@ -72,7 +73,7 @@ function Selection({
     <fieldset>
       <legend>{title}</legend>
       {choices.map((item) => (
-        <label className="check" key={item.id}>
+        <label className="check m-0 flex-row items-center gap-2 font-normal" key={item.id}>
           <input
             type="checkbox"
             checked={selected.includes(item.id)}
@@ -81,7 +82,7 @@ function Selection({
           {item.name}
         </label>
       ))}
-      {choices.length === 0 && <p className="muted">暂无可选项</p>}
+      {choices.length === 0 && <p className="muted text-muted">暂无可选项</p>}
     </fieldset>
   );
 }
@@ -142,7 +143,7 @@ function PolicyEditor({
   }
   return (
     <form
-      className="card tool-policy"
+      className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5 tool-policy [&_fieldset]:my-4 [&_fieldset]:min-w-0 [&_fieldset]:rounded-lg [&_fieldset]:border [&_fieldset]:border-line [&_fieldset]:p-4 [&_.check]:items-start"
       aria-label="工具策略配置"
       onSubmit={(event) => {
         event.preventDefault();
@@ -150,11 +151,11 @@ function PolicyEditor({
       }}
     >
       <h2>配置工具</h2>
-      <p className="muted">当前配置修订 {saved.revision}</p>
+      <p className="muted text-muted">当前配置修订 {saved.revision}</p>
       <p>全局关闭同时约束主 Agent 和子 Agent；主 Agent 的选择仅限制主 Agent。</p>
-      <details className="skill-catalog">
+      <details className="skill-catalog my-5 [overflow-wrap:anywhere] [&>summary]:font-semibold [&_article+article]:border-t [&_article+article]:border-[#e5eade] [&_article+article]:pt-3">
         <summary>已发现的任务技能（{skills.length}）</summary>
-        <p className="muted small">
+        <p className="muted text-muted small text-xs">
           技能启用后供新任务按需读取，不会自动执行脚本或授予工具权限。关闭会阻止后续读取和脚本资源装配；已读内容不会从历史中消失。重新启用请创建新任务。
         </p>
         <fieldset disabled={busy || refreshing}>
@@ -164,7 +165,7 @@ function PolicyEditor({
             const selected = draft.skill_enabled?.[skill.name] ?? true;
             return (
               <article key={skill.name}>
-                <label className="check">
+                <label className="check m-0 flex-row items-center gap-2 font-normal">
                   <input
                     type="checkbox"
                     aria-label={`启用技能 ${skill.name}`}
@@ -181,16 +182,25 @@ function PolicyEditor({
                     }
                   />
                   <strong>
-                    {skill.name} · {skill.availability_status === 'config_error' ? '全局配置错误'
-                      : skill.availability_status === 'invalid' ? '包格式或资源错误'
-                      : skill.availability_status === 'incompatible' ? '当前不兼容'
-                      : skill.availability_status === 'disabled' ? '部署未启用'
-                      : !available ? '不可用' : selected ? '已启用' : '已关闭'}
+                    {skill.name} ·{' '}
+                    {skill.availability_status === 'config_error'
+                      ? '全局配置错误'
+                      : skill.availability_status === 'invalid'
+                        ? '包格式或资源错误'
+                        : skill.availability_status === 'incompatible'
+                          ? '当前不兼容'
+                          : skill.availability_status === 'disabled'
+                            ? '部署未启用'
+                            : !available
+                              ? '不可用'
+                              : selected
+                                ? '已启用'
+                                : '已关闭'}
                   </strong>
                 </label>
                 <p>{skill.description}</p>
                 {skill.unavailable_reason && <p>{skill.unavailable_reason}</p>}
-                <p className="muted small">
+                <p className="muted text-muted small text-xs">
                   {skill.resource} · {skill.version}
                 </p>
               </article>
@@ -200,9 +210,9 @@ function PolicyEditor({
       </details>
       <fieldset disabled={busy || refreshing}>
         <legend>全局工具开关</legend>
-        <div className="tool-grid">
+        <div className="tool-grid grid grid-cols-[repeat(auto-fit,minmax(min(100%,270px),1fr))] gap-3">
           {local.map((tool) => (
-            <label className="check" key={tool.id}>
+            <label className="check m-0 flex-row items-center gap-2 font-normal" key={tool.id}>
               <input
                 type="checkbox"
                 checked={draft.enabled[tool.id] === true}
@@ -215,7 +225,7 @@ function PolicyEditor({
               />
               <span>
                 <strong>{tool.name}</strong>
-                <span className="muted small">
+                <span className="muted text-muted small text-xs">
                   {' '}
                   — {tool.description}
                   {tool.legacy_only ? '（仅供旧任务恢复）' : ''}
@@ -227,7 +237,7 @@ function PolicyEditor({
       </fieldset>
       <fieldset disabled={busy || refreshing}>
         <legend>主 Agent 的工具选择</legend>
-        <label className="check">
+        <label className="check m-0 flex-row items-center gap-2 font-normal">
           <input
             type="checkbox"
             checked={inherited}
@@ -242,13 +252,15 @@ function PolicyEditor({
           继承默认本地工具选择
         </label>
         {inherited ? (
-          <p className="muted small">使用默认选择，仍受全局开关和任务选项约束。</p>
+          <p className="muted text-muted small text-xs">
+            使用默认选择，仍受全局开关和任务选项约束。
+          </p>
         ) : (
           <>
-            <p className="muted small">
+            <p className="muted text-muted small text-xs">
               工具组与单独工具合并；两者都不选表示主 Agent 不使用本地工具。MCP 许可单独管理。
             </p>
-            <div className="two-columns">
+            <div className="two-columns grid grid-cols-2 gap-5.5 max-lg:gap-[15px] max-md:grid-cols-1">
               <Selection
                 title="按组选择"
                 options={catalog.groups}
@@ -266,15 +278,20 @@ function PolicyEditor({
         )}
       </fieldset>
       <ErrorBox message={error} />
-      <div className="row wrap">
-        <button type="submit" disabled={busy || refreshing || !changed}>
+      <div className="row flex items-center gap-3 wrap flex-wrap">
+        <Button type="submit" disabled={busy || refreshing || !changed}>
           {busy ? '正在保存…' : '保存工具配置'}
-        </button>
-        <button type="button" className="secondary" disabled={busy || refreshing} onClick={refresh}>
+        </Button>
+        <Button
+          type="button"
+          className="secondary button-secondary"
+          disabled={busy || refreshing}
+          onClick={refresh}
+        >
           放弃本地修改并刷新
-        </button>
+        </Button>
       </div>
-      <p className="muted small">
+      <p className="muted text-muted small text-xs">
         普通选择从新任务生效。关闭工具会在后续调用前检查，不能撤销已经执行的操作；重新开启不会恢复旧任务已撤回的许可。
       </p>
     </form>
@@ -297,7 +314,10 @@ function EffectivePreview({ version }: { version: number }) {
   if (roleId) params.set('role_id', roleId);
   const preview = useResource<Preview>(`/api/tools/effective?${params}`, version);
   return (
-    <section className="card" aria-label="有效工具预览">
+    <section
+      className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
+      aria-label="有效工具预览"
+    >
       <h2>有效工具预览</h2>
       <p>根据已保存的配置预览新任务。上方尚未保存的改动不在此处生效；预览不会执行任何工具。</p>
       <label>
@@ -324,8 +344,8 @@ function EffectivePreview({ version }: { version: number }) {
           )}
         </select>
       </label>
-      <div className="row wrap">
-        <label className="check">
+      <div className="row flex items-center gap-3 wrap flex-wrap">
+        <label className="check m-0 flex-row items-center gap-2 font-normal">
           <input
             type="checkbox"
             checked={knowledgeOnly}
@@ -333,7 +353,7 @@ function EffectivePreview({ version }: { version: number }) {
           />
           仅知识库
         </label>
-        <label className="check">
+        <label className="check m-0 flex-row items-center gap-2 font-normal">
           <input
             type="checkbox"
             checked={auxiliary}
@@ -341,7 +361,7 @@ function EffectivePreview({ version }: { version: number }) {
           />
           允许辅助模型
         </label>
-        <label className="check">
+        <label className="check m-0 flex-row items-center gap-2 font-normal">
           <input
             type="checkbox"
             checked={delegation}
@@ -354,35 +374,39 @@ function EffectivePreview({ version }: { version: number }) {
       {preview.loading && <Loading />}
       {preview.data && !preview.loading && !preview.error && (
         <>
-          <p className="muted small">
+          <p className="muted text-muted small text-xs">
             工具配置修订 {preview.data.policy_revision}
             {preview.data.role && ` · 角色修订 ${preview.data.role.revision}`} · 可用{' '}
             {preview.data.tools.filter((tool) => tool.available).length} 项
           </p>
-          <p className="notice">
+          <p className="notice border-l-[3px] border-[#c0a76b] bg-[#f5f0e0] px-4 py-3 text-[13px] [overflow-wrap:anywhere]">
             Skills 按需读取：{preview.data.skills.available ? '可用' : '不可用'}。
             {preview.data.skills.explanation}
           </p>
-          <ul className="tool-grid tool-results">
+          <ul className="tool-grid grid grid-cols-[repeat(auto-fit,minmax(min(100%,270px),1fr))] gap-3 tool-results list-none p-0 [&>li]:rounded-lg [&>li]:border [&>li]:border-line [&>li]:p-3.5 [&>li]:[overflow-wrap:anywhere] [&_p]:my-1.5">
             {preview.data.tools.map((tool) => (
               <li key={tool.id}>
-                <div className="row between">
+                <div className="row flex items-center gap-3 between justify-between">
                   <strong>{tool.name}</strong>
-                  <span className="badge">{tool.available ? '可用' : '不可用'}</span>
+                  <span className="badge inline-flex items-center rounded-[5px] bg-[#edf1eb] px-[9px] py-[3px] text-[11px] leading-[1.6] whitespace-nowrap text-[#5f7765]">
+                    {tool.available ? '可用' : '不可用'}
+                  </span>
                 </div>
                 <p>{tool.description}</p>
-                <p className="muted small">{sources[tool.source] ?? tool.source}</p>
+                <p className="muted text-muted small text-xs">
+                  {sources[tool.source] ?? tool.source}
+                </p>
                 {tool.unavailable_explanations?.map((reason) => (
-                  <p className="small" key={reason}>
+                  <p className="small text-xs" key={reason}>
                     {reason}
                   </p>
                 ))}
-                {tool.requires_approval && <p className="small">每次调用需用户确认</p>}
+                {tool.requires_approval && <p className="small text-xs">每次调用需用户确认</p>}
               </li>
             ))}
           </ul>
           {preview.data.tools.length === 0 && <Empty title="暂无已登记工具" />}
-          <p className="muted small">
+          <p className="muted text-muted small text-xs">
             实际执行还会校验最新许可、预算和具体操作条件。旧运行保留当时的选择，可能比此预览更少。
           </p>
         </>
@@ -403,7 +427,7 @@ export function ToolsPage() {
     <>
       <PageTitle eyebrow="能力配置" title="工具与能力" />
       <p>集中查看应用工具、Skills 读取与子任务委派。外部连接和子角色沿用各自的管理页面。</p>
-      <div className="row wrap">
+      <div className="row flex items-center gap-3 wrap flex-wrap">
         <Link to="/mcp">管理MCP连接</Link>
         <Link to="/subagents">管理子Agent</Link>
       </div>
@@ -412,9 +436,9 @@ export function ToolsPage() {
       <ErrorBox message={catalog.error || policy.error} />
       {(catalog.loading || policy.loading) && <Loading />}
       {(catalog.error || policy.error) && (
-        <button className="secondary" onClick={refresh}>
+        <Button className="secondary button-secondary" onClick={refresh}>
           重试加载配置
-        </button>
+        </Button>
       )}
       {catalog.data && policy.data && (
         <PolicyEditor
@@ -433,10 +457,10 @@ export function ToolsPage() {
       )}
       <EffectivePreview version={version} />
       <ExecutionRules />
-      <section className="card">
-        <button className="secondary" onClick={() => setShowHistory(!showHistory)}>
+      <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
+        <Button className="secondary button-secondary" onClick={() => setShowHistory(!showHistory)}>
           {showHistory ? '收起配置历史' : '查看配置历史'}
-        </button>
+        </Button>
         {showHistory && (
           <>
             <ErrorBox message={history.error} />
@@ -452,14 +476,14 @@ export function ToolsPage() {
                       ? '未选择本地工具'
                       : item.resolved_main_tools.join('、')}
                 </p>
-                <p className="muted small">
+                <p className="muted text-muted small text-xs">
                   已关闭技能：
                   {Object.entries(item.skill_enabled ?? {})
                     .filter(([, value]) => !value)
                     .map(([name]) => name)
                     .join('、') || '无'}
                 </p>
-                <p className="muted small">
+                <p className="muted text-muted small text-xs">
                   全局关闭：
                   {Object.entries(item.enabled)
                     .filter(([, value]) => !value)

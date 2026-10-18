@@ -1,3 +1,4 @@
+import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { messageOf, send, useResource } from '../../shared/api/api';
@@ -48,12 +49,12 @@ export function ExecutionRules() {
     }
   }
   return (
-    <section className="card">
+    <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
       <h2>命令执行规则</h2>
       <p>
         审批与能力开关分别管理。自动执行仍遵守拒绝和询问规则；修改或删除规则将在下一次命令执行前重新核对。
       </p>
-      <p className="muted small">
+      <p className="muted text-muted small text-xs">
         工作区：{root.data?.workspace ?? '尚未加载'}。规则约束是否启动命令，不提供操作系统隔离。
       </p>
       <ErrorBox message={error || result.error || root.error} />
@@ -63,14 +64,17 @@ export function ExecutionRules() {
         </p>
       )}
       {result.data?.map((row) => (
-        <article className="list-card" key={row.id}>
+        <article
+          className="list-card flex items-center gap-[17px] rounded-[9px] border border-line bg-white px-[23px] py-4.5 text-[#5c7057] hover:border-[#aec2a5] hover:no-underline max-md:flex-wrap max-md:gap-3 max-md:p-4 [&>div]:min-w-0 [&>div]:flex-1 [&_h3]:mt-0 [&_h3]:mb-[5px] [&_h3]:text-[#344c37] [&_h3]:[overflow-wrap:anywhere] max-md:[&_h3]:text-[13px] [&_p]:m-0 [&_p]:text-[11px] [&_p]:text-[#85917e] [&_p]:[overflow-wrap:anywhere] [&>span:last-child]:text-[11px] [&>span:last-child]:whitespace-nowrap max-md:[&>span:last-child]:hidden"
+          key={row.id}
+        >
           <div>
             <pre>{JSON.stringify(row.argv)}</pre>
-            <p className="muted small">
+            <p className="muted text-muted small text-xs">
               {row.conversation_id ? '本会话' : '跨会话'} · 工作目录 {row.cwd} ·{' '}
               {row.match === 'prefix' ? '参数前缀匹配，允许追加参数' : '全部参数相同'}
             </p>
-            <div className="row wrap">
+            <div className="row flex items-center gap-3 wrap flex-wrap">
               <label>
                 规则动作
                 <select
@@ -84,15 +88,15 @@ export function ExecutionRules() {
                   <option value="deny">拒绝</option>
                 </select>
               </label>
-              <button
-                className="secondary"
+              <Button
+                className="secondary button-secondary"
                 disabled={busy}
                 onClick={() => update(row, { enabled: !row.enabled })}
               >
                 {row.enabled ? '停用规则' : '启用规则'}
-              </button>
-              <button
-                className="quiet"
+              </Button>
+              <Button
+                className="quiet button-quiet"
                 disabled={busy}
                 onClick={async () => {
                   setBusy(true);
@@ -115,13 +119,13 @@ export function ExecutionRules() {
                 }}
               >
                 删除规则
-              </button>
+              </Button>
             </div>
           </div>
         </article>
       ))}
-      {result.data?.length === 0 && <p className="muted">暂无命令规则。</p>}
-      <details>
+      {result.data?.length === 0 && <p className="muted text-muted">暂无命令规则。</p>}
+      <details className="mt-5">
         <summary>手动添加规则</summary>
         <form
           onSubmit={async (event) => {
@@ -156,7 +160,7 @@ export function ExecutionRules() {
               onChange={(event) => setCwd(event.target.value)}
             />
           </label>
-          <div className="row wrap">
+          <div className="row flex items-center gap-3 wrap flex-wrap">
             <label>
               匹配范围
               <select value={match} onChange={(event) => setMatch(event.target.value)}>
@@ -180,10 +184,10 @@ export function ExecutionRules() {
               </select>
             </label>
           </div>
-          <p className="muted small">
+          <p className="muted text-muted small text-xs">
             解释器和复杂脚本不能创建可复用允许规则。前缀规则允许追加任意参数，请核对展示的范围。
           </p>
-          <button disabled={busy || !root.data}>保存命令规则</button>
+          <Button disabled={busy || !root.data}>保存命令规则</Button>
         </form>
       </details>
     </section>

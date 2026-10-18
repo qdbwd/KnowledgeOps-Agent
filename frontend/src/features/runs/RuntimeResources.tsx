@@ -31,10 +31,10 @@ export function RuntimeResources({
   continuation?: Continuation | null;
 }) {
   return (
-    <section className="card">
+    <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
       <h2>本次运行依据</h2>
       {!resources ? (
-        <p className="muted">
+        <p className="muted text-muted">
           此运行尚未冻结资源，或属于缺少资源清单的历史格式；不推测当时使用的配置。
         </p>
       ) : (
@@ -43,10 +43,10 @@ export function RuntimeResources({
             模型：{resources.content.model.provider.model} · 核心知识库规则：
             {resources.content.policy.version}
           </p>
-          <p className="muted">
+          <p className="muted text-muted">
             以下是首次执行时冻结的版本。普通编辑从新任务生效，撤回许可在下一相关调用前检查。
           </p>
-          <details>
+          <details className="mt-5">
             <summary>Skills、偏好和服务配置</summary>
             <h3>按需可读的 Skills</h3>
             <ul>
@@ -58,7 +58,7 @@ export function RuntimeResources({
                   </li>
                 ))}
             </ul>
-            <p className="muted">
+            <p className="muted text-muted">
               已装载目录不代表已使用某项技能；实际读取见下方事件中的 skill_read 记录。
             </p>
             <h3>冻结时有效的偏好</h3>
@@ -87,7 +87,7 @@ export function RuntimeResources({
             ) : (
               <p>无</p>
             )}
-            <p className="muted">清单哈希：{resources.content_hash}</p>
+            <p className="muted text-muted">清单哈希：{resources.content_hash}</p>
           </details>
         </>
       )}
@@ -97,7 +97,7 @@ export function RuntimeResources({
           {continuation.covered_sequence}。本任务重新拥有独立权限与预算。
         </p>
       ) : (
-        <p className="muted">没有绑定前序延续快照。</p>
+        <p className="muted text-muted">没有绑定前序延续快照。</p>
       )}
     </section>
   );

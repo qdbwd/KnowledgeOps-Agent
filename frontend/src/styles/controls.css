@@ -1,0 +1,18 @@
+/* Button 与外观为按钮的链接共用配方；页面尺寸由更高层 utilities 覆盖。 */
+@layer components {
+  .button {
+    @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-brand bg-brand px-4 py-[9px] text-sm font-[550] text-white no-underline;
+    &:hover {
+      @apply brightness-[0.96] no-underline;
+    }
+    &:disabled {
+      @apply cursor-not-allowed opacity-[0.48];
+    }
+  }
+  .button-secondary {
+    @apply border-line bg-white text-[#365046];
+  }
+  .button-quiet {
+    @apply border-transparent bg-transparent px-[9px] py-[5px] text-[#54695f];
+  }
+}

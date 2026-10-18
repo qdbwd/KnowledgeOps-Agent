@@ -1,3 +1,4 @@
+import { Button } from '../../shared/ui/Button';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { messageOf, send, useResource } from '../../shared/api/api';
@@ -99,24 +100,27 @@ function CollaborationPanel({ taskId }: { taskId: string }) {
     return () => window.clearInterval(timer);
   }, [task.data?.status]);
   return (
-    <section className="card">
+    <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
       <h2>当前进展与协作记录</h2>
       <ErrorBox message={task.error || reports.error || advances.error} />
-      <button className="quiet" onClick={() => setTick((v) => v + 1)}>
+      <Button className="quiet button-quiet" onClick={() => setTick((v) => v + 1)}>
         刷新进展
-      </button>
+      </Button>
       {task.data && (
         <p>
           {statuses[task.data.status] ?? task.data.status} · {task.data.stop_reason}
         </p>
       )}
       {task.data?.units.map((unit) => (
-        <div className="card" key={unit.key}>
+        <div
+          className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
+          key={unit.key}
+        >
           <h3>
             {unit.title} · {statuses[unit.status ?? 'pending'] ?? unit.status}
           </h3>
           <p>{unit.goal}</p>
-          <p className="muted small">
+          <p className="muted text-muted small text-xs">
             本单元累计：{unit.model_calls ?? 0} 次模型请求，{unit.tool_calls ?? 0} 次工具尝试，
             {unit.searches ?? 0} 次搜索。恢复后继续累计。
           </p>
@@ -124,14 +128,20 @@ function CollaborationPanel({ taskId }: { taskId: string }) {
             .filter((step) => step.unit_id === unit.id)
             .map((step) => (
               <p key={step.id}>
-                {task.data?.conversation_available === false
-                  ? <span>第 {step.sequence} 次推进（原会话已删除）</span>
-                  : <Link to={`/runs/${step.run_id}`}>第 {step.sequence} 次推进</Link>} ·{' '}
-                {statuses[step.status] ?? step.status}
+                {task.data?.conversation_available === false ? (
+                  <span>第 {step.sequence} 次推进（原会话已删除）</span>
+                ) : (
+                  <Link to={`/runs/${step.run_id}`}>第 {step.sequence} 次推进</Link>
+                )}{' '}
+                · {statuses[step.status] ?? step.status}
                 {step.reason ? `：${step.reason}` : ''}
               </p>
             ))}
-          {unit.stop_reason && <p className="notice">{unit.stop_reason}</p>}
+          {unit.stop_reason && (
+            <p className="notice border-l-[3px] border-[#c0a76b] bg-[#f5f0e0] px-4 py-3 text-[13px] [overflow-wrap:anywhere]">
+              {unit.stop_reason}
+            </p>
+          )}
           {unit.draft_id && <Link to={`/changes/${unit.draft_id}`}>查看草稿或保存结果</Link>}
           {(reports.data ?? [])
             .filter((report) => report.unit_id === unit.id)
@@ -140,7 +150,7 @@ function CollaborationPanel({ taskId }: { taskId: string }) {
                 <h4>
                   {report.role === 'reader' ? '读者追问' : '独立审读'} · 第 {report.round} 轮
                 </h4>
-                <p className="muted small">
+                <p className="muted text-muted small text-xs">
                   草稿修订 {report.draft_revision} · 任务要求修订 {report.requirements_revision} ·
                   {report.status === 'completed'
                     ? '已形成报告'
@@ -156,7 +166,11 @@ function CollaborationPanel({ taskId }: { taskId: string }) {
                   {report.read_ranges.reduce((total, [start, end]) => total + end - start, 0)} /{' '}
                   {report.material_length} 字符的固定材料
                 </p>
-                {report.error && <p className="notice">{report.error}</p>}
+                {report.error && (
+                  <p className="notice border-l-[3px] border-[#c0a76b] bg-[#f5f0e0] px-4 py-3 text-[13px] [overflow-wrap:anywhere]">
+                    {report.error}
+                  </p>
+                )}
                 {report.report.verdict && (
                   <p>
                     {report.report.verdict === 'pass'
@@ -208,11 +222,11 @@ export function ConversationLearning({ conversationId }: { conversationId: strin
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   return (
-    <section className="card">
+    <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
       <ErrorBox message={error || rows.error} />
       {current ? (
         <>
-          <div className="row wrap">
+          <div className="row flex items-center gap-3 wrap flex-wrap">
             <strong>{current.title}</strong>
             <span>
               {current.mode === 'interactive' ? '交互学习' : '委托整理'} ·{' '}
@@ -298,11 +312,19 @@ function TaskEditor({ task, changed }: { task: LearningTask; changed: () => void
       <p>
         {statuses[controlTask.status] ?? controlTask.status} · 要求修订 {task.requirements_revision}
       </p>
-      {controlTask.stop_reason && <p className="notice">{controlTask.stop_reason}</p>}
-      {task.conversation_available === false && <p className="notice">原会话已删除。学习目标、成果与配置保留，可在新建任务后通过“学习配置与读者角色”复用。</p>}
+      {controlTask.stop_reason && (
+        <p className="notice border-l-[3px] border-[#c0a76b] bg-[#f5f0e0] px-4 py-3 text-[13px] [overflow-wrap:anywhere]">
+          {controlTask.stop_reason}
+        </p>
+      )}
+      {task.conversation_available === false && (
+        <p className="notice border-l-[3px] border-[#c0a76b] bg-[#f5f0e0] px-4 py-3 text-[13px] [overflow-wrap:anywhere]">
+          原会话已删除。学习目标、成果与配置保留，可在新建任务后通过“学习配置与读者角色”复用。
+        </p>
+      )}
       <ErrorBox message={error} />
-      <div className="row wrap">
-        <button
+      <div className="row flex items-center gap-3 wrap flex-wrap">
+        <Button
           disabled={busy || !task.conversation_id || task.conversation_available === false}
           onClick={async () => {
             setBusy(true);
@@ -319,10 +341,10 @@ function TaskEditor({ task, changed }: { task: LearningTask; changed: () => void
           }}
         >
           切换到此任务并进入对话
-        </button>
+        </Button>
         <Link to={`/learning-profiles?task_id=${task.id}`}>学习配置与读者角色</Link>
       </div>
-      <section className="card">
+      <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
         <h2>任务要求与初始框架</h2>
         <p>
           框架可以在聊天中逐步形成，也可以在此编辑。修改要求会撤回旧范围的自动保存许可，已有成果和累计进度保留。
@@ -351,7 +373,10 @@ function TaskEditor({ task, changed }: { task: LearningTask; changed: () => void
           </select>
         </label>
         {units.map((unit, index) => (
-          <section className="card" key={unit.key}>
+          <section
+            className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
+            key={unit.key}
+          >
             <h3>
               知识单元 {index + 1} · {statuses[unit.status ?? 'pending'] ?? unit.status}
             </h3>
@@ -393,20 +418,20 @@ function TaskEditor({ task, changed }: { task: LearningTask; changed: () => void
                   ))}
               </select>
             </label>
-            <button
-              className="quiet"
+            <Button
+              className="quiet button-quiet"
               disabled={busy}
               onClick={() => setUnits((rows) => rows.filter((row) => row.key !== unit.key))}
             >
               移除此单元
-            </button>
+            </Button>
             {unit.stop_reason && <p>{unit.stop_reason}</p>}
             {unit.draft_id && <Link to={`/changes/${unit.draft_id}`}>查看草稿或保存结果</Link>}
           </section>
         ))}
-        <div className="row wrap">
-          <button
-            className="secondary"
+        <div className="row flex items-center gap-3 wrap flex-wrap">
+          <Button
+            className="secondary button-secondary"
             disabled={units.length >= 50}
             onClick={() =>
               setUnits((rows) => [
@@ -421,8 +446,8 @@ function TaskEditor({ task, changed }: { task: LearningTask; changed: () => void
             }
           >
             添加知识单元
-          </button>
-          <button
+          </Button>
+          <Button
             disabled={
               busy ||
               !title.trim() ||
@@ -451,15 +476,15 @@ function TaskEditor({ task, changed }: { task: LearningTask; changed: () => void
             }
           >
             保存要求和框架
-          </button>
+          </Button>
         </div>
       </section>
-      <section className="card">
+      <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
         <h2>确认与运行控制</h2>
         <p>
           确认针对已保存的要求。委托整理需要有限的知识单元；允许自动保存后，仍须通过该版本草稿的独立审读。
         </p>
-        <label className="check">
+        <label className="check m-0 flex-row items-center gap-2 font-normal">
           <input
             type="checkbox"
             checked={autoPublish}
@@ -468,8 +493,8 @@ function TaskEditor({ task, changed }: { task: LearningTask; changed: () => void
           />
           允许在已确认范围内通过审读后自动保存
         </label>
-        <div className="row wrap">
-          <button
+        <div className="row flex items-center gap-3 wrap flex-wrap">
+          <Button
             disabled={busy || !task.conversation_id || task.conversation_available === false}
             onClick={() =>
               void action('/confirm', {
@@ -479,28 +504,33 @@ function TaskEditor({ task, changed }: { task: LearningTask; changed: () => void
             }
           >
             确认已保存的范围
-          </button>
-          <button
-            className="secondary"
+          </Button>
+          <Button
+            className="secondary button-secondary"
             disabled={busy || controlTask.status !== 'active'}
             onClick={() => void action('/pause', { expected_revision: controlTask.revision })}
           >
             暂停任务
-          </button>
-          <button
-            className="secondary"
-            disabled={busy || !task.conversation_id || task.conversation_available === false || !['paused', 'waiting', 'partial'].includes(controlTask.status)}
+          </Button>
+          <Button
+            className="secondary button-secondary"
+            disabled={
+              busy ||
+              !task.conversation_id ||
+              task.conversation_available === false ||
+              !['paused', 'waiting', 'partial'].includes(controlTask.status)
+            }
             onClick={() => void action('/resume', { expected_revision: controlTask.revision })}
           >
             继续任务
-          </button>
-          <button
-            className="quiet"
+          </Button>
+          <Button
+            className="quiet button-quiet"
             disabled={busy || controlTask.status === 'cancelled'}
             onClick={() => void action('/cancel', { expected_revision: controlTask.revision })}
           >
             取消后续工作
-          </button>
+          </Button>
         </div>
       </section>
     </>
@@ -550,7 +580,7 @@ export function LearningPage() {
             <Link to="/learning-profiles">编辑通用学习配置</Link>
           </p>
           <form
-            className="card"
+            className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
             onSubmit={async (e) => {
               e.preventDefault();
               setBusy(true);
@@ -606,13 +636,16 @@ export function LearningPage() {
                 <option value="delegated">委托整理</option>
               </select>
             </label>
-            <button disabled={busy || !title.trim() || !goal.trim()}>建立任务</button>
+            <Button disabled={busy || !title.trim() || !goal.trim()}>建立任务</Button>
           </form>
           {tasks.data?.length === 0 && (
             <Empty title="还没有学习任务">可先创建任务，再在对话中梳理框架。</Empty>
           )}
           {tasks.data?.map((task) => (
-            <section className="card" key={task.id}>
+            <section
+              className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
+              key={task.id}
+            >
               <Link to={`/learning/${task.id}`}>
                 <strong>{task.title}</strong>
               </Link>
