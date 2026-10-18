@@ -20,6 +20,8 @@
 - 用户明确要求以DeerFlow实际工具配置为基础能力参照，优先复用生态已有实现，不自行另拟一套基础工具体系。由模型按任务组合使用；复杂/特定业务再按需封装专用工具、MCP、子Agent或Skill。正式知识可用通用文件/命令工具编辑，通过同步中间件保持业务一致性，不能退回只能调用业务专用写接口的限制。采用与未采用的能力、名称和参数差别写入architecture，不把部分对齐描述为完整复刻。
 - 不挂载、读取、复制、恢复已删除副本、索引或回写桌面个人知识库。两份规则副本仅供设计参考。
 - LangChain create_agent / LangGraph，参考 Deep Agents 和 DeerFlow 2.0，不整体复制或二开 DeerFlow。
+- 2026-10-18 用户将 [DeepSeek Harness（dsh）](https://github.com/deepseek-ai/deepseek-harness) 加入长期参考范围。后续按相关功能，与 Deep Agents、DeerFlow 及 Codex 一起核对真实源码与适用版本，覆盖 Harness 与应用设计。dsh 采用 Cordis 插件体系、TypeScript/Node.js；加入参考不代表已安装、接入或替换本项目 LangChain/LangGraph。具体采用仍区分直接依赖、源码摘取和设计适配，记录来源与验证边界。
+- 2026-10-18 用户确认追加 [Pi](https://github.com/earendil-works/pi) 与 [OpenHands Software Agent SDK](https://github.com/OpenHands/software-agent-sdk) 为长期参考。Pi 以设计与实现逻辑为重点：核对 Agent Core 的模型/工具循环、事件、消息插入与排队、上下文转换、执行拦截及异常处理；TypeScript 源码用于理解执行顺序、状态变化和边界，不作为直接导入或复制到本项目 Python 后端的实现，适用逻辑结合现有框架适配。OpenHands SDK 重点核对会话生命周期、工具动作与结果、工作空间、沙盒及安全策略，按需查核心包，不将整套应用界面作为复用前提。Deep Agents 继续作为现有技术栈的主要参照；新增参考不等于安装依赖或替换框架，实际采用前仍核对适用版本、源码、许可与验证边界。
 - 设计 Agent 通用能力前，先核对 Deep Agents、DeerFlow 2.0 与 LangChain 官方的适用版本、现成接口和真实实现，记录采用或未采用的理由。不能用未验证的自定义阈值、空壳接口或配置开关冒充成熟能力。
 - 通用能力优先直接使用生态公开接口与项目现有模块；适合摘取的代码注明来源、许可和改动。不要为了学习或展示而从零重写已有成熟机制，必要适配需说明具体差距。
 - 用户特别要求尽量借鉴复用DeerFlow的重要中间件。按实际任务核对职责、依赖、工具Schema、错误反馈及测试，保留原实现的有效接口合同；不能只复制校验或主体逻辑而遗漏模型理解和纠错所需的说明。当前采用方式统一记录在architecture，区分直接导入、源码摘取和设计适配。
