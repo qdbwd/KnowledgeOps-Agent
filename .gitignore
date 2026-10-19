@@ -40,7 +40,6 @@ artifacts/
 # Local engineering documents and evaluation materials are not published.
 /docs/
 /evaluation/
-/evalution/
 # Root run artifacts only; app/runs and features/runs are application source.
 /runs/
 node_modules/
