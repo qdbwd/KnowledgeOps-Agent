@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from knowledgeops_agent.app.dependencies import svc
 from knowledgeops_agent.app.runs.children import ChildRuns
+from knowledgeops_agent.app.runs.details import task_details
 from knowledgeops_agent.app.runs.events import iter_run_events
 from knowledgeops_agent.app.runs.questions import QuestionAnswer, RunQuestions
 from knowledgeops_agent.app.runs.service import Budgets
@@ -127,9 +128,17 @@ def run_records(run_id: str, request: Request, after: Annotated[int, Query(ge=0)
     }
 
 
+@router.get("/api/runs/{run_id}/summary")
+def run_summary(run_id: str, request: Request):
+    return task_details(svc(request).sessions, run_id)
+
+
 @router.get("/api/runs/{run_id}/artifacts/{artifact_id}")
 def run_artifact(run_id: str, artifact_id: str, request: Request, start: int = 0):
     jobs = svc(request).jobs
+    source_url = jobs.artifact_source_url(run_id, artifact_id)
+    if source_url:
+        return {"source_url": source_url}
     return jobs.read_artifact(artifact_id, root_id=jobs.get_run(run_id)["root_id"], start=start)
 
 

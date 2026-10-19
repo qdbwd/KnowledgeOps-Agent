@@ -266,7 +266,7 @@ class LearningCollaborationService:
             material = json.dumps(input_data, ensure_ascii=False, sort_keys=True)
             identifier = new_id()
             path = f"learning/collaboration/{identifier}.json"
-            digest = LearningProfileService._store(session).put(path, material)
+            digest = LearningProfileService._store(session).put(path, material, session=session, purpose="collaboration")
             number = getattr(unit, counter) + 1
             setattr(unit, counter, number)
             unit.draft_id, unit.status = draft_id, "reading" if role == "reader" else "reviewing"

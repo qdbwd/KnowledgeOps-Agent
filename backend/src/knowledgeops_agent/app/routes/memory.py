@@ -6,6 +6,9 @@ from fastapi import APIRouter, Query, Request
 
 from knowledgeops_agent.app.dependencies import svc
 from knowledgeops_agent.app.schemas import (
+    MemoryCategoryInput,
+    MemoryCategoryUpdate,
+    MemoryClassificationInput,
     MemoryExpectedRevision,
     MemoryInput,
     MemoryMerge,
@@ -14,6 +17,7 @@ from knowledgeops_agent.app.schemas import (
     PreferenceInput,
     PreferenceUpdate,
 )
+from knowledgeops_agent.memory.categories import MemoryCategories
 from knowledgeops_agent.memory.service import MemoryService, PreferenceService
 
 router = APIRouter()
@@ -58,7 +62,47 @@ def search_memories(
 
 @router.post("/api/memories", status_code=201)
 def create_memory(body: MemoryInput, request: Request):
-    return MemoryService(svc(request).sessions).create(**body.model_dump())
+    from knowledgeops_agent.memory import classification
+
+    services = svc(request)
+    values = body.model_dump()
+    values["category"] = body.category or "preference"
+    if body.category is not None and "display_category_id" not in body.model_fields_set:
+        values.pop("display_category_id")  # 旧客户端的六类选择仍映射为对应展示类别。
+    return MemoryService(
+        services.sessions,
+        on_created=lambda session, row: classification.queue_classification(
+            session, services.jobs, services.gateway, row, f"initial:{row.id}:{row.revision}"
+        ),
+    ).create(**values)
+
+
+@router.post("/api/memories/{memory_id}/classify", status_code=202)
+def classify_memory(memory_id: str, body: MemoryClassificationInput, request: Request):
+    from knowledgeops_agent.memory.classification import retry
+
+    services = svc(request)
+    return retry(services.jobs, services.gateway, memory_id, **body.model_dump())
+
+
+@router.get("/api/memory-categories")
+def memory_categories(request: Request):
+    return MemoryCategories(svc(request).sessions).list()
+
+
+@router.post("/api/memory-categories", status_code=201)
+def create_memory_category(body: MemoryCategoryInput, request: Request):
+    return MemoryCategories(svc(request).sessions).create(body.name)
+
+
+@router.patch("/api/memory-categories/{category_id}")
+def edit_memory_category(category_id: str, body: MemoryCategoryUpdate, request: Request):
+    return MemoryCategories(svc(request).sessions).update(category_id, **body.model_dump())
+
+
+@router.delete("/api/memory-categories/{category_id}")
+def delete_memory_category(category_id: str, body: MemoryExpectedRevision, request: Request):
+    return MemoryCategories(svc(request).sessions).delete(category_id, **body.model_dump())
 
 
 @router.post("/api/memories/merge", status_code=201)

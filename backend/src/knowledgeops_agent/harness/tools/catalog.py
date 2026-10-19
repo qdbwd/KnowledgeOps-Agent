@@ -17,6 +17,33 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from knowledgeops_agent.harness.runtime.resources import content_hash
 
+# 仅用于界面；函数名、模型描述及参数Schema仍由真实LangChain工具定义提供。
+DISPLAY_NAMES = {
+    'start_async_task': '启动子任务', 'check_async_task': '查看子任务',
+    'list_async_tasks': '列出子任务', 'update_async_task': '补充子任务要求',
+    'cancel_async_task': '取消子任务', 'wait_async_tasks': '等待子任务',
+    'search_knowledge': '检索知识', 'list_knowledge': '列出知识文档',
+    'knowledge_history': '查看知识历史', 'read_knowledge': '读取知识正文',
+    'list_materials': '列出材料', 'list_evidence': '查找已读引用',
+    'inspect_material': '查看材料目录', 'read_source': '读取材料正文',
+    'read_tool_result': '补读工具结果', 'tool_search': '查找外部工具',
+    'update_plan': '更新任务计划', 'ask_clarification': '询问用户',
+    'history_search': '检索聊天历史', 'history_read': '读取聊天原话',
+    'task_note': '维护任务要点', 'memory_search': '检索长期记忆',
+    'memory_read': '读取长期记忆', 'read_learning_draft': '读取学习草稿',
+    'wait_learning_input': '等待学习反馈', 'learning_feedback': '请求学习审读',
+    'propose_learning_framework': '提出学习框架', 'call_model': '调用辅助模型',
+    'prepare_changes': '准备知识草稿', 'publish_changes': '发布知识变更',
+    'capture_conversation': '保存讨论材料', 'list_changesets': '列出知识草稿',
+    'read_changeset': '读取知识草稿', 'revise_changeset': '修订知识草稿',
+    'reject_changeset': '拒绝知识草稿', 'delegate_research': '恢复旧研究任务',
+    'search_web': '搜索网页', 'read_web': '读取网页', 'read_file': '读取文件与技能',
+    'task': '委派同步子任务', 'ls': '浏览工作区', 'glob': '查找文件',
+    'grep': '检索文件内容', 'write_file': '新建文件', 'edit_file': '编辑文件',
+    'delete': '删除文件', 'execute': '执行命令', 'import_file': '导入工作区材料',
+    'present_files': '交付文件', 'sync_knowledge_files': '同步知识文件',
+}
+
 
 @dataclass(frozen=True)
 class ToolDefinition:
@@ -38,7 +65,8 @@ class ToolDefinition:
 
     def view(self) -> dict:
         """每次返回独立JSON视图，调用方修改它不会改变全局目录。"""
-        return {"id": f"{self.source}:{self.name}", **asdict(self)}
+        return {"id": f"{self.source}:{self.name}", **asdict(self),
+                "display_name": DISPLAY_NAMES.get(self.name, self.name), "summary": self.description}
 
 
 # 顺序保留原主/子工具装配顺序，不为了目录展示更改模型看到的默认工具排列。
@@ -279,21 +307,6 @@ def group_options(*, child_only: bool = False) -> list[dict]:
     return groups
 
 
-def selected_groups(groups: list[str], *, child_only: bool = False) -> list[str]:
-    """校验组名；MCP 组只控制根目录只读继承，不自行授予连接或操作许可。"""
-    selected = list(dict.fromkeys(group.strip() for group in groups))
-    allowed = {item["id"] for item in group_options(child_only=child_only)}
-    if not all(selected) or not set(selected) <= allowed:
-        raise ValueError("包含未知或不允许的工具组")
-    return selected
-
-
-def expand_groups(groups: list[str], *, child_only: bool = False) -> list[str]:
-    """保存配置时将工具组展开为稳定ID；恢复不再按变化后的组成员重新推算。"""
-    selected = selected_groups(groups, child_only=child_only)
-    return [row["id"] for row in tool_options(child_only=child_only) if row["group"] in selected]
-
-
 def role_tool_names(definition: dict) -> list[str]:
     """新角色使用保存过的组展开结果；旧修订仍使用原有显式tools列表。"""
     resolved = definition.get("resolved_tools")
@@ -418,13 +431,13 @@ def mcp_tool_options(bindings: Sequence[dict]) -> list[dict]:
     return result
 
 
-def catalog_view(mcp_bindings: Sequence[dict]) -> dict:
+def catalog_view(mcp_bindings: Sequence[dict], *, groups: list[dict] | None = None) -> dict:
     """只读能力目录；具体运行是否可用还要与根选项、角色和业务许可求交。"""
     external = mcp_tool_options(mcp_bindings)
     return {
         "tools": [*tool_options(), *external],
         "groups": [
-            *group_options(),
+            *(group_options() if groups is None else groups),
             *(
                 [{"id": "mcp", "name": "外部MCP", "tool_ids": [item["id"] for item in external]}]
                 if external

@@ -57,12 +57,17 @@ def test_default_matrix_and_permission_upper_bounds():
     assert evaluate_execution("middleware:execute").decision == "ask"
     for tool in (
         "middleware:read_file",
-        "middleware:write_file",
         "builtin:search_web",
         "builtin:publish_changes",
     ):
         assert evaluate_execution(tool).decision == "allow"
-    assert evaluate_execution("middleware:execute", mode="auto").decision == "allow"
+    for tool in ("middleware:write_file", "middleware:edit_file", "middleware:delete"):
+        assert evaluate_execution(tool).decision == "ask"
+        assert evaluate_execution(tool, mode="auto_review").decision == "review"
+        assert evaluate_execution(tool, mode="auto_review", available=False).decision == "deny"
+    assert evaluate_execution("middleware:execute", mode="auto").decision == "ask"
+    assert evaluate_execution("mcp:server/tool", mode="auto_review", mcp_permission="confirm").decision == "review"
+    assert evaluate_execution("mcp:server/tool", mode="auto_review", mcp_permission="deny").decision == "deny"
     assert evaluate_execution("middleware:execute", mode="auto", available=False).decision == "deny"
     assert (
         evaluate_execution("mcp:server/tool", mode="auto", mcp_permission="confirm").decision
@@ -80,7 +85,7 @@ def test_explicit_deny_and_ask_override_auto_and_allow_rules():
     def result(effects):
         return evaluate_execution(
             "middleware:execute",
-            mode="auto",
+            mode="auto_review",
             command="git status --short",
             cwd="/data/ws",
             rules=[{**base, "effect": effect} for effect in effects],

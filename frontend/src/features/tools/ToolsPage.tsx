@@ -1,22 +1,14 @@
-import { Button } from '../../shared/ui/Button';
-import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { messageOf, send, useResource } from '../../shared/api/api';
-import { Empty, ErrorBox, Loading, PageTitle } from '../../shared/ui/components';
+import { Button } from '../../shared/ui/Button';
+import { ErrorBox, Loading, PageTitle } from '../../shared/ui/components';
 import { ExecutionRules } from '../permissions/ExecutionRules';
+import { CapabilitySelector, type CapabilityChoice } from './CapabilitySelector';
+import { EffectiveCapabilities } from './EffectiveCapabilities';
 
-type Tool = {
-  id: string;
-  name: string;
-  description: string;
-  source: string;
-  group: string;
-  legacy_only?: boolean;
-  available?: boolean;
-  requires_approval?: boolean;
-  unavailable_explanations?: string[];
-};
-type Group = { id: string; name: string; tool_ids: string[] };
+type Tool = CapabilityChoice & { source: string; legacy_only?: boolean };
+type Group = CapabilityChoice & { tool_ids: string[] };
 type Catalog = { tools: Tool[]; groups: Group[] };
 type Policy = {
   revision: number;
@@ -26,70 +18,13 @@ type Policy = {
   main_tool_groups: string[] | null;
   resolved_main_tools: string[] | null;
 };
-type Skill = {
-  name: string;
-  description: string;
-  version: string;
-  resource: string;
+type Skill = CapabilityChoice & {
   enabled?: boolean;
   available?: boolean;
-  unavailable_reason?: string | null;
-  availability_status?: 'available' | 'disabled' | 'incompatible' | 'invalid' | 'config_error';
+  availability_status?: string;
 };
-type Role = { id: string; display_name: string; enabled: boolean; deleted: boolean };
-type Preview = {
-  policy_revision: number;
-  tools: Tool[];
-  role: (Role & { revision: number }) | null;
-  skills: { available: boolean; explanation: string };
-};
-const sources: Record<string, string> = {
-  builtin: '应用工具',
-  middleware: '中间件工具',
-  mcp: 'MCP工具',
-};
-const toggle = (values: string[], name: string, selected: boolean) =>
-  selected ? [...values, name] : values.filter((item) => item !== name);
 
-/** 选择表只维护用户编辑；真正可用结果由后端根据已保存配置计算。 */
-function Selection({
-  title,
-  options,
-  selected,
-  onChange,
-}: {
-  title: string;
-  options: { id: string; name: string }[];
-  selected: string[];
-  onChange: (value: string[]) => void;
-}) {
-  const choices = [
-    ...options,
-    ...selected
-      .filter((id) => !options.some((item) => item.id === id))
-      .map((id) => ({ id, name: `${id}（当前不可用，请移除）` })),
-  ];
-  return (
-    <fieldset>
-      <legend>{title}</legend>
-      {choices.map((item) => (
-        <label className="check m-0 flex-row items-center gap-2 font-normal" key={item.id}>
-          <input
-            type="checkbox"
-            checked={selected.includes(item.id)}
-            onChange={(event) => onChange(toggle(selected, item.id, event.target.checked))}
-          />
-          {item.name}
-        </label>
-      ))}
-      {choices.length === 0 && <p className="muted text-muted">暂无可选项</p>}
-    </fieldset>
-  );
-}
-
-/** 修订冲突时保留输入；只有成功保存或明确放弃编辑后，父组件才刷新配置。
- * 只提交发生变化的选择字段，避免无关修改重新展开保存过的工具组。
- */
+/** 只提交变更项；保存冲突不丢弃草稿，也不重新展开未修改的组选择。 */
 function PolicyEditor({
   saved,
   catalog,
@@ -129,6 +64,33 @@ function PolicyEditor({
     if (JSON.stringify(draft[field]) !== JSON.stringify(saved[field])) patch[field] = draft[field];
   }
   const changed = Object.keys(patch).length > 1;
+  useEffect(() => {
+    if (!changed) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [changed]);
+  const skillOptions = skills.map((skill) => {
+    const available = skill.available ?? !skill.unavailable_reason;
+    return {
+      ...skill,
+      id: skill.name,
+      disabled: !available,
+      detail_url: `/api/skills/${encodeURIComponent(skill.name)}`,
+      status: !available
+        ? '不可用'
+        : (draft.skill_enabled?.[skill.name] ?? true)
+          ? '已启用'
+          : '已关闭',
+    };
+  });
+  const groups = catalog.groups
+    .filter((group) => group.id !== 'mcp')
+    .map((group) => ({
+      ...group,
+      summary: group.description,
+      members: local.filter((tool) => group.tool_ids.includes(tool.id)),
+    }));
   async function save() {
     setBusy(true);
     setError('');
@@ -143,104 +105,70 @@ function PolicyEditor({
   }
   return (
     <form
-      className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5 tool-policy [&_fieldset]:my-4 [&_fieldset]:min-w-0 [&_fieldset]:rounded-lg [&_fieldset]:border [&_fieldset]:border-line [&_fieldset]:p-4 [&_.check]:items-start"
       aria-label="工具策略配置"
+      className="mt-5 space-y-5"
       onSubmit={(event) => {
         event.preventDefault();
         if (changed && !busy && !refreshing) void save();
       }}
     >
-      <h2>配置工具</h2>
-      <p className="muted text-muted">当前配置修订 {saved.revision}</p>
-      <p>全局关闭同时约束主 Agent 和子 Agent；主 Agent 的选择仅限制主 Agent。</p>
-      <details className="skill-catalog my-5 [overflow-wrap:anywhere] [&>summary]:font-semibold [&_article+article]:border-t [&_article+article]:border-[#e5eade] [&_article+article]:pt-3">
-        <summary>已发现的任务技能（{skills.length}）</summary>
-        <p className="muted text-muted small text-xs">
-          技能启用后供新任务按需读取，不会自动执行脚本或授予工具权限。关闭会阻止后续读取和脚本资源装配；已读内容不会从历史中消失。重新启用请创建新任务。
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="m-0 text-xs text-muted">
+          当前配置修订 {saved.revision}
+          {changed ? ' · 有未保存修改' : ''}
         </p>
-        <fieldset disabled={busy || refreshing}>
-          <legend>技能开关</legend>
-          {skills.map((skill) => {
-            const available = skill.available ?? !skill.unavailable_reason;
-            const selected = draft.skill_enabled?.[skill.name] ?? true;
-            return (
-              <article key={skill.name}>
-                <label className="check m-0 flex-row items-center gap-2 font-normal">
-                  <input
-                    type="checkbox"
-                    aria-label={`启用技能 ${skill.name}`}
-                    checked={available && selected}
-                    disabled={!available}
-                    onChange={(event) =>
-                      setDraft({
-                        ...draft,
-                        skill_enabled: {
-                          ...draft.skill_enabled,
-                          [skill.name]: event.target.checked,
-                        },
-                      })
-                    }
-                  />
-                  <strong>
-                    {skill.name} ·{' '}
-                    {skill.availability_status === 'config_error'
-                      ? '全局配置错误'
-                      : skill.availability_status === 'invalid'
-                        ? '包格式或资源错误'
-                        : skill.availability_status === 'incompatible'
-                          ? '当前不兼容'
-                          : skill.availability_status === 'disabled'
-                            ? '部署未启用'
-                            : !available
-                              ? '不可用'
-                              : selected
-                                ? '已启用'
-                                : '已关闭'}
-                  </strong>
-                </label>
-                <p>{skill.description}</p>
-                {skill.unavailable_reason && <p>{skill.unavailable_reason}</p>}
-                <p className="muted text-muted small text-xs">
-                  {skill.resource} · {skill.version}
-                </p>
-              </article>
-            );
-          })}
-        </fieldset>
-      </details>
-      <fieldset disabled={busy || refreshing}>
-        <legend>全局工具开关</legend>
-        <div className="tool-grid grid grid-cols-[repeat(auto-fit,minmax(min(100%,270px),1fr))] gap-3">
-          {local.map((tool) => (
-            <label className="check m-0 flex-row items-center gap-2 font-normal" key={tool.id}>
-              <input
-                type="checkbox"
-                checked={draft.enabled[tool.id] === true}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    enabled: { ...draft.enabled, [tool.id]: event.target.checked },
-                  })
-                }
-              />
-              <span>
-                <strong>{tool.name}</strong>
-                <span className="muted text-muted small text-xs">
-                  {' '}
-                  — {tool.description}
-                  {tool.legacy_only ? '（仅供旧任务恢复）' : ''}
-                </span>
-              </span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
-      <fieldset disabled={busy || refreshing}>
-        <legend>主 Agent 的工具选择</legend>
-        <label className="check m-0 flex-row items-center gap-2 font-normal">
+        <EffectiveCapabilities version={saved.revision} />
+      </div>
+      <CapabilitySelector
+        title="全局工具开关"
+        options={local}
+        selected={local.filter((tool) => draft.enabled[tool.id] === true).map((tool) => tool.id)}
+        disabled={busy || refreshing}
+        buttonLabel="管理全部工具"
+        description="全局关闭同时约束主 Agent 和子 Agent。"
+        onChange={(selected) =>
+          setDraft({
+            ...draft,
+            enabled: {
+              ...draft.enabled,
+              ...Object.fromEntries(local.map((tool) => [tool.id, selected.includes(tool.id)])),
+            },
+          })
+        }
+      />
+      <CapabilitySelector
+        title="Skills"
+        options={skillOptions}
+        selected={skillOptions
+          .filter((skill) => !skill.disabled && (draft.skill_enabled?.[skill.name] ?? true))
+          .map((skill) => skill.id)}
+        disabled={busy || refreshing}
+        buttonLabel="管理全部 Skills"
+        description={`已发现 ${skills.length} 项。技能提供任务方法；按需读取，不会自动运行脚本或授予权限。`}
+        onChange={(selected) =>
+          setDraft({
+            ...draft,
+            skill_enabled: {
+              ...draft.skill_enabled,
+              ...Object.fromEntries(
+                skillOptions
+                  .filter((skill) => !skill.disabled)
+                  .map((skill) => [skill.name, selected.includes(skill.id)]),
+              ),
+            },
+          })
+        }
+      />
+      <section
+        className="rounded-xl border border-line bg-white p-5"
+        aria-label="主 Agent 的工具选择"
+      >
+        <h2 className="mt-0 text-base font-semibold">主 Agent 的工具选择</h2>
+        <label className="m-0 flex-row items-center gap-2 text-sm font-normal">
           <input
             type="checkbox"
             checked={inherited}
+            disabled={busy || refreshing}
             onChange={(event) =>
               setDraft({
                 ...draft,
@@ -251,34 +179,35 @@ function PolicyEditor({
           />
           继承默认本地工具选择
         </label>
-        {inherited ? (
-          <p className="muted text-muted small text-xs">
-            使用默认选择，仍受全局开关和任务选项约束。
-          </p>
-        ) : (
-          <>
-            <p className="muted text-muted small text-xs">
-              工具组与单独工具合并；两者都不选表示主 Agent 不使用本地工具。MCP 许可单独管理。
-            </p>
-            <div className="two-columns grid grid-cols-2 gap-5.5 max-lg:gap-[15px] max-md:grid-cols-1">
-              <Selection
-                title="按组选择"
-                options={catalog.groups}
-                selected={draft.main_tool_groups ?? []}
-                onChange={(main_tool_groups) => setDraft({ ...draft, main_tool_groups })}
-              />
-              <Selection
-                title="单独选择工具"
-                options={local.filter((item) => !item.legacy_only)}
-                selected={draft.main_tools ?? []}
-                onChange={(main_tools) => setDraft({ ...draft, main_tools })}
-              />
-            </div>
-          </>
+        <p className="text-xs text-muted">
+          {inherited
+            ? '使用默认选择，仍受全局开关和任务选项约束。'
+            : '工具组与单独工具合并；两者都不选表示不使用本地工具。MCP 许可单独管理。'}
+        </p>
+        {!inherited && (
+          <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1">
+            <CapabilitySelector
+              title="工具组"
+              options={groups}
+              selected={draft.main_tool_groups ?? []}
+              disabled={busy || refreshing}
+              onChange={(main_tool_groups) => setDraft({ ...draft, main_tool_groups })}
+            />
+            <CapabilitySelector
+              title="单独工具"
+              options={local.filter((item) => !item.legacy_only)}
+              selected={draft.main_tools ?? []}
+              disabled={busy || refreshing}
+              onChange={(main_tools) => setDraft({ ...draft, main_tools })}
+            />
+          </div>
         )}
-      </fieldset>
+        <Link className="text-sm" to="/tools/groups">
+          创建或编辑工具组
+        </Link>
+      </section>
       <ErrorBox message={error} />
-      <div className="row flex items-center gap-3 wrap flex-wrap">
+      <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-white/95 p-4 shadow-sm backdrop-blur-sm">
         <Button type="submit" disabled={busy || refreshing || !changed}>
           {busy ? '正在保存…' : '保存工具配置'}
         </Button>
@@ -291,151 +220,47 @@ function PolicyEditor({
           放弃本地修改并刷新
         </Button>
       </div>
-      <p className="muted text-muted small text-xs">
-        普通选择从新任务生效。关闭工具会在后续调用前检查，不能撤销已经执行的操作；重新开启不会恢复旧任务已撤回的许可。
+      <p className="text-xs text-muted">
+        新选择用于新任务。关闭会限制后续调用，不能撤销已执行操作；重新开启不会恢复旧任务已撤回的许可。
       </p>
     </form>
   );
 }
 
-/** 预览仅发 GET，不创建任务、不连接 MCP、也不调用模型。URL 保留所选角色便于回访。 */
-function EffectivePreview({ version }: { version: number }) {
-  const [query, setQuery] = useSearchParams();
-  const roleId = query.get('role_id') ?? '';
-  const [knowledgeOnly, setKnowledgeOnly] = useState(false);
-  const [auxiliary, setAuxiliary] = useState(false);
-  const [delegation, setDelegation] = useState(true);
-  const roles = useResource<Role[]>('/api/subagents', version);
-  const params = new URLSearchParams({
-    knowledge_only: String(knowledgeOnly),
-    auxiliary: String(auxiliary),
-    delegation: String(delegation),
-  });
-  if (roleId) params.set('role_id', roleId);
-  const preview = useResource<Preview>(`/api/tools/effective?${params}`, version);
-  return (
-    <section
-      className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
-      aria-label="有效工具预览"
-    >
-      <h2>有效工具预览</h2>
-      <p>根据已保存的配置预览新任务。上方尚未保存的改动不在此处生效；预览不会执行任何工具。</p>
-      <label>
-        预览角色
-        <select
-          value={roleId}
-          disabled={roles.loading || Boolean(roles.error)}
-          onChange={(event) => {
-            const next = new URLSearchParams(query);
-            if (event.target.value) next.set('role_id', event.target.value);
-            else next.delete('role_id');
-            setQuery(next);
-          }}
-        >
-          <option value="">主 Agent</option>
-          {roles.data?.map((role) => (
-            <option key={role.id} value={role.id}>
-              {role.display_name}
-              {role.enabled && !role.deleted ? '' : '（已停用）'}
-            </option>
-          ))}
-          {roleId && !roles.data?.some((row) => row.id === roleId) && (
-            <option value={roleId}>所选角色</option>
-          )}
-        </select>
-      </label>
-      <div className="row flex items-center gap-3 wrap flex-wrap">
-        <label className="check m-0 flex-row items-center gap-2 font-normal">
-          <input
-            type="checkbox"
-            checked={knowledgeOnly}
-            onChange={(event) => setKnowledgeOnly(event.target.checked)}
-          />
-          仅知识库
-        </label>
-        <label className="check m-0 flex-row items-center gap-2 font-normal">
-          <input
-            type="checkbox"
-            checked={auxiliary}
-            onChange={(event) => setAuxiliary(event.target.checked)}
-          />
-          允许辅助模型
-        </label>
-        <label className="check m-0 flex-row items-center gap-2 font-normal">
-          <input
-            type="checkbox"
-            checked={delegation}
-            onChange={(event) => setDelegation(event.target.checked)}
-          />
-          允许子 Agent 分工
-        </label>
-      </div>
-      <ErrorBox message={roles.error || preview.error} />
-      {preview.loading && <Loading />}
-      {preview.data && !preview.loading && !preview.error && (
-        <>
-          <p className="muted text-muted small text-xs">
-            工具配置修订 {preview.data.policy_revision}
-            {preview.data.role && ` · 角色修订 ${preview.data.role.revision}`} · 可用{' '}
-            {preview.data.tools.filter((tool) => tool.available).length} 项
-          </p>
-          <p className="notice border-l-[3px] border-[#c0a76b] bg-[#f5f0e0] px-4 py-3 text-[13px] [overflow-wrap:anywhere]">
-            Skills 按需读取：{preview.data.skills.available ? '可用' : '不可用'}。
-            {preview.data.skills.explanation}
-          </p>
-          <ul className="tool-grid grid grid-cols-[repeat(auto-fit,minmax(min(100%,270px),1fr))] gap-3 tool-results list-none p-0 [&>li]:rounded-lg [&>li]:border [&>li]:border-line [&>li]:p-3.5 [&>li]:[overflow-wrap:anywhere] [&_p]:my-1.5">
-            {preview.data.tools.map((tool) => (
-              <li key={tool.id}>
-                <div className="row flex items-center gap-3 between justify-between">
-                  <strong>{tool.name}</strong>
-                  <span className="badge inline-flex items-center rounded-[5px] bg-[#edf1eb] px-[9px] py-[3px] text-[11px] leading-[1.6] whitespace-nowrap text-[#5f7765]">
-                    {tool.available ? '可用' : '不可用'}
-                  </span>
-                </div>
-                <p>{tool.description}</p>
-                <p className="muted text-muted small text-xs">
-                  {sources[tool.source] ?? tool.source}
-                </p>
-                {tool.unavailable_explanations?.map((reason) => (
-                  <p className="small text-xs" key={reason}>
-                    {reason}
-                  </p>
-                ))}
-                {tool.requires_approval && <p className="small text-xs">每次调用需用户确认</p>}
-              </li>
-            ))}
-          </ul>
-          {preview.data.tools.length === 0 && <Empty title="暂无已登记工具" />}
-          <p className="muted text-muted small text-xs">
-            实际执行还会校验最新许可、预算和具体操作条件。旧运行保留当时的选择，可能比此预览更少。
-          </p>
-        </>
-      )}
-    </section>
-  );
-}
-
-export function ToolsPage() {
+function ToolsManagement() {
+  const location = useLocation();
+  const rules = useRef<HTMLDetailsElement>(null);
   const [version, setVersion] = useState(0);
   const refresh = () => setVersion((value) => value + 1);
   const catalog = useResource<Catalog>('/api/tools/catalog', version);
   const policy = useResource<Policy>('/api/tools/policy', version);
   const skills = useResource<Skill[]>('/api/skills', version);
-  const [showHistory, setShowHistory] = useState(false);
-  const history = useResource<Policy[]>(showHistory ? '/api/tools/policy/history' : null, version);
+  const loading = catalog.loading || policy.loading || skills.loading;
+  useEffect(() => {
+    // 聊天入口直接定位规则；普通工具页仍保持折叠，兼容旧会话参数链接。
+    if (loading || !rules.current) return;
+    if (
+      location.hash !== '#execution-rules' &&
+      !new URLSearchParams(location.search).has('conversation_id')
+    )
+      return;
+    rules.current.open = true;
+    rules.current.scrollIntoView?.({ block: 'start' });
+  }, [loading, location.hash, location.search]);
   return (
     <>
       <PageTitle eyebrow="能力配置" title="工具与能力" />
-      <p>集中查看应用工具、Skills 读取与子任务委派。外部连接和子角色沿用各自的管理页面。</p>
-      <div className="row flex items-center gap-3 wrap flex-wrap">
+      <p className="text-muted">
+        管理可用工具与任务方法，为主 Agent 和子 Agent 设置清晰的能力范围。
+      </p>
+      <nav className="mb-5 flex flex-wrap gap-4" aria-label="能力管理入口">
         <Link to="/mcp">管理MCP连接</Link>
+        <Link to="/tools/groups">管理工具组</Link>
         <Link to="/subagents">管理子Agent</Link>
-      </div>
-      <ErrorBox message={skills.error} />
-      {skills.loading && <Loading />}
-      <ErrorBox message={catalog.error || policy.error} />
-      {(catalog.loading || policy.loading) && <Loading />}
-      {(catalog.error || policy.error) && (
+      </nav>
+      <ErrorBox message={catalog.error || policy.error || skills.error} />
+      {(catalog.loading || policy.loading || skills.loading) && <Loading />}
+      {(catalog.error || policy.error || skills.error) && (
         <Button className="secondary button-secondary" onClick={refresh}>
           重试加载配置
         </Button>
@@ -455,46 +280,26 @@ export function ToolsPage() {
           refresh={refresh}
         />
       )}
-      <EffectivePreview version={version} />
-      <ExecutionRules />
-      <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
-        <Button className="secondary button-secondary" onClick={() => setShowHistory(!showHistory)}>
-          {showHistory ? '收起配置历史' : '查看配置历史'}
-        </Button>
-        {showHistory && (
-          <>
-            <ErrorBox message={history.error} />
-            {history.loading && <Loading />}
-            {history.data?.map((item) => (
-              <div key={item.revision}>
-                <h3>修订 {item.revision}</h3>
-                <p>
-                  主 Agent：
-                  {item.resolved_main_tools === null
-                    ? '继承默认选择'
-                    : item.resolved_main_tools.length === 0
-                      ? '未选择本地工具'
-                      : item.resolved_main_tools.join('、')}
-                </p>
-                <p className="muted text-muted small text-xs">
-                  已关闭技能：
-                  {Object.entries(item.skill_enabled ?? {})
-                    .filter(([, value]) => !value)
-                    .map(([name]) => name)
-                    .join('、') || '无'}
-                </p>
-                <p className="muted text-muted small text-xs">
-                  全局关闭：
-                  {Object.entries(item.enabled)
-                    .filter(([, value]) => !value)
-                    .map(([id]) => id)
-                    .join('、') || '无'}
-                </p>
-              </div>
-            ))}
-          </>
-        )}
-      </section>
+      <details
+        ref={rules}
+        id="execution-rules"
+        className="mt-7 scroll-mt-4 rounded-xl border border-line bg-white p-5"
+      >
+        <summary className="cursor-pointer font-medium">命令执行规则</summary>
+        <div className="mt-4">
+          <ExecutionRules />
+        </div>
+      </details>
     </>
+  );
+}
+
+export function ToolsPage() {
+  const [query] = useSearchParams();
+  const role = query.get('role_id');
+  return role ? (
+    <Navigate to={`/subagents?effective=${encodeURIComponent(role)}`} replace />
+  ) : (
+    <ToolsManagement />
   );
 }

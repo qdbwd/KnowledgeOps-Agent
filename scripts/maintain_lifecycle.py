@@ -16,6 +16,9 @@ def main() -> None:
     target.add_argument("--run-id", help="预览一个根任务；配合--execute接收其到期清理")
     target.add_argument("--job-id", help="查看已有清理；配合--execute推进")
     target.add_argument("--scan", action="store_true", help="查看/推进每日纳管扫描")
+    target.add_argument("--configuration-history", choices=("subagent", "tool_policy", "tool_group"),
+                        help="预览一批旧配置修订；--execute才回收无依赖的到期历史")
+    parser.add_argument("--after", help="配置历史的分页游标，使用上次next_cursor的JSON数组")
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--retry", action="store_true", help="显式重试失败作业，要求--job-id与--execute")
     parser.add_argument("--steps", type=int, default=1, help="最多推进步数，默认1，上限1000")
@@ -24,12 +27,21 @@ def main() -> None:
         parser.error("--steps must be between 1 and 1000")
     if args.retry and not (args.execute and args.job_id):
         parser.error("--retry requires --execute and --job-id")
-    if args.execute and not (args.run_id or args.job_id or args.scan):
-        parser.error("--execute requires an explicit --run-id, --job-id or --scan")
+    if args.execute and not (args.run_id or args.job_id or args.scan or args.configuration_history):
+        parser.error("--execute requires an explicit cleanup target")
+    if args.after and not args.configuration_history:
+        parser.error("--after requires --configuration-history")
+    try:
+        config_after = json.loads(args.after) if args.after else None
+    except ValueError:
+        parser.error("--after must be a JSON array")
     services = create_services(get_settings().model_copy(update={"model_calls_enabled": False}))
     try:
         maintenance = services.lifecycle
-        if args.run_id:
+        if args.configuration_history:
+            result = maintenance.configuration.preview(args.configuration_history, after=config_after,
+                                                       limit=services.settings.lifecycle_batch_size)
+        elif args.run_id:
             result = maintenance.details.preview(args.run_id)
         elif args.job_id:
             result = maintenance.jobs.get(args.job_id)
@@ -55,7 +67,14 @@ def main() -> None:
                 else:
                     maintenance.jobs.retry(identity)
             for _ in range(args.steps):
-                result = maintenance.scan_step() if args.scan else maintenance.advance(identity)
+                if args.configuration_history:
+                    result = maintenance.configuration.step(args.configuration_history, after=config_after,
+                                                            limit=services.settings.lifecycle_batch_size)
+                    config_after = result["next_cursor"]
+                    if config_after is None:
+                        break
+                else:
+                    result = maintenance.scan_step() if args.scan else maintenance.advance(identity)
                 if result is None or result.get("status") in {"failed", "completed"} or result.get("error"):
                     break
             if identity:

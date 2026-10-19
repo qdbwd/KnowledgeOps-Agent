@@ -9,6 +9,7 @@ from knowledgeops_agent.harness.subagents.registry import (
     SubagentCreate,
     SubagentRegistry,
     SubagentUpdate,
+    role_templates,
 )
 
 router = APIRouter()
@@ -20,13 +21,23 @@ def subagents(request: Request):
 
 
 @router.get("/api/subagents/options")
-def subagent_options():
-    return SubagentRegistry.options()
+def subagent_options(request: Request):
+    return SubagentRegistry(svc(request).sessions).options()
 
 
 @router.post("/api/subagents", status_code=201)
 def create_subagent(body: SubagentCreate, request: Request):
     return SubagentRegistry(svc(request).sessions).create(**body.model_dump())
+
+
+@router.get("/api/subagents/templates")
+def subagent_templates():
+    return role_templates()
+
+
+@router.get("/api/subagents/{definition_id}")
+def subagent_definition(definition_id: str, request: Request):
+    return SubagentRegistry(svc(request).sessions).get(definition_id)
 
 
 @router.patch("/api/subagents/{definition_id}")

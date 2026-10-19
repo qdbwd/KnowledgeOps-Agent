@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy import case, func, literal, or_, select
 from sqlalchemy.dialects.postgresql import insert
 
+from knowledgeops_agent.app.runs.control import lock_control
+from knowledgeops_agent.persistence.files import FileStore
 from knowledgeops_agent.persistence.models import (
     Evidence,
     KnowledgeVersion,
@@ -23,7 +24,12 @@ from knowledgeops_agent.persistence.models import (
     new_id,
     utcnow,
 )
-from knowledgeops_agent.persistence.temporary import ManagedTemporary
+from knowledgeops_agent.sources.ownership import (
+    claim_source,
+    ownership_view,
+    resolve_owner,
+    scope_predicate,
+)
 
 
 class SourceService:
@@ -32,18 +38,11 @@ class SourceService:
         self.storage_root = storage_root.resolve()
         self.storage_root.mkdir(parents=True, exist_ok=True)
 
-    def _store_original(self, data: bytes) -> tuple[str, str]:
+    def _store_original(self, data: bytes, *, session) -> tuple[str, str]:
         """先原子保存不可变原件；DB 回滚最多留下可回收孤立对象，不留下假来源。"""
         digest = hashlib.sha256(data).hexdigest()
         key = f"{digest[:2]}/{digest}"
-        target = self.storage_root / key
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.exists():
-            with ManagedTemporary(self.storage_root, kind="upload") as temporary:
-                temporary.stream.write(data)
-                temporary.stream.flush()
-                os.fsync(temporary.stream.fileno())
-                os.replace(temporary.path, target)
+        FileStore(self.storage_root).put_bytes(key, data, session=session, purpose="source")
         return digest, key
 
     def import_text(
@@ -56,27 +55,50 @@ class SourceService:
         raw_bytes: bytes | None = None,
         mime_type: str = "text/plain",
         parser: str = "text-v1",
+        body_format: str | None = None,
+        conversation_id: str | None = None,
+        root_id: str | None = None,
     ) -> dict:
         """导入文本并按 2400 字符建立可定位片段；相同来源/内容不重复版本。
 
         origin 存在时识别同一外部来源，否则以内容哈希识别独立粘贴材料。
-        原始字节与提取正文可分开，网页快照不会被错误替换为搜索摘要。
+        网页只保存已提取正文，按正文、格式及解析器去重；上传文件仍保存原件。
+        原有版本的内容哈希语义与ID不变，新网页的去重指纹与两种校验哈希分开。
         """
         if not title.strip() or len(title) > 500 or not content.strip():
             raise ValueError("nonempty title (<=500 characters) and content are required")
-        digest, key = self._store_original(
-            raw_bytes if raw_bytes is not None else content.encode("utf-8")
+        body_format = body_format or (
+            "text" if kind == "file" and not title.lower().endswith(".md") else "markdown"
         )
-        identity = f"{kind}:{origin or digest}"
+        if body_format not in {"text", "markdown"}:
+            raise ValueError("body_format must be text or markdown")
+        body_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        original_hash, key = None, None
+        if kind == "web":
+            hash_kind = "body-v1"
+            digest = hashlib.sha256(
+                f"web-body-v1\0{parser}\0{body_format}\0{body_hash}".encode()
+            ).hexdigest()
+        else:
+            hash_kind = "original"
+            digest = hashlib.sha256(raw_bytes if raw_bytes is not None else content.encode("utf-8")).hexdigest()
+            original_hash = digest
+        identity = f"{kind}:{origin or (body_hash if kind == 'web' else digest)}"
         with self.sessions.begin() as session:
+            lock_control(session)
+            resolve_owner(session, conversation_id=conversation_id, root_id=root_id)
             session.execute(
                 insert(Source)
-                .values(id=new_id(), identity_key=identity, title=title, kind=kind, origin=origin)
+                .values(id=new_id(), identity_key=identity, title=title, kind=kind, origin=origin, ownership_known=True)
                 .on_conflict_do_nothing(index_elements=["identity_key"])
             )
             source = session.scalar(
                 select(Source).where(Source.identity_key == identity).with_for_update()
             )
+            claim_source(session, source.id, conversation_id=conversation_id, root_id=root_id)
+            if kind != "web":
+                # 保存意图通过后才安装原件；安装到版本提交期间与回收共用控制锁。
+                _, key = self._store_original(raw_bytes if raw_bytes is not None else content.encode("utf-8"), session=session)
             version = session.scalar(
                 select(SourceVersion).where(
                     SourceVersion.source_id == source.id, SourceVersion.content_hash == digest
@@ -85,7 +107,7 @@ class SourceService:
             if version is None:
                 number = (
                     session.scalar(
-                        select(func.count())
+                        select(func.coalesce(func.max(SourceVersion.number), 0))
                         .select_from(SourceVersion)
                         .where(SourceVersion.source_id == source.id)
                     )
@@ -95,6 +117,10 @@ class SourceService:
                     source_id=source.id,
                     number=number,
                     content_hash=digest,
+                    content_hash_kind=hash_kind,
+                    body_hash=body_hash,
+                    body_format=body_format,
+                    original_hash=original_hash,
                     storage_key=key,
                     mime_type=mime_type,
                     status="ready",
@@ -118,21 +144,26 @@ class SourceService:
                 session.flush()
             return self._version_view(session, source, version)
 
-    def register_pdf(self, title: str, data: bytes) -> dict:
+    def register_pdf(self, title: str, data: bytes, *, conversation_id: str | None = None,
+                     root_id: str | None = None) -> dict:
         """上传阶段只保存原件与待解析版本；耗时的文本/OCR 工作留给 worker。"""
         if not data.startswith(b"%PDF-") or not title.strip() or len(data) > 10 * 1024 * 1024:
             raise ValueError("PDF must have a valid header and be at most 10 MiB")
-        digest, key = self._store_original(data)
+        digest = hashlib.sha256(data).hexdigest()
         identity = f"pdf:{digest}"
         with self.sessions.begin() as session:
+            lock_control(session)
+            resolve_owner(session, conversation_id=conversation_id, root_id=root_id)
             session.execute(
                 insert(Source)
-                .values(id=new_id(), identity_key=identity, title=title[:500], kind="pdf")
+                .values(id=new_id(), identity_key=identity, title=title[:500], kind="pdf", ownership_known=True)
                 .on_conflict_do_nothing(index_elements=["identity_key"])
             )
             source = session.scalar(
                 select(Source).where(Source.identity_key == identity).with_for_update()
             )
+            claim_source(session, source.id, conversation_id=conversation_id, root_id=root_id)
+            _, key = self._store_original(data, session=session)
             version = session.scalar(
                 select(SourceVersion).where(SourceVersion.source_id == source.id)
             )
@@ -141,6 +172,8 @@ class SourceService:
                     source_id=source.id,
                     number=1,
                     content_hash=digest,
+                    original_hash=digest,
+                    body_format="text",
                     storage_key=key,
                     mime_type="application/pdf",
                     status="pending",
@@ -169,12 +202,20 @@ class SourceService:
             "title": source.title,
             "kind": source.kind,
             "origin": source.origin,
+            **ownership_view(session, source),
             "deleted": source.deleted_at is not None,
             "version_id": version.id,
             "version": version.number,
             "status": version.status,
             "error": version.error,
             "content_hash": version.content_hash,
+            "content_hash_kind": version.content_hash_kind,
+            "body_hash": version.body_hash,
+            "body_format": version.body_format or (
+                "text" if source.kind in {"pdf", "file"} and not source.title.lower().endswith(".md")
+                else "markdown"
+            ),
+            "original_available": source.kind != "web" and bool(version.storage_key),
             "mime_type": version.mime_type,
             "parser": version.parser,
             "captured_at": version.created_at.isoformat(),
@@ -193,10 +234,10 @@ class SourceService:
             ],
         }
 
-    def get_source(self, source_id: str, *, version_id: str | None = None) -> dict:
+    def get_source(self, source_id: str, *, version_id: str | None = None, allow_removed: bool = False) -> dict:
         with self.sessions() as session:
             source = session.get(Source, source_id)
-            if source is None or (source.deleted_at is not None and version_id is None):
+            if source is None or (source.deleted_at is not None and version_id is None and not allow_removed):
                 raise KeyError("source not found")
             query = select(SourceVersion).where(SourceVersion.source_id == source_id)
             if version_id:
@@ -206,50 +247,78 @@ class SourceService:
                 raise KeyError("source version not found")
             return self._version_view(session, source, version)
 
-    def list_sources(self) -> list[dict]:
+    def list_sources(self, *, conversation_id: str | None = None, root_id: str | None = None,
+                     include_library: bool = True) -> list[dict]:
+        """默认列出独立材料及归属未知的旧材料；聊天入口再合并本会话材料。"""
         with self.sessions() as session:
+            query = select(Source).where(Source.deleted_at.is_(None), scope_predicate(
+                session, conversation_id=conversation_id, root_id=root_id, include_library=include_library,
+            )).order_by(Source.created_at.desc())
             return [
                 {
                     "id": source.id,
                     "title": source.title,
                     "kind": source.kind,
                     "origin": source.origin,
+                    **ownership_view(session, source),
                 }
-                for source in session.scalars(select(Source).where(Source.deleted_at.is_(None)).order_by(Source.created_at.desc()))
+                for source in session.scalars(query)
             ]
 
-    def remove_source(self, source_id: str) -> dict:
-        """移出材料选择目录，不级联破坏聊天/知识引用；重新导入获得新身份。
-
-        这是用户资产的逻辑删除，不借此擦除原件或修改不可变版本。重试幂等，
-        改写去重键仅释放重新导入的位置，旧版本和证据 ID 全部保持不变。
-        """
+    def retain_source(self, source_id: str, *, conversation_id: str | None = None,
+                      root_id: str | None = None) -> dict:
+        """复用缓存也登记新使用者；不通过重新提取/复制来表示归属。"""
         with self.sessions.begin() as session:
-            source = session.scalar(select(Source).where(Source.id == source_id).with_for_update())
-            if source is None:
-                raise KeyError("source not found")
-            if source.deleted_at is None:
-                source.deleted_at = utcnow()
-                source.identity_key = f"deleted:{source.id}:{source.identity_key}"
-            return {"id": source.id, "deleted": True, "references_preserved": True}
+            claim_source(session, source_id, conversation_id=conversation_id, root_id=root_id)
+        return self.get_source(source_id)
+
+    def save_source(self, source_id: str) -> dict:
+        """用户明确保存到材料库；这是独立保留选择，不修改固定正文与旧引用。"""
+        with self.sessions.begin() as session:
+            claim_source(session, source_id)
+            session.get(Source, source_id).ownership_known = True
+        return self.get_source(source_id)
+
+    def remove_source(self, source_id: str, *, expected_version: str, conversation_id: str | None = None) -> dict:
+        """通过已预览的明确删除意图进入统一作业，不再保留另一条仅隐藏列表的路径。"""
+        from knowledgeops_agent.app.lifecycle.asset_cleanup import AssetCleaner
+        from knowledgeops_agent.app.lifecycle.jobs import CleanupJobs
+
+        return AssetCleaner(self.sessions, CleanupJobs(self.sessions)).admit(
+            "source", source_id, expected_version=expected_version, conversation_id=conversation_id,
+        )
 
     def full_content(self, version_id: str) -> dict:
         """浏览器按固定版本读取全部解析正文，不新增 Agent 阅读证据。
 
         普通文本按偏移直接拼回原文；另返回页面数组供PDF阅读器区分失败页。
-        原网页 HTML 继续只供下载，不能在同源页面执行其中脚本。
+        新版本在展示前核对完整正文哈希；旧版本未完成校验迁移时明确标记。
         """
         with self.sessions() as session:
             version = session.get(SourceVersion, version_id)
             if version is None:
                 raise KeyError("source version not found")
-            segments = list(session.scalars(select(SourceSegment).where(
-                SourceSegment.source_version_id == version_id,
-            ).order_by(SourceSegment.page.asc().nulls_first(), SourceSegment.position)))
-            return {"version_id": version_id, "text": "".join(item.text for item in segments),
+            segments, text = self._verified_body(session, version)
+            return {"version_id": version_id, "text": text, "body_hash": version.body_hash,
+                    "integrity": "verified" if version.body_hash else (
+                        "incomplete" if version.status != "ready" else "legacy_unverified"
+                    ),
                     "segments": [{"id": item.id, "page": item.page, "text": item.text,
                                   "start": item.start_offset, "end": item.end_offset,
                                   "status": item.status, "error": item.error} for item in segments]}
+
+    @staticmethod
+    def _verified_body(session, version) -> tuple[list, str]:
+        """全文和模型读取共用校验，不把数据库中的意外改写当成原来的固定版本。"""
+        segments = list(session.scalars(select(SourceSegment).where(
+            SourceSegment.source_version_id == version.id,
+        ).order_by(SourceSegment.page.asc().nulls_first(), SourceSegment.position)))
+        text = "".join(item.text for item in segments)
+        if version.content_hash_kind == "body-v1" and not version.body_hash:
+            raise ValueError("source body integrity metadata is missing")
+        if version.body_hash and hashlib.sha256(text.encode("utf-8")).hexdigest() != version.body_hash:
+            raise ValueError("source body integrity check failed")
+        return segments, text
 
     def cached_web(self, origin: str) -> dict | None:
         """复用最近一小时的网页版本；显式 refresh 可绕过，旧版本不删除。"""
@@ -264,6 +333,7 @@ class SourceService:
                 .where(
                     SourceVersion.source_id == source.id,
                     SourceVersion.status == "ready",
+                    SourceVersion.content_hash_kind == "body-v1",
                     SourceVersion.created_at >= utcnow() - timedelta(hours=1),
                 )
                 .order_by(SourceVersion.number.desc())
@@ -274,9 +344,13 @@ class SourceService:
     def read_segment(self, segment_id: str, *, root_id: str) -> dict:
         """实际读取成功才登记证据；失败页/空片段不能作为模型已读证据。"""
         with self.sessions.begin() as session:
+            lock_control(session)
             segment = session.get(SourceSegment, segment_id)
             if segment is None or segment.status != "ready" or not segment.text.strip():
                 raise ValueError("source segment is unavailable or failed to parse")
+            version = session.get(SourceVersion, segment.source_version_id)
+            claim_source(session, version.source_id, root_id=root_id, allow_removed=True)
+            self._verified_body(session, version)
             evidence = Evidence(
                 root_id=root_id,
                 source_segment_id=segment.id,
@@ -295,6 +369,7 @@ class SourceService:
             segment = session.get(SourceSegment, segment_id)
             if segment is None:
                 raise KeyError("source segment not found")
+            self._verified_body(session, session.get(SourceVersion, segment.source_version_id))
             return {
                 "id": segment.id,
                 "source_version_id": segment.source_version_id,
@@ -418,10 +493,12 @@ class SourceService:
             version = session.get(SourceVersion, version_id)
             if version is None:
                 raise KeyError("source version not found")
+            if not version.storage_key:
+                raise ValueError("source has no retained original; use saved body")
             path = (self.storage_root / version.storage_key).resolve()
             if not path.is_relative_to(self.storage_root):
                 raise PermissionError("source path outside project storage")
             data = path.read_bytes()
-            if hashlib.sha256(data).hexdigest() != version.content_hash:
+            if hashlib.sha256(data).hexdigest() != (version.original_hash or version.content_hash):
                 raise ValueError("source integrity check failed")
             return data, version.mime_type

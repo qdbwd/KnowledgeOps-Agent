@@ -66,6 +66,12 @@ def test_live_revoke_then_reenable_does_not_reoffer_to_old_run(runtime_services)
 )
 def test_withdraw_after_model_choice_blocks_original_handler(runtime_services, name, identifier):
     module, context, run = setup_run(runtime_services)
+    if name == 'task':
+        from knowledgeops_agent.harness.subagents.registry import SubagentRegistry
+        SubagentRegistry(context.jobs.sessions).create(
+            name='researcher', display_name='测试研究者', description='显式配置测试角色',
+            system_prompt='只读材料。', tools=['read_source'], skills=[], enabled=True,
+        )
     service = ToolPolicyService(context.jobs.sessions)
     segment = context.sources.get_source(run["input"]["source_ids"][0])["segments"][0]["id"]
     args = {

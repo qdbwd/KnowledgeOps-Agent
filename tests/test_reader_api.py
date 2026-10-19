@@ -22,14 +22,37 @@ def test_workspace_preview_keeps_delivery_boundary(client, services, tmp_path):
         assert client.get('/api/workspace/preview', params={'path': path}).status_code in {403, 404, 409, 422}
 
 
-def test_source_full_content_and_idempotent_delete_http(client):
+def test_source_full_content_and_idempotent_delete_http(client, services):
     body = '# 文档\n\n' + '原文' * 5000 + '\n\n最后一段'
     result = client.post('/api/sources/text', json={'title': '全文HTTP验收', 'content': body})
     assert result.status_code == 201
     source = result.json()
     content_path = f"/api/source-versions/{source['version_id']}/content"
     assert client.get(content_path).json()['text'] == body
-    assert client.delete(f"/api/sources/{source['id']}").status_code == 200
-    assert client.delete(f"/api/sources/{source['id']}").status_code == 200
+    # 移除材料后保留的是实际被独立资产引用的版本，不再无条件保留所有旧正文。
+    reference = client.post('/api/sources/text', json={
+        'title': '引用固定正文', 'content': f"[全文](/source-versions/{source['version_id']})",
+    })
+    assert reference.status_code == 201
+    for _ in range(100):
+        if services.lifecycle.retained.catalog.step(limit=100)['complete']:
+            break
+    else:
+        raise AssertionError('reference catalog did not finish')
+    preview = client.get(f"/api/assets/source/{source['id']}/deletion-preview").json()
+    assert preview['eligible'] and preview['counts'] == {'delete': 0, 'keep': 1}
+    path = f"/api/sources/{source['id']}"
+    assert client.delete(path).status_code == 422
+    accepted = client.request('DELETE', path, json={'expected_version': preview['version']})
+    assert accepted.status_code == 202
+    replay = client.request('DELETE', path, json={'expected_version': preview['version']})
+    assert replay.status_code == 202 and replay.json()['id'] == accepted.json()['id']
+    for _ in range(10):
+        services.lifecycle.advance(accepted.json()['id'])
+        state = client.get(f"/api/asset-deletions/{accepted.json()['id']}").json()
+        if state['status'] == 'completed':
+            break
+        assert state['status'] != 'failed', state
+    assert state['status'] == 'completed' and state['summary']['kept'] == 1
     assert source['id'] not in [item['id'] for item in client.get('/api/sources').json()]
     assert client.get(content_path).json()['text'] == body

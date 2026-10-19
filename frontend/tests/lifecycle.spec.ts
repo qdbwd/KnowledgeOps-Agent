@@ -1,5 +1,23 @@
 import { expect, test } from '@playwright/test';
 
+test('删除预览说明临时资产与保留资产，完成后实际释放无依赖材料', async ({ page, request }) => {
+  test.setTimeout(120000);
+  const seeded = await (await request.post('/api/__offline/lifecycle-seed?temporary=true')).json();
+  await page.goto(`/chat/${seeded.id}/deletion`);
+  await expect(page.getByText('将回收：1 个材料版本、1 份临时草稿。', { exact: true })).toBeVisible();
+  await expect(page.getByText(/继续保留：1 个材料版本、1 份草稿/)).toBeVisible();
+  await page.screenshot({ path: '../artifacts/verification/increment-asset-deletion-desktop.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: '../artifacts/verification/increment-asset-deletion-mobile.png', fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole('button', { name: '确认删除会话' }).click();
+  await expect(page.getByRole('heading', { name: '正在清理会话' })).toBeVisible();
+  expect(await (await request.post(`/api/__offline/lifecycle/${seeded.id}`)).json()).toMatchObject({ status: 'completed' });
+  await expect(page.getByRole('heading', { name: '会话已删除', exact: true })).toBeVisible();
+  expect((await request.get(`/api/sources/${seeded.temporary_source_id}`)).status()).toBe(404);
+  expect((await request.get(`/api/changesets/${seeded.temporary_draft_id}`)).status()).toBe(404);
+});
+
 test('chat deletion survives navigation and preserves independent source and draft', async ({ page }, info) => {
   test.setTimeout(120000);
   const errors: string[] = [];

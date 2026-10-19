@@ -1,6 +1,7 @@
 """配置预览必须与真实装配一致，且不能因查看而创建任务或连接外部服务。"""
 
 import pytest
+from langchain_core.utils.function_calling import convert_to_openai_function
 from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import func, select
 from test_api_worker import client as _client
@@ -58,6 +59,11 @@ def test_global_disable_explains_skill_dependency_and_role_selection(client, ser
     "knowledge_only,auxiliary,delegation", [(False, False, True), (True, True, False)]
 )
 def test_preview_matches_real_root_graph(client, services, knowledge_only, auxiliary, delegation):
+    if delegation:
+        SubagentRegistry(services.sessions).create(
+            name='preview-role', display_name='预览角色', description='显式启用用于核对装配',
+            system_prompt='只分析已分配问题。', tools=[], skills=[], enabled=True,
+        )
     ToolPolicyService(services.sessions).update(
         expected_revision=0,
         enabled={"builtin:list_materials": False},
@@ -80,6 +86,18 @@ def test_preview_matches_real_root_graph(client, services, knowledge_only, auxil
     assert {row["name"] for row in result["tools"] if row["available"]} == set(
         graph.nodes["tools"].bound.tools_by_name
     )
+    for name, actual in graph.nodes["tools"].bound.tools_by_name.items():
+        item = next(row for row in result["tools"] if row["name"] == name)
+        detail = client.get("/api/tools/detail", params={"tool_id": item["id"]})
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["definition"]["parameters"] == convert_to_openai_function(actual)["parameters"]
+
+
+def test_preview_does_not_claim_skills_available_when_all_globally_disabled(client, services):
+    names = [row["name"] for row in client.get("/api/skills").json() if row["available"]]
+    ToolPolicyService(services.sessions).update(expected_revision=0, skill_enabled={name: False for name in names})
+    result = preview(client)
+    assert result["skills"]["available"] is False
 
 
 def test_child_groups_ignore_main_selection_but_respect_global_and_task_limits(client, services):

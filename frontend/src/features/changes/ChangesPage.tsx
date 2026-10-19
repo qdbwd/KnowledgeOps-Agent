@@ -93,6 +93,15 @@ export function ChangePage() {
       </Link>
       <PageTitle eyebrow="READ BEFORE PUBLISHING" title="审阅知识变更" />
       <ErrorBox message={error || result.error} />
+      {draft?.retention_intent === 'temporary' && draft.status !== 'published' && (
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-white p-4">
+          <span className="text-sm text-muted">这份草稿属于原会话。独立保留后，删除会话也会保留草稿。</span>
+          <Button className="secondary button-secondary" disabled={busy} onClick={() => {
+            void action(`/api/changesets/${draft.id}/save`, { expected_revision: draft.revision }).catch(() => {});
+          }}>独立保留草稿</Button>
+        </div>
+      )}
+      {draft?.retention_intent === 'saved' && <p className="text-sm text-muted">已独立保留，可在“变更与运行”中继续编辑。</p>}
       {result.error ? null : result.loading ? (
         <Loading />
       ) : (

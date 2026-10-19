@@ -141,7 +141,11 @@ def prepare_accounting(engine: Engine) -> None:
 
 def upgrade_accounting_lifecycle(engine: Engine, *, scope: str = ACCOUNTING_SCOPE) -> dict:
     """显式增加根任务封闭字段；不封闭旧根、不删除请求，也不改变已有预算。"""
-    if engine.url.database not in {"knowledgeops_accounting", "knowledgeops_test"}:
+    # 恢复演练须能升级同批回执副本；只允许backup.ps1生成的精确隔离命名，
+    # 不能为了读取旧列而把恢复连接切回正常账本。
+    if engine.url.database not in {"knowledgeops_accounting", "knowledgeops_test"} and not re.fullmatch(
+        r"knowledgeops_restore_[0-9a-f]{12}_accounting", engine.url.database or ""
+    ):
         raise ValueError("accounting migration requires the isolated accounting database")
     with engine.begin() as connection:
         connection.execute(text("SELECT pg_advisory_xact_lock(748616001)"))

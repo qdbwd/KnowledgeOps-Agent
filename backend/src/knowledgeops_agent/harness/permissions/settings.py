@@ -15,13 +15,15 @@ from knowledgeops_agent.persistence.models import Conversation, ExecutionRule, R
 class RuntimeSettingsUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
     expected_revision: int = Field(ge=0)
-    permission_mode: Literal["ask", "auto"] | None = None
+    permission_mode: Literal["ask", "auto_review"] | None = None
     reasoning_effort: str | None = Field(default=None, min_length=1, max_length=40)
 
 
 def settings_view(conversation: Conversation) -> dict:
+    mode = conversation.runtime_settings.get("permission_mode", "ask")
     return {
-        "permission_mode": conversation.runtime_settings.get("permission_mode", "ask"),
+        # 旧备份或尚未完成数据升级时也不能恢复旧自动执行语义。
+        "permission_mode": "ask" if mode == "auto" else mode,
         "reasoning_effort": conversation.runtime_settings.get("reasoning_effort", "default"),
         "revision": conversation.runtime_revision,
     }

@@ -10,6 +10,17 @@ import type { ChangeSet, Knowledge } from '../types/types';
 afterEach(cleanup);
 
 describe('reading and review boundaries', () => {
+  it('opens immutable deliveries in their independent reader', () => {
+    render(
+      <MemoryRouter>
+        <Markdown text="[交付文件](/api/deliveries/00000000-0000-0000-0000-000000000001/download#L3)" />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('link', { name: '交付文件' })).toHaveAttribute(
+      'href',
+      '/deliveries/00000000-0000-0000-0000-000000000001#L3',
+    );
+  });
   it('opens workspace artifacts in the full document reader', () => {
     render(
       <MemoryRouter>

@@ -6,8 +6,8 @@ test('context usage comes from the conversation request and remains readable on 
   const runs = await (await page.request.get('/api/runs')).json();
   const run = runs.find((item: { task: string }) => item.task === '整理共享预算规则，先预览');
   await page.goto(`/chat/${run.conversation_id}`);
-  await expect(page.getByText('上下文 50%', { exact: true })).toBeVisible();
-  await page.getByText('上下文 50%', { exact: true }).click();
+  await expect(page.locator('summary[aria-label="上下文 50%"]')).toBeVisible();
+  await page.locator('summary[aria-label="上下文 50%"]').click();
   await expect(page.getByText(/最近一次模型输入：131,072 \/ 262,144/)).toBeVisible();
   await expect(page.getByText(/235,929 tokens 时尝试压缩/)).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
@@ -22,8 +22,8 @@ test('context usage comes from the conversation request and remains readable on 
     await page.request.post('/api/conversations', { data: { title: '独立上下文占比' } })
   ).json();
   await page.goto(`/chat/${fresh.id}`);
-  await expect(page.getByText('上下文 —', { exact: true })).toBeVisible();
-  await page.getByText('上下文 —', { exact: true }).click();
+  await expect(page.locator('summary[aria-label="上下文 —"]')).toBeVisible();
+  await page.locator('summary[aria-label="上下文 —"]').click();
   await expect(page.getByText('尚无模型输入记录。', { exact: true })).toBeVisible();
   await expect(page.getByText('上下文 50%', { exact: true })).toHaveCount(0);
 });
@@ -32,6 +32,7 @@ test('preferences persist edits, revocation and revision history through reload'
   page,
 }) => {
   await page.goto('/preferences');
+  await page.getByLabel('类别（可选）').selectOption('memory-category-preference');
   await page.getByLabel('新增长期记忆').fill('浏览器检查：解释新概念时先给一个具体例子。');
   const created = page.waitForResponse(
     (r) => r.url().endsWith('/api/memories') && r.request().method() === 'POST',
@@ -55,12 +56,11 @@ test('preferences persist edits, revocation and revision history through reload'
   await expect(field).toBeDisabled();
 });
 
-test('MCP starts empty and real discovery does not grant automatic permission', async ({
+test('new MCP discovery does not grant automatic permission', async ({
   page,
 }) => {
   test.setTimeout(60000);
   await page.goto('/mcp');
-  await expect(page.getByText('尚未添加 MCP 服务', { exact: true })).toBeVisible();
   await page.getByLabel('服务名称', { exact: true }).fill('浏览器协议夹具');
   await page.getByLabel('非秘密配置 JSON', { exact: true }).fill(
     JSON.stringify({
@@ -71,29 +71,34 @@ test('MCP starts empty and real discovery does not grant automatic permission', 
   );
   await page.getByRole('button', { name: '添加连接', exact: true }).click();
   await expect(page.getByRole('heading', { name: '浏览器协议夹具' })).toBeVisible();
-  await page.getByRole('button', { name: '测试连接并发现工具' }).click();
-  await expect(page.getByLabel('调用许可')).toHaveValue('deny', { timeout: 45000 });
-  await page.getByLabel('调用许可').selectOption('read');
-  await page.getByRole('button', { name: '保存工具许可' }).click();
-  await expect(page.getByText(/修订 3/)).toBeVisible();
-  await page.getByRole('button', { name: '启用连接', exact: true }).click();
-  await expect(page.getByRole('button', { name: '停用连接', exact: true })).toBeVisible();
+  // 其他用例可以已经登记自己的连接；只管理本例新建的那一份。
+  const card = page.locator('section.card').filter({
+    has: page.getByRole('heading', { name: '浏览器协议夹具', exact: true }),
+  });
+  await card.getByRole('button', { name: '测试连接并发现工具' }).click();
+  await expect(card.getByLabel('调用许可')).toHaveValue('deny', { timeout: 45000 });
+  await card.getByLabel('调用许可').selectOption('read');
+  await card.getByRole('button', { name: '保存工具许可' }).click();
+  await expect(card.getByText(/修订 3/)).toBeVisible();
+  await card.getByRole('button', { name: '启用连接', exact: true }).click();
+  await expect(card.getByRole('button', { name: '停用连接', exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByLabel('调用许可')).toHaveValue('read');
+  await expect(card.getByLabel('调用许可')).toHaveValue('read');
   const exported = await page.request.get(
-    (await page.getByRole('link', { name: '导出非秘密配置' }).getAttribute('href'))!,
+    (await card.getByRole('link', { name: '导出非秘密配置' }).getAttribute('href'))!,
   );
   const body = await exported.json();
   expect(body.config.command).toBe('/workspace/.venv/bin/python');
   expect(body.permissions).toBeUndefined();
-  await page.getByRole('button', { name: '停用连接', exact: true }).click();
-  await expect(page.getByRole('button', { name: '启用连接', exact: true })).toBeVisible();
+  await card.getByRole('button', { name: '停用连接', exact: true }).click();
+  await expect(card.getByRole('button', { name: '启用连接', exact: true })).toBeVisible();
 });
 
 test('long run history can reach the final event and export every page', async ({ page }) => {
   const runs = await (await page.request.get('/api/runs')).json();
   const run = runs.find((item: { task: string }) => item.task === '整理共享预算规则，先预览');
   await page.goto(`/runs/${run.id}`);
+  await page.getByRole('button', { name: '诊断', exact: true }).click();
   await expect(page.getByText('事件 1–200 / 1004')).toBeVisible();
   for (let after = 200; after <= 1000; after += 200) {
     await page.getByRole('button', { name: '下一页事件' }).click();
@@ -221,7 +226,7 @@ test('queued chat survives refresh and can be cancelled and explicitly resumed',
   await expect(page.locator('.message.user')).toHaveCount(1);
   await page.getByRole('button', { name: '取消排队', exact: true }).click();
   await expect(page.getByText('已取消', { exact: true })).toBeVisible();
-  await page.getByRole('link', { name: '运行记录 →' }).click();
+  await page.getByRole('link', { name: '任务详情 →' }).click();
   await page.getByRole('button', { name: '确认恢复任务' }).click();
   await expect(page.getByText('排队中', { exact: true })).toBeVisible();
   await expect(page.getByText('确认恢复任务', { exact: true })).toHaveCount(0);
@@ -231,9 +236,11 @@ test('preserved context is visible and can be paged without losing the run link'
   page,
 }) => {
   // 本例自己建立跨页条件，不能假定其他场景结束后种子仍位于最新20条里。
-  const padding = await (await page.request.post('/api/conversations', {
-    data: { title: '运行列表分页夹具' },
-  })).json();
+  const padding = await (
+    await page.request.post('/api/conversations', {
+      data: { title: '运行列表分页夹具' },
+    })
+  ).json();
   for (let index = 0; index < 21; index++) {
     const response = await page.request.post(`/api/conversations/${padding.id}/messages`, {
       data: { content: `分页填充 ${index}`, request_key: crypto.randomUUID() },
@@ -251,13 +258,14 @@ test('preserved context is visible and can be paged without losing the run link'
     await expect.poll(() => page.locator('a.list-card').count()).toBeGreaterThan(before);
   }
   await target.click();
+  await page.getByRole('button', { name: '诊断', exact: true }).click();
   await page.getByRole('link', { name: /context_original/ }).click();
   await expect(page.locator('.source-text')).toContainText('分页原文证据');
   await page.getByRole('button', { name: '下一段' }).click();
   await expect(page.getByText(/字符 6000/)).toBeVisible();
   await expect(page.getByRole('button', { name: '下一段' })).toBeDisabled();
   await page.getByRole('link', { name: '返回运行详情', exact: false }).click();
-  await expect(page.getByRole('heading', { name: '运行详情' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '任务详情', exact: true })).toBeVisible();
 });
 
 test('empty search, failed request, and narrow viewport have usable states', async ({ page }) => {

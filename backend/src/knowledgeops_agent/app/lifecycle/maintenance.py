@@ -5,7 +5,12 @@ from datetime import timedelta
 from sqlalchemy import delete, or_, select
 from sqlalchemy.dialects.postgresql import insert
 
+from knowledgeops_agent.app.lifecycle.configuration_history import (
+    KINDS,
+    ConfigurationHistoryCleaner,
+)
 from knowledgeops_agent.app.lifecycle.details import RunDetailCleaner
+from knowledgeops_agent.app.lifecycle.installed_content import collect_installations
 from knowledgeops_agent.app.lifecycle.materials import RunRetentionCleaner
 from knowledgeops_agent.app.lifecycle.retained import root_history_scopes
 from knowledgeops_agent.app.lifecycle.workspace import refresh_workspace_references
@@ -20,16 +25,22 @@ SCAN_STATE = "lifecycle-scan-v1"
 class LifecycleMaintenance:
     def __init__(self, details, *, enabled=True, scan_interval_seconds=86400, job_retention_days=30, run_service=None,
                  temporary_roots=None, temporary_grace_seconds=86400):
+        from knowledgeops_agent.app.lifecycle.asset_cleanup import AssetCleaner
         from knowledgeops_agent.app.lifecycle.conversations import ConversationCleaner
+        from knowledgeops_agent.app.lifecycle.legacy_html import LegacyHtmlCleaner
         from knowledgeops_agent.app.runs.service import RunService
 
         self.details, self.retained = details, RunRetentionCleaner(details)
         self.conversations = ConversationCleaner(details, run_service or RunService(details.sessions))
         self.sessions, self.now, self.jobs = details.sessions, details.now, details.jobs
+        self.assets = AssetCleaner(self.sessions, self.jobs, batch_size=details.batch_size, eligibility=details.eligibility)
+        self.legacy_html = LegacyHtmlCleaner(self.sessions, self.jobs)
         self.enabled, self.interval, self.job_retention = enabled, scan_interval_seconds, job_retention_days
         store = self.sessions.kw.get("info", {}).get("file_store")
         self.temporary_roots = list(dict.fromkeys(temporary_roots if temporary_roots is not None else [store.root] if store else []))
         self.temporary_grace = temporary_grace_seconds
+        self.configuration = ConfigurationHistoryCleaner(
+            self.sessions, now=self.now, retention_days=details.eligibility.retention_days)
 
     @classmethod
     def from_services(cls, services):
@@ -56,7 +67,8 @@ class LifecycleMaintenance:
 
     def tick(self) -> dict:
         """每次最多推进一个删除步骤和一个扫描批次；关闭自动扫描不遗弃已接受的作业。"""
-        result = {"job": self.advance()}
+        # 引用目录是删除预览的前提，关闭自动回收不应使人工删除永久等待回填。
+        result = {"references": self.retained.catalog.step(limit=self.details.batch_size), "job": self.advance()}
         if self.enabled:
             result["scan"] = self.scan_step()
             result["jobs_expired"] = self.jobs.prune_completed(retention_days=self.job_retention, limit=self.details.batch_size)
@@ -64,7 +76,7 @@ class LifecycleMaintenance:
 
     def advance(self, identity: str | None = None):
         with self.sessions() as session:
-            query = select(db.CleanupJob).where(db.CleanupJob.target_kind.in_(["run", "conversation"]), db.CleanupJob.status != "completed",
+            query = select(db.CleanupJob).where(db.CleanupJob.target_kind.in_(["run", "conversation", "source", "delivery", "draft", "html_original"]), db.CleanupJob.status != "completed",
                 db.CleanupJob.next_attempt_at <= self.now(),
                 or_(db.CleanupJob.claim_until.is_(None), db.CleanupJob.claim_until <= self.now()))
             if identity:
@@ -73,6 +85,10 @@ class LifecycleMaintenance:
             if row is None:
                 return None
             identity, phase = row.id, row.phase
+        if phase in self.assets.PHASES:
+            return self.assets.step(identity=identity)
+        if phase in self.legacy_html.PHASES:
+            return self.legacy_html.step(identity=identity)
         if phase in self.conversations.PHASES:
             return self.conversations.step(identity=identity)
         if phase in self.details.PHASES:
@@ -130,12 +146,43 @@ class LifecycleMaintenance:
                         db.ArtifactRetentionReference.owner_kind.in_(["run", "run_input", "checkpoint"]),
                         db.ArtifactRetentionReference.owner_id.in_(closed),
                     ))
+                    session.execute(delete(db.AssetReference).where(
+                        db.AssetReference.owner_kind.in_(["run", "run_input", "checkpoint"]), db.AssetReference.owner_id.in_(closed),
+                    ))
                 cursor = {"phase": "reconcile"}
             elif phase == "reconcile":
                 ids, more = self._roots("expired", cursor.get("after"))
                 for identity in ids:
                     self._reconcile(identity)
-                cursor = {"phase": "reconcile", "after": ids[-1]} if more else {"phase": "temporary"}
+                cursor = {"phase": "reconcile", "after": ids[-1]} if more else {"phase": "assets"}
+            elif phase == "assets":
+                extra = self.assets.reconcile(after=cursor.get("after"), limit=self.details.batch_size)
+                cursor = {"phase": "assets", "after": extra["next_cursor"]} if (
+                    extra.get("waiting_for_references") or extra["next_cursor"]
+                ) else {"phase": "content"}
+            elif phase == "content":
+                index = int(cursor.get("root", 0))
+                if index < len(self.temporary_roots):
+                    with self.sessions.begin() as session:
+                        lock_control(session)
+                        extra = collect_installations(session, self.temporary_roots[index], now=self.now(),
+                            grace_seconds=self.temporary_grace, after=cursor.get("after"), limit=self.details.batch_size)
+                    cursor = {"phase": "content", "root": index, "after": extra["next_cursor"]} if (
+                        extra["busy"] or extra["next_cursor"]
+                    ) else {"phase": "content", "root": index + 1}
+                    if extra["busy"]:
+                        next_time += timedelta(seconds=self.jobs.retry_seconds)
+                if int(cursor.get("root", 0)) >= len(self.temporary_roots):
+                    cursor = {"phase": "configuration", "kind": KINDS[0]}
+            elif phase == "configuration":
+                kind = cursor.get("kind", KINDS[0])
+                extra = self.configuration.step(kind, after=cursor.get("after"), limit=self.details.batch_size)
+                if extra["next_cursor"]:
+                    cursor = {"phase": "configuration", "kind": kind, "after": extra["next_cursor"]}
+                elif KINDS.index(kind) + 1 < len(KINDS):
+                    cursor = {"phase": "configuration", "kind": KINDS[KINDS.index(kind) + 1]}
+                else:
+                    cursor = {"phase": "temporary"}
             elif phase == "temporary":
                 index = int(cursor.get("root", 0))
                 if index < len(self.temporary_roots):

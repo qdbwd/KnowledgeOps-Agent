@@ -37,6 +37,10 @@ build/
 .DS_Store
 Thumbs.db
 artifacts/
+# Local engineering documents and evaluation materials are not published.
+/docs/
+/evaluation/
+/evalution/
 # Root run artifacts only; app/runs and features/runs are application source.
 /runs/
 node_modules/
@@ -51,7 +55,5 @@ frontend/test-results/
 !/data/agent-workspace/
 /data/agent-workspace/*
 !data/agent-workspace/README.md
-# Synthetic PDF fixtures are generated locally; keep their generator in Git.
-/evaluation/materials/*.pdf
 # Early learning exercises stay local and are not part of the published application.
 /exercises/

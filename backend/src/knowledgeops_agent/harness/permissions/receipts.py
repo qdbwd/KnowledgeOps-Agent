@@ -65,10 +65,16 @@ class CommandJournal:
 
     def start(self, call: dict, *, workspace: str, cwd: str) -> dict:
         """检查/扣额/记 running 同事务完成；在提交后才允许调用真实子进程。"""
+        from knowledgeops_agent.harness.permissions.approvals import (
+            ApprovalWaiting,
+            ExecutionApprovals,
+        )
+
         context = self.context
         context.jobs.guard(context.run_id, worker_id=context.worker_id)
         fingerprint = execution_fingerprint(call, workspace=workspace, cwd=cwd)
         unknown = False
+        pending = False
         ticket: dict = {}
         with context.jobs.sessions.begin() as session:
             root = context.jobs._locked(session, context.root_id)
@@ -102,11 +108,17 @@ class CommandJournal:
                     )
                 unknown = True
             else:
+                context.jobs.execution_guard(session, context.run_id, context.worker_id)
                 if root.authority_epoch != root.applied_authority_epoch:
                     raise PermissionError("用户指令已变化，不能开始旧命令")
                 if row and row.authority_epoch != root.authority_epoch:
                     raise PermissionError("命令重试授权已因用户指令变化而失效")
-                if row is None:
+                pending = not ExecutionApprovals(context).validate_command_execution(
+                    session, call, workspace=workspace, cwd=cwd)
+                if pending:
+                    # 不创建running回执、不扣工具预算；提交原动作的新待办状态。
+                    pass
+                elif row is None:
                     row = CommandExecution(
                         root_id=context.root_id,
                         run_id=context.run_id,
@@ -131,16 +143,19 @@ class CommandJournal:
                     row.updated_at = utcnow()
                 else:
                     raise ValueError("命令回执状态不允许执行")
-                context.jobs._reserve_tool(
-                    session, context.run_id, "execute", call_key=f"{call['id']}:{row.attempt}"
-                )
-                session.flush()
-                ticket = {"id": row.id, "attempt": row.attempt, "cached": False, "result": None}
+                if not pending:
+                    context.jobs._reserve_tool(
+                        session, context.run_id, "execute", call_key=f"{call['id']}:{row.attempt}"
+                    )
+                    session.flush()
+                    ticket = {"id": row.id, "attempt": row.attempt, "cached": False, "result": None}
         # 必须先提交 unknown 状态再抛出控制信号，不能让异常回滚这条事实。
         if unknown:
             raise ExecutionUnknown(
                 "命令可能已经执行，但结果未保存。请核对原操作后选择跳过或明确重试。"
             )
+        if pending:
+            raise ApprovalWaiting("执行前权限或规则已变化，请重新确认这一次命令；命令尚未启动。")
         return ticket
 
     def finish(self, ticket: dict, message: ToolMessage) -> None:

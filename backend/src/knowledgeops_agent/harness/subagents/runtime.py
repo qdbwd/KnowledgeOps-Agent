@@ -17,6 +17,10 @@ from knowledgeops_agent.harness.tools.catalog import local_tool_names, role_tool
 # 真实工具调用ID只有ToolRuntime提供；上游task不会把它传给Runnable。
 # 每个调用线程独立设置/清理，不能用模型生成的任务文本或trace ID充当幂等键。
 _dispatch: ContextVar[tuple | None] = ContextVar("knowledgeops_subagent_dispatch", default=None)
+DELEGATION_TASK_DESCRIPTION = (
+    "委派一个独立只读子任务。可在同轮发出最多两个task调用，"
+    "简单问题不必委派。可选角色及能力：\n{available_agents}"
+)
 
 
 class SubagentDispatchMiddleware(AgentMiddleware):
@@ -126,9 +130,6 @@ def build_delegation_middleware(context, backend) -> list:
                 "每次最多并行两个，共享本任务预算、不可递归、不可发布知识。"
                 "按返回的status/error判断完成，不能把失败或部分报告冒作完成。"
             ),
-            task_description=(
-                "委派一个独立只读子任务。可在同轮发出最多两个task调用，"
-                "简单问题不必委派。可选角色及能力：\n{available_agents}"
-            ),
+            task_description=DELEGATION_TASK_DESCRIPTION,
         ),
     ]

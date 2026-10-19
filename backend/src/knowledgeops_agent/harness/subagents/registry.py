@@ -16,12 +16,17 @@ from sqlalchemy import func, select, text
 
 from knowledgeops_agent.harness.runtime.resources import content_hash, load_skills
 from knowledgeops_agent.harness.skills.packages import is_skill_entry
+from knowledgeops_agent.harness.skills.presentation import present_skill
 from knowledgeops_agent.harness.tools.catalog import (
-    expand_groups,
-    group_options,
     role_inherits_mcp,
-    selected_groups,
     tool_options,
+)
+from knowledgeops_agent.harness.tools.configuration import lock_configuration
+from knowledgeops_agent.harness.tools.groups import (
+    expand_group_ids,
+    normalize_group_ids,
+    read_groups,
+    select_groups,
 )
 from knowledgeops_agent.persistence.models import SubagentDefinition, SubagentDefinitionRevision
 
@@ -29,16 +34,16 @@ BUILTIN_ID = "builtin-researcher"
 MAX_CUSTOM_DEFINITIONS = 20
 
 
-def options() -> dict:
+def options(session=None) -> dict:
     """目录来自已有工具名称和项目 Skill 元数据，不读取任意文件或连接外部服务。"""
     skills = []
     for row in load_skills():
         if is_skill_entry(row):
             metadata = yaml.safe_load(row["content"].split("---", 2)[1])
-            skills.append({"name": row["name"], "description": metadata["description"]})
+            skills.append(present_skill({"name": row["name"], "description": metadata["description"]}))
     return {
         "tools": tool_options(child_only=True),
-        "tool_groups": group_options(child_only=True),
+        "tool_groups": read_groups(session, child_only=True),
         "skills": skills,
     }
 
@@ -63,12 +68,13 @@ def _selected_names(values: list[str], kind: str) -> list[str]:
     return selected
 
 
-def _resolve_tools(tools: list[str], groups: list[str] | None) -> list[str]:
+def _resolve_tools(tools: list[str], groups: list[str] | None, session=None) -> list[str]:
     """只在选择发生变化时展开组，保留显式工具；普通提示词编辑不能自动扩权。"""
     names = {row["id"]: row["name"] for row in tool_options(child_only=True)}
+    select_groups(groups or [], session, child_only=True)
     return list(
         dict.fromkeys(
-            [*tools, *(names[key] for key in expand_groups(groups or [], child_only=True))]
+            [*tools, *(names[key] for key in expand_group_ids(groups or [], session, child_only=True))]
         )
     )
 
@@ -85,13 +91,6 @@ class SubagentCreate(BaseModel):
     skills: list[str] = Field(default_factory=list, max_length=100)
     enabled: bool = False
 
-    @field_validator("name")
-    @classmethod
-    def custom_name(cls, value: str) -> str:
-        if value == "researcher":
-            raise ValueError("researcher是不可覆盖的内置角色")
-        return value
-
     @field_validator("display_name", "description", "system_prompt")
     @classmethod
     def required_text(cls, value: str) -> str:
@@ -105,7 +104,7 @@ class SubagentCreate(BaseModel):
     @field_validator("tool_groups")
     @classmethod
     def groups(cls, value: list[str] | None) -> list[str] | None:
-        return None if value is None else selected_groups(value, child_only=True)
+        return None if value is None else normalize_group_ids(value)
 
 
 class SubagentUpdate(BaseModel):
@@ -143,7 +142,7 @@ class SubagentUpdate(BaseModel):
     @field_validator("tool_groups")
     @classmethod
     def groups(cls, value: list[str] | None) -> list[str] | None:
-        return None if value is None else selected_groups(value, child_only=True)
+        return None if value is None else normalize_group_ids(value)
 
 
 # 已发布的内置模板是冻结协议：目录增删不改变旧版本，修改模板须新增修订并
@@ -180,7 +179,7 @@ _BUILTIN_REVISIONS: dict[int, dict] = {
 
 
 def builtin_definition(revision: int | None = None) -> dict:
-    """新任务取最新模板，恢复按原修订读取；返回副本，避免调用方改写历史。"""
+    """仅服务历史读取/恢复；新任务不再自动安装内置角色。"""
     selected = max(_BUILTIN_REVISIONS) if revision is None else revision
     return deepcopy(_BUILTIN_REVISIONS[selected])
 
@@ -208,25 +207,44 @@ def definition_view(row: SubagentDefinition) -> dict:
 
 def active_definitions(session) -> list[dict]:
     return [
-        builtin_definition(),
-        *[
-            definition_view(row)
-            for row in session.scalars(
-                select(SubagentDefinition)
-                .where(SubagentDefinition.enabled.is_(True), SubagentDefinition.deleted.is_(False))
-                .order_by(SubagentDefinition.created_at, SubagentDefinition.id)
-            )
-        ],
+        definition_view(row)
+        for row in session.scalars(
+            select(SubagentDefinition)
+            .where(SubagentDefinition.enabled.is_(True), SubagentDefinition.deleted.is_(False))
+            .order_by(SubagentDefinition.created_at, SubagentDefinition.id)
+        )
     ]
+
+
+def role_templates() -> list[dict]:
+    """编辑起点，不是活动角色；显式保存后沿普通目录生成独立身份与修订。"""
+    catalog = options()
+    allowed_tools = {row["name"] for row in catalog["tools"]}
+    allowed_skills = {row["name"] for row in catalog["skills"]}
+    fields = {
+        "name": "researcher",
+        "display_name": "只读研究者",
+        "description": "按需读取材料，研究独立问题并返回证据与未决项。",
+        "system_prompt": "完成分配的研究问题，核对来源与适用条件，返回简明结论、引用和未决项。需要材料时先检索再读取；不维护或发布知识，不扩大任务范围。",
+        "tools": [name for name in (
+            "search_knowledge", "read_knowledge", "list_materials", "inspect_material",
+            "read_source", "read_tool_result", "search_web", "read_web",
+        ) if name in allowed_tools],
+        "tool_groups": [],
+        "skills": [name for name in ("evidence-check",) if name in allowed_skills],
+        "enabled": False,
+    }
+    return [{"id": "researcher", "display_name": fields["display_name"],
+             "description": fields["description"], "fields": fields}]
 
 
 class SubagentRegistry:
     def __init__(self, sessions):
         self.sessions = sessions
 
-    @staticmethod
-    def options() -> dict:
-        return options()
+    def options(self) -> dict:
+        with self.sessions() as session:
+            return options(session)
 
     @staticmethod
     def _save(session, row) -> None:
@@ -240,15 +258,12 @@ class SubagentRegistry:
     def list(self) -> builtins.list[dict]:
         with self.sessions() as session:
             return [
-                builtin_definition(),
-                *[
-                    definition_view(row)
-                    for row in session.scalars(
-                        select(SubagentDefinition)
-                        .where(SubagentDefinition.deleted.is_(False))
-                        .order_by(SubagentDefinition.created_at, SubagentDefinition.id)
-                    )
-                ],
+                definition_view(row)
+                for row in session.scalars(
+                    select(SubagentDefinition)
+                    .where(SubagentDefinition.deleted.is_(False))
+                    .order_by(SubagentDefinition.created_at, SubagentDefinition.id)
+                )
             ]
 
     def get(self, identifier: str) -> dict:
@@ -262,8 +277,9 @@ class SubagentRegistry:
 
     def create(self, **fields) -> dict:
         data = SubagentCreate.model_validate(fields).model_dump()
-        data["resolved_tools"] = _resolve_tools(data["tools"], data["tool_groups"])
         with self.sessions.begin() as session:
+            lock_configuration(session)
+            data["resolved_tools"] = _resolve_tools(data["tools"], data["tool_groups"], session)
             # 配置写入很少；数据库表锁使并发创建也不能突破总数，不新增配额基础层。
             session.execute(text("LOCK TABLE subagent_definitions IN SHARE ROW EXCLUSIVE MODE"))
             count = session.scalar(
@@ -284,13 +300,14 @@ class SubagentRegistry:
 
     def update(self, identifier: str, *, expected_revision: int, **fields) -> dict:
         if identifier == BUILTIN_ID:
-            raise PermissionError("内置researcher角色不可编辑、禁用或删除")
+            raise PermissionError("旧researcher定义仅用于历史恢复；请用模板创建可管理的角色")
         data = SubagentUpdate.model_validate(
             {"expected_revision": expected_revision, **fields}
         ).model_dump(exclude_unset=True)
         data.pop("expected_revision")
         deleted = data.pop("deleted", False)
         with self.sessions.begin() as session:
+            lock_configuration(session)
             row = session.scalar(
                 select(SubagentDefinition)
                 .where(SubagentDefinition.id == identifier)
@@ -303,7 +320,7 @@ class SubagentRegistry:
             previous_tools = row.tools if row.resolved_tools is None else row.resolved_tools
             resolved = (
                 _resolve_tools(
-                    data.get("tools", row.tools), data.get("tool_groups", row.tool_groups)
+                    data.get("tools", row.tools), data.get("tool_groups", row.tool_groups), session
                 )
                 if "tools" in data or "tool_groups" in data
                 else list(previous_tools)

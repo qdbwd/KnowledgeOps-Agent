@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 from knowledgeops_agent.app.dependencies import svc
+from knowledgeops_agent.app.routes.assets import router as assets_router
 from knowledgeops_agent.app.routes.changesets import router as changesets_router
 from knowledgeops_agent.app.routes.conversations import router as conversations_router
 from knowledgeops_agent.app.routes.execution import execution_router
@@ -151,6 +152,12 @@ def create_app(*, services: Services | None = None, publish_jobs: bool = True) -
     async def conflict(request: Request, exc: ValueError):
         return JSONResponse({"detail": str(exc)}, status_code=409)
 
+    from knowledgeops_agent.harness.tools.configuration import GroupSelectionError
+
+    @app.exception_handler(GroupSelectionError)
+    async def invalid_group_selection(request: Request, exc: GroupSelectionError):
+        return JSONResponse({"detail": str(exc)}, status_code=422)
+
     @app.exception_handler(PermissionError)
     async def forbidden(request: Request, exc: PermissionError):
         return JSONResponse({"detail": str(exc)}, status_code=403)
@@ -170,6 +177,7 @@ def create_app(*, services: Services | None = None, publish_jobs: bool = True) -
     app.include_router(runs_router)
     app.include_router(memory_router)
     app.include_router(sources_router)
+    app.include_router(assets_router)
     app.include_router(workspace_router)
     app.include_router(knowledge_router)
     app.include_router(changesets_router)

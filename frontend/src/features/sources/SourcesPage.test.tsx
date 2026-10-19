@@ -4,11 +4,60 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
-import { EvidencePage, SourcePage } from './SourcesPage';
+import { EvidencePage, SourcePage, SourcesPage } from './SourcesPage';
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+it('offers original website and saved body separately without an HTML download', async () => {
+  vi.stubGlobal('fetch', async (url: string) => {
+    const source = {
+      id: 'web',
+      title: '网页示例',
+      kind: 'web',
+      origin: 'https://example.org/docs',
+      version: 1,
+      version_id: 'web-v1',
+      body_format: 'markdown',
+      original_available: false,
+      captured_at: '2026-10-19T08:00:00Z',
+      status: 'ready',
+      segments: [],
+    };
+    if (url === '/api/sources') return Response.json([source]);
+    if (url === '/api/deliveries') return Response.json([]);
+    if (url === '/api/asset-deletions') return Response.json([]);
+    if (url === '/api/sources/web') return Response.json(source);
+    if (url === '/api/source-versions/web-v1/content')
+      return Response.json({
+        text: '## 保存的标题\n\n```python\nprint("hello")\n```\n\n| 状态 | 含义 |\n| --- | --- |\n| ready | 完成 |',
+        segments: [],
+      });
+    return Response.json({ detail: 'unexpected URL' }, { status: 404 });
+  });
+  render(
+    <MemoryRouter initialEntries={['/sources']}>
+      <Routes>
+        <Route path="/sources" element={<SourcesPage />} />
+        <Route path="/sources/:sourceId" element={<SourcePage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  expect(await screen.findByRole('link', { name: '网页示例 ↗' })).toHaveAttribute(
+    'href',
+    'https://example.org/docs',
+  );
+  await userEvent.click(screen.getByRole('link', { name: '查看已保存正文' }));
+  expect(await screen.findByRole('heading', { name: '保存的标题' })).toBeVisible();
+  expect(screen.getByRole('table')).toHaveTextContent('完成');
+  expect(screen.getByText('print("hello")')).toBeVisible();
+  expect(screen.queryByRole('link', { name: '查看原件' })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: '原始网页' })).toHaveAttribute(
+    'href',
+    'https://example.org/docs',
+  );
 });
 
 it.each(['evidence', 'source-version'])(

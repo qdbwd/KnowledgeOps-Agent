@@ -39,14 +39,14 @@ test('approval survives refresh and continues the original command once; modes a
     await (await page.request.get('/api/workspace/download?path=work/harness-marker.txt')).text(),
   ).toBe('marker');
   await page.reload();
-  await page.getByRole('combobox', { name: '执行权限' }).selectOption('auto');
+  await page.getByRole('combobox', { name: '执行权限' }).selectOption('auto_review');
   await expect
     .poll(
       async () =>
         (await (await page.request.get(`/api/conversations/${conv.id}/runtime-settings`)).json())
           .permission_mode,
     )
-    .toBe('auto');
+    .toBe('auto_review');
   await page.getByRole('combobox', { name: '思考强度' }).selectOption('low');
   await expect
     .poll(
@@ -56,7 +56,7 @@ test('approval survives refresh and continues the original command once; modes a
     )
     .toBe('low');
   await page.reload();
-  await expect(page.getByRole('combobox', { name: '执行权限' })).toHaveValue('auto');
+  await expect(page.getByRole('combobox', { name: '执行权限' })).toHaveValue('auto_review');
   await expect(page.getByRole('combobox', { name: '思考强度' })).toHaveValue('low');
   await page.getByRole('button', { name: '更多设置与材料' }).click();
   await page.getByRole('link', { name: '命令规则', exact: true }).click();
@@ -84,7 +84,7 @@ test('unknown command result requires explicit resolution and skip never execute
     await page.request.post('/api/conversations', { data: { title: '未知回执核对' } })
   ).json();
   await page.request.patch(`/api/conversations/${conv.id}/runtime-settings`, {
-    data: { expected_revision: 0, permission_mode: 'auto' },
+    data: { expected_revision: 0, permission_mode: 'auto_review' },
   });
   const run = await (
     await page.request.post(`/api/conversations/${conv.id}/messages`, {

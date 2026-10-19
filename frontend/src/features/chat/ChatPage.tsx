@@ -25,6 +25,7 @@ import { useWorkspace } from '../../shared/state/workspace';
 import { ExecutionApprovals } from '../permissions/ExecutionApprovals';
 import { ContextUsage } from './ContextUsage';
 import { ComposerControls } from './ComposerControls';
+import { clearComposerDraft, readComposerDraft, saveComposerDraft } from './composerDraft';
 import { ConversationLearning } from '../learning/LearningPage';
 import { RunPauseControl } from '../runs/RunPauseControl';
 import { RunQuestions } from '../runs/RunQuestions';
@@ -175,7 +176,12 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
       : null,
     version,
   );
-  const materials = useResource<Source[]>('/api/sources', version);
+  const materials = useResource<Source[]>(
+    conversationId
+      ? `/api/sources?conversation_id=${encodeURIComponent(conversationId)}`
+      : '/api/sources',
+    version,
+  );
   const capabilities = useResource<{
     levels: string[];
     default_level: string | null;
@@ -186,7 +192,8 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
     conversationId ? `/api/changesets/page?conversation_id=${conversationId}` : null,
     version,
   );
-  const [content, setContent] = useState('');
+  const [savedDraft] = useState(() => readComposerDraft(conversationId));
+  const [content, setContent] = useState(savedDraft.content ?? '');
   const scrollArea = useRef<HTMLDivElement>(null);
   const historyArea = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -215,10 +222,10 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
       observer?.disconnect();
     };
   }, [messages.data, toBottom]);
-  const [mode, setMode] = useState<'ask' | 'preview' | 'direct'>('ask');
-  const [knowledgeOnly, setKnowledgeOnly] = useState(false);
-  const [delegation, setDelegation] = useState(true);
-  const [auxiliary, setAuxiliary] = useState(false);
+  const [mode, setMode] = useState<'ask' | 'preview' | 'direct'>(savedDraft.mode ?? 'ask');
+  const [knowledgeOnly, setKnowledgeOnly] = useState(savedDraft.knowledgeOnly ?? false);
+  const [delegation, setDelegation] = useState(savedDraft.delegation ?? true);
+  const [auxiliary, setAuxiliary] = useState(savedDraft.auxiliary ?? false);
   const [reasoning, setReasoning] = useState('default');
   const [permission, setPermission] = useState('ask');
   const [settingsVersion, setSettingsVersion] = useState(0);
@@ -272,12 +279,51 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
       setSettingsVersion((value) => value + 1);
     }
   }
-  const [selected, setSelected] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>(savedDraft.selected ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   // 网络失败重试使用同一个 key；只有成功提交或输入变化后才换 key。
   const requestKey = useRef({ content: '', id: '' });
   const onChanged = useCallback(() => refresh(), [refresh]);
+  const materialConversation = useRef<string | null>(null);
+  async function manageMaterials() {
+    if (busy || settingBusy) return;
+    setBusy(true);
+    setError('');
+    try {
+      let id = conversationId ?? materialConversation.current;
+      if (!id) {
+        id = (
+          await send<Conversation>('/api/conversations', {
+            title: content.trim().slice(0, 30) || '材料讨论',
+          })
+        ).id;
+        materialConversation.current = id;
+      }
+      // 原聊天为空也先建立明确归属；保存设置失败重试复用已创建的会话。
+      if (!conversationId) {
+        const settings = await api<ConversationSettings>(
+          `/api/conversations/${id}/runtime-settings`,
+        );
+        await send(
+          `/api/conversations/${id}/runtime-settings`,
+          {
+            expected_revision: settings.revision,
+            permission_mode: permission,
+            reasoning_effort: reasoning,
+          },
+          'PATCH',
+        );
+      }
+      saveComposerDraft(id, { content, selected, mode, knowledgeOnly, delegation, auxiliary });
+      refresh();
+      navigate(`/sources?conversation_id=${encodeURIComponent(id)}`);
+    } catch (failure) {
+      setError(messageOf(failure));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function submit() {
     if (
       !content.trim() ||
@@ -329,6 +375,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
       following.current = true;
       setContent('');
       setSelected([]);
+      clearComposerDraft(id);
       refresh();
     } catch (error) {
       setError(messageOf(error));
@@ -401,9 +448,9 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
                   >
                     梳理已有知识 <ArrowUp size={14} />
                   </Button>
-                  <Link to="/sources">
+                  <Button disabled={busy} onClick={() => void manageMaterials()}>
                     导入学习材料 <FileText size={15} />
-                  </Link>
+                  </Button>
                 </div>
               </div>
             )}
@@ -550,7 +597,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
               <div className="run-summary mt-2.5 mb-5 flex flex-wrap items-center gap-[9px] text-xs [&>p]:m-0 [&>p]:w-full [&>p]:text-[#8c594b]">
                 <Badge status={runs.data[0].status} />
                 {runs.data[0].outcome.kind && <Badge status={runs.data[0].outcome.kind} />}
-                <Link to={`/runs/${runs.data[0].id}`}>运行记录 →</Link>
+                <Link to={`/runs/${runs.data[0].id}`}>任务详情 →</Link>
                 {runs.data[0].stop_reason && <p>{runs.data[0].stop_reason}</p>}
               </div>
             )}
@@ -631,6 +678,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
           />
           <ComposerControls
             conversationId={conversationId}
+            onManageMaterials={() => void manageMaterials()}
             permission={chosenPermission}
             model={model}
             modelEnabled={modelEnabled}

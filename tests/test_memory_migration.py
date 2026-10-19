@@ -67,6 +67,8 @@ def test_nonempty_memory_upgrade_preserves_old_identity_versions_and_receipts():
             assert policy_after["enabled"]["builtin:memory_search"]
             assert policy_after["enabled"]["builtin:memory_read"]
             assert all(policy_after["enabled"][k] == v for k, v in policy_before["enabled"].items())
+            # 上面独立核对0019合同；运行当前ORM前接续后续结构迁移。
+            command.upgrade(config, "head")
             service = MemoryService(sessionmaker(connection, expire_on_commit=False))
             found = service.search("Python")
             assert found[0]["id"] == "old-memory" and found[0]["revision"] == 1

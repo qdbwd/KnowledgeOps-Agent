@@ -64,6 +64,7 @@ def test_effective_catalog_covers_actual_graph_including_middleware(
 ):
     """最终构图必须携带全部真实工具的目录，Schema直接来自原工具，不重写参数。"""
     module, context, _ = setup_run(runtime_services, auxiliary=auxiliary)
+    role(context)
     with context.jobs.sessions.begin() as session:
         row = session.get(Run, context.root_id)
         row.input_data = {**row.input_data, "knowledge_only": knowledge_only}

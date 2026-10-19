@@ -11,7 +11,7 @@ test('file uncertainty keeps current content and resumes only after a persisted 
   await page.goto(`/chat/${conv.id}`);
   await expect(page.getByText('文件操作待核对 · 结果未知', { exact: true })).toBeVisible();
   await page.getByText('查看当前文件片段', { exact: true }).click();
-  await expect(page.getByText('old', { exact: true })).toBeVisible();
+  await expect(page.getByRole('group').filter({ hasText: '查看当前文件片段' }).getByText('old', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '重新核对（不改文件）', exact: true })).toBeDisabled();
   await page.screenshot({ path: testInfo.outputPath('file-review-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });

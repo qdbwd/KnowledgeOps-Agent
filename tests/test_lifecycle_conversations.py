@@ -27,6 +27,12 @@ def conversation_case(detail_case, tmp_path):
     store = FileStore(tmp_path)
     details.sessions.configure(info={"file_store": store})
     cleaner = ConversationCleaner(details, runs)
+    # 模拟应用维护完成旧引用目录回填；之后新增正文由在线事务追踪。
+    for _ in range(100):
+        if cleaner.retained.catalog.step(limit=100)["complete"]:
+            break
+    else:
+        pytest.fail("reference catalog did not finish")
     return cleaner, runs, run, chat, store
 
 

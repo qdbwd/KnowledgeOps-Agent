@@ -2,6 +2,7 @@
 
 import json
 
+from fixtures.execution_provider import ExecutionProvider
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import select
@@ -20,13 +21,15 @@ def run_files(services, root, steps, *, mode="direct"):
     module, context, run = setup_run(services, mode=mode)
     # 此组验证通用文件操作到业务版本的同步，命令执行许可显式独立设置。
     ExecutionSettings(context.jobs.sessions).update(
-        run["conversation_id"], expected_revision=0, permission_mode="auto"
+        run["conversation_id"], expected_revision=0, permission_mode="auto_review"
     )
     context.workspace_root = root
     context.jobs.sessions.configure(info={"file_store": FileStore(root)})
     enable(context.jobs.sessions)
 
     class Provider:
+        invoke = ExecutionProvider.invoke
+
         def bind_tools(self, tools):
             return self
 

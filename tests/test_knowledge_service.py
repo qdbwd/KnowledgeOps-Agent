@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import io
 import zipfile
+from pathlib import Path
 
 import pytest
 from sqlalchemy import event, select
@@ -254,8 +255,6 @@ def test_evidence_url_delimiters_are_consistent_for_draft_publish_and_evaluation
     """代码展示和中文标点后的正文不能混入引用 ID；各消费端使用同一边界。"""
     from types import SimpleNamespace
 
-    from evaluation.checks import collect_citations
-
     _, sources, knowledge, _ = services
     _, evidence = evidence_for(sources)
     body = f"原文 `/api/evidence/{evidence['id']}`。另见 /api/evidence/{evidence['id']}，可追溯。"
@@ -265,6 +264,10 @@ def test_evidence_url_delimiters_are_consistent_for_draft_publish_and_evaluation
     knowledge.grant_direct("root")
     receipt = knowledge.publish(draft["id"], idempotency_key="inline-citation")
     assert knowledge.get_document(receipt["document_ids"][0])["citation_ids"] == [evidence["id"]]
+    if not (Path(__file__).resolve().parents[1] / "evaluation").is_dir():
+        pytest.skip("本地评估目录不随仓库发布，正文发布的引用边界已核对")
+    from evaluation.checks import collect_citations
+
     rows, valid = collect_citations(SimpleNamespace(sources=sources), [body])
     assert valid and [row["id"] for row in rows] == [evidence["id"]]
 

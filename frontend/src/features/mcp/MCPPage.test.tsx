@@ -40,6 +40,7 @@ it('shows exact arguments and binds approval to its displayed receipt hash', asy
           status: 'pending',
           tool_name: 'write_note',
           connection_revision: 4,
+          decision: { actor: 'model', review: { result: { verdict: 'deny', reason: '外部目标待核对' } } },
           request: {
             service_name: '测试服务',
             arguments: { title: '指定内容' },
@@ -55,6 +56,8 @@ it('shows exact arguments and binds approval to its displayed receipt hash', asy
     </MemoryRouter>,
   );
   expect(await screen.findByText(/指定内容/)).toBeVisible();
+  expect(screen.getByRole('status')).toHaveTextContent('外部目标待核对');
+  expect(screen.getByText(/审查未批准/)).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: '允许这次调用' }));
   expect(sent).toEqual([
     {

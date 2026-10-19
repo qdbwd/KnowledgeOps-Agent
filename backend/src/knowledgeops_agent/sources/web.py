@@ -230,26 +230,37 @@ class WebResearchService:
             )
         return valid
 
-    def import_url(self, url: str, *, refresh: bool = False) -> tuple[dict, bool]:
+    def import_url(self, url: str, *, refresh: bool = False, conversation_id: str | None = None,
+                   root_id: str | None = None) -> tuple[dict, bool]:
         """取得正文快照，但此时模型还没看到正文，因此尚不登记已读证据。"""
         url = str(public_url(url))
         cached = None if refresh else self.sources.cached_web(url)
         if cached:
-            return cached, True
+            self.sources.retain_source(cached["id"], conversation_id=conversation_id, root_id=root_id)
+            return self.sources.get_version(cached["version_id"]), True
         snapshot = self.reader.fetch(url)
         if snapshot.mime_type in {"text/plain", "text/markdown"}:
             title, body = snapshot.url, snapshot.data.decode("utf-8", errors="replace")
+            body_format = "markdown" if snapshot.mime_type == "text/markdown" else "text"
+            parser = "text-v1"
         else:
-            document = trafilatura.bare_extraction(
+            # 公开Markdown序列化接口保留标题、代码、表格和链接；不保留网页脚本/布局。
+            body = trafilatura.extract(
                 snapshot.data,
                 url=snapshot.url,
                 include_comments=False,
-                include_links=False,
-                with_metadata=True,
+                include_links=True,
+                include_formatting=True,
+                include_tables=True,
+                output_format="markdown",
+                with_metadata=False,
             )
-            if document is None or isinstance(document, dict) or not document.text:
+            if not body:
                 raise ValueError("could not extract readable page content")
-            title, body = document.title or snapshot.url, document.text
+            metadata = trafilatura.extract_metadata(trafilatura.load_html(snapshot.data), default_url=snapshot.url)
+            title = (metadata.title if metadata else None) or snapshot.url
+            body_format = "markdown"
+            parser = f"trafilatura-{trafilatura.__version__}-markdown-v1"
         if len(body.strip()) < 60:
             raise ValueError("could not extract enough readable page content")
         source = self.sources.import_text(
@@ -257,15 +268,17 @@ class WebResearchService:
             body,
             kind="web",
             origin=snapshot.url,
-            raw_bytes=snapshot.data,
             mime_type=snapshot.mime_type,
-            parser="trafilatura-v2" if "html" in snapshot.mime_type else "text-v1",
+            parser=parser,
+            body_format=body_format,
+            conversation_id=conversation_id,
+            root_id=root_id,
         )
         return source, False
 
     def read(self, url: str, *, root_id: str, refresh: bool = False) -> dict:
         """把首段实际正文交给模型；后续片段必须再读，不能将下载等同于全文已读。"""
-        source, cached = self.import_url(url, refresh=refresh)
+        source, cached = self.import_url(url, refresh=refresh, root_id=root_id)
         evidence = self.sources.read_segment(source["segments"][0]["id"], root_id=root_id)
         return {
             "source": source,

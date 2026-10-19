@@ -99,7 +99,7 @@ def context_usage(sessions, gateway, conversation_id: str, *, only_run_id: str |
     estimated = True
     reason: str | None = "no_model_input"
     if row or basis == "manual_compaction_estimate":
-        actual = (row["usage"] or {}).get("input_tokens") if basis == "last_model_input" else None
+        actual = (row["usage"] or {}).get("input_tokens") if row is not None and basis == "last_model_input" else None
         if isinstance(actual, int) and not isinstance(actual, bool) and actual >= 0:
             input_tokens, method, estimated, reason = actual, "provider_usage", False, None
         elif method in {"deepseek_v41_tokenizer_v1", "deepseek_v41_json_estimate_v1"}:

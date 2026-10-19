@@ -17,7 +17,7 @@ def test_runtime_settings_validate_capabilities_and_revision(client):
     )
     assert client.get(url).json()["revision"] == 0
     assert (
-        client.patch(url, json={"expected_revision": 0, "permission_mode": "auto"}).json()[
+        client.patch(url, json={"expected_revision": 0, "permission_mode": "auto_review"}).json()[
             "revision"
         ]
         == 1

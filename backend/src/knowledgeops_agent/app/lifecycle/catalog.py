@@ -7,7 +7,7 @@ from knowledgeops_agent.app.lifecycle.references import replace_references
 from knowledgeops_agent.app.runs.control import lock_control
 from knowledgeops_agent.persistence import models as db
 
-CATALOG_STATE = "artifact-references-v2"
+CATALOG_STATE = "asset-references-v4"
 
 # 身份格式与在线保存路径一致；额外资产沿明确所属类型命名，避免互相覆盖。
 SOURCES = (
@@ -18,6 +18,7 @@ SOURCES = (
     (db.ChangeSet, "draft", "current:"),
     (db.KnowledgeVersion, "asset", "knowledge:"),
     (db.SourceSegment, "asset", "source-segment:"),
+    (db.SourceVersion, "asset", "source-body:"),
     (db.PreferenceRevision, "asset", "memory:"),
     (db.LearningTaskRevision, "asset", "learning:"),
     (db.LearningTask, "asset", "learning-current:"),
@@ -27,6 +28,7 @@ SOURCES = (
     (db.LearningCollaboration, "asset", "collaboration:"),
     (db.RunArtifact, "material", ""),
     (db.Run, "run_input", ""),
+    (db.DeliveredFile, "delivery", ""),
 )
 
 
@@ -34,6 +36,10 @@ def reference_value(session, row):
     """读取正式正文而非只读路径字段；文件缺失/哈希不符时回填失败并保护材料。"""
     if isinstance(row, db.ChatMessage):
         return row.content  # 隐藏协议不是用户引用，不加入正文保留关系。
+    if isinstance(row, db.DeliveredFile):
+        from knowledgeops_agent.app.lifecycle.asset_references import delivery_reference_value
+
+        return delivery_reference_value(session, row)
     if isinstance(row, db.ContinuationSnapshot):
         return row.content
     if isinstance(row, db.TaskHistoryRecord):
@@ -46,6 +52,12 @@ def reference_value(session, row):
         return row.content if row.expired_at is None else ""
     if isinstance(row, db.Run):
         return {"task": row.task, "input": row.input_data, "outcome": row.outcome} if row.lifecycle_state == "active" else {}
+    if isinstance(row, db.SourceVersion):
+        if row.parser != "run-artifact-v1":
+            return {}
+        from knowledgeops_agent.sources.service import SourceService
+
+        return SourceService._verified_body(session, row)[1]
     if isinstance(row, db.SourceSegment):
         # 分段可能恰好切开内部链接，只看单段会漏掉UUID/地址；邻接片段仅补边界。
         previous = session.scalar(select(db.SourceSegment.text).where(
@@ -68,6 +80,10 @@ def reference_value(session, row):
 
 
 def reference_identity(row):
+    if isinstance(row, db.SourceVersion):
+        # 固定正文先登记版本再填分段，不能在第一次flush读取尚未安装的完整正文。
+        # 转换入口在同事务内显式追踪，目录重建则读取最终固定版本。
+        return None
     for model, kind, prefix in SOURCES:
         if isinstance(row, model):
             key = prefix + ":".join(str(getattr(row, str(column.key))) for column in model.__mapper__.primary_key)
@@ -100,6 +116,9 @@ def _track_changes(session, _context):
     for row, removed in session.info.pop("lifecycle_reference_changes", []):
         kind, key = reference_identity(row)
         if removed:
+            session.execute(delete(db.AssetReference).where(
+                db.AssetReference.owner_kind == kind, db.AssetReference.owner_id == key,
+            ))
             session.execute(delete(db.ArtifactRetentionReference).where(
                 db.ArtifactRetentionReference.owner_kind == kind,
                 db.ArtifactRetentionReference.owner_id == key,

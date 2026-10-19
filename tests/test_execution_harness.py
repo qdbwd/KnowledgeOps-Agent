@@ -2,6 +2,7 @@
 
 import json
 
+from fixtures.execution_provider import ExecutionProvider
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from test_api_worker import client as _client
@@ -20,6 +21,8 @@ services = _services
 
 
 class Commands:
+    invoke = ExecutionProvider.invoke
+
     def __init__(self, commands):
         self.commands = commands
 
@@ -113,7 +116,7 @@ def test_permission_change_at_tools_boundary_still_interrupts_old_checkpoint(
         runtime_services, tmp_path, ["touch work/fallback"]
     )
     settings = ExecutionSettings(context.jobs.sessions)
-    settings.update(run["conversation_id"], expected_revision=0, permission_mode="auto")
+    settings.update(run["conversation_id"], expected_revision=0, permission_mode="auto_review")
     graph.invoke(
         {"messages": module.initial_messages(context)},
         config,
@@ -239,7 +242,7 @@ def test_lost_long_result_after_real_execution_is_unknown(runtime_services, tmp_
         runtime_services, tmp_path, ["printf x >> work/proof"]
     )
     ExecutionSettings(context.jobs.sessions).update(
-        run["conversation_id"], expected_revision=0, permission_mode="auto"
+        run["conversation_id"], expected_revision=0, permission_mode="auto_review"
     )
 
     original = module.RuntimeControlMiddleware._deliver_tool_message

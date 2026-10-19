@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from langchain_core.messages import AIMessage
 from test_api_worker import client as _client
 from test_api_worker import services as _services
@@ -86,6 +87,58 @@ def test_real_intent_bridge_extracts_background_with_one_mock_model_call(runtime
     assert len(context.gateway.ledger.records()) == 1
 
 
+def test_chat_extraction_classifies_in_same_request_and_replay_does_not_duplicate(runtime_services):
+    from knowledgeops_agent.memory.categories import MemoryCategories
+
+    _, context, run = setup_run(runtime_services, task="我是 Python 后端开发者。")
+    calls = []
+
+    class Interpreter:
+        def invoke(self, messages, **kwargs):
+            payload = json.loads(messages[-1].text)
+            calls.append(payload)
+            assert payload["memory_categories"]
+            assert "display_category" in messages[0].text
+            return AIMessage(
+                json.dumps(
+                    {
+                        "action": "none",
+                        "clear": False,
+                        "message_id": payload["message"]["id"],
+                        "root_id": run["id"],
+                        "quote": "",
+                        "changeset_id": None,
+                        "expected_revision": None,
+                        "confirm_impact": False,
+                        "ui_conflict": False,
+                        "continue_task": True,
+                        "preferences": [
+                            proposal(
+                                "Python 后端开发者",
+                                run["task"],
+                                category="background",
+                                display_category={"category_id": None, "new_category": "编程经历"},
+                            )
+                        ],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+    context.gateway.client = Interpreter()
+    prepare_resources(context)
+    result = ensure_publication_intent(context)
+    memory = MemoryService(context.jobs.sessions).get(result["preferences"]["created"][0])
+    label = next(
+        row for row in MemoryCategories(context.jobs.sessions).list() if row["name"] == "编程经历"
+    )
+    assert memory["display_category_id"] == label["id"]
+    assert memory["category"] == "background" and memory["review_after"]
+    assert memory["classification"]["source"] == "extraction"
+    assert ensure_publication_intent(context) == result
+    assert len(calls) == len(context.gateway.ledger.records()) == 1
+
+
 def test_new_resource_snapshot_selects_bounded_memory_and_keeps_same_snapshot(runtime_services):
     _, context, _ = setup_run(runtime_services, task="讲讲Python并发")
     service = MemoryService(context.jobs.sessions)
@@ -98,6 +151,48 @@ def test_new_resource_snapshot_selects_bounded_memory_and_keeps_same_snapshot(ru
     service.update(relevant["id"], expected_revision=1, content="我的当前目标是SQL事务")
     assert prepare_resources(context) == manifest
     assert service.read(relevant["id"], catalog=manifest["memory"]["catalog"])["revision"] == 1
+
+
+@pytest.mark.parametrize("choice", ["invalid", "deleted", "reuse"])
+def test_extracted_display_choice_cannot_lose_verified_text_or_resurrect_removed_labels(
+    runtime_services, choice
+):
+    from knowledgeops_agent.memory.categories import MemoryCategories, model_catalog
+
+    jobs = runtime_services[0]
+    labels = MemoryCategories(jobs.sessions)
+    label = labels.create("开发经历")
+    _, context, run = setup_run(runtime_services, task="我是 Python 开发者。")
+    with jobs.sessions() as session:
+        frozen = model_catalog(session)
+    if choice == "deleted":
+        labels.delete(label["id"], expected_revision=1)
+    selected = {
+        "category_id": "missing" if choice == "invalid" else label["id"],
+        "new_category": None,
+    }
+    message = jobs.publication_context(run["id"])["message"]
+    service = MemoryService(jobs.sessions)
+    result = service.extract(
+        message["id"],
+        [
+            proposal(
+                "Python 开发者",
+                message["content"],
+                category="background",
+                display_category=selected,
+            )
+        ],
+        known=[],
+        known_categories=frozen,
+    )
+    memory = service.get(result["created"][0])
+    assert memory["content"] == "Python 开发者" and memory["status"] == "active"
+    assert memory["display_category_id"] == (label["id"] if choice == "reuse" else None)
+    assert memory["category"] == "background" and memory["review_after"]
+    if choice == "deleted":
+        assert label["id"] not in {row["id"] for row in labels.list()}
+    assert not context.gateway.ledger.records()
 
 
 def test_actual_graph_can_search_and_reread_frozen_memory(runtime_services):

@@ -1,10 +1,12 @@
 """HTTP删除预览、接受、状态、重试与已回收作业的完成查询。"""
 
+import json
 from datetime import timedelta
 
 from test_api_worker import client as _client
 from test_api_worker import services as _services
 
+from knowledgeops_agent.app.lifecycle.catalog import CATALOG_STATE
 from knowledgeops_agent.persistence import models as db
 from knowledgeops_agent.persistence.files import FileStore
 
@@ -25,11 +27,19 @@ def test_http_delete_requires_current_preview_and_remains_queryable(client, serv
     assert client.get(base + "/messages").status_code == 404
     assert client.get("/api/conversations").json() == []
     assert client.post(base + "/deletion/retry").status_code == 202
-    for _ in range(30):
+    # 冷目录需先分批回填，再继续资产阶段；每一步必须有持久进展，不能空转。
+    seen = set()
+    for _ in range(100):
         state = client.get(base + "/deletion").json()
         if state["status"] == "completed":
             break
         assert state["status"] != "failed", state
+        with services.sessions() as session:
+            job = session.get(db.CleanupJob, accepted.json()["id"])
+            catalog = session.get(db.MaintenanceState, CATALOG_STATE)
+            progress = json.dumps([job.phase, job.cursor, catalog.cursor if catalog else None], sort_keys=True)
+        assert progress not in seen, ("cleanup made no durable progress", state, progress)
+        seen.add(progress)
         services.lifecycle.advance(accepted.json()["id"])
     assert client.get(base + "/deletion").json()["status"] == "completed"
     with services.sessions.begin() as session:

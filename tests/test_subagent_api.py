@@ -20,10 +20,11 @@ def definition(**changes):
     }
 
 
-def test_subagent_options_and_builtin_are_read_only(client, services):
+def test_subagent_options_and_legacy_history_are_read_only(client, services):
     response = client.get("/api/subagents")
     assert response.status_code == 200
-    builtin = response.json()[0]
+    assert response.json() == []
+    builtin = client.get('/api/subagents/builtin-researcher/history').json()[0]
     assert builtin["name"] == "researcher" and builtin["builtin"] is True
     options = client.get("/api/subagents/options").json()
     tool_names = {row["name"] for row in options["tools"]}
@@ -60,7 +61,7 @@ def test_subagent_create_patch_conflict_and_history(client, services):
 @pytest.mark.parametrize(
     "changes",
     [
-        {"name": "researcher"},
+        {"name": "-researcher"},
         {"name": "Uppercase"},
         {"name": "a" * 65},
         {"display_name": " "},
@@ -78,7 +79,7 @@ def test_subagent_invalid_definition_never_creates_entry(client, changes):
     result = client.post("/api/subagents", json=definition(**changes))
     assert result.status_code == 422
     assert "detail" in result.json()
-    assert [row["name"] for row in client.get("/api/subagents").json()] == ["researcher"]
+    assert client.get("/api/subagents").json() == []
 
 
 def test_subagent_tombstone_preserves_revisions_and_forbids_resurrection(client, services):
@@ -91,7 +92,7 @@ def test_subagent_tombstone_preserves_revisions_and_forbids_resurrection(client,
     tombstone = deleted.json()
     assert tombstone["deleted"] is True and tombstone["enabled"] is False
     assert tombstone["authorization_epoch"] == 1
-    assert [row["name"] for row in client.get("/api/subagents").json()] == ["researcher"]
+    assert client.get("/api/subagents").json() == []
     assert client.get(url + "/history").json() == [first, tombstone]
     assert client.patch(url, json={"expected_revision": 2, "enabled": True}).status_code == 404
     assert client.get("/api/subagents/missing/history").status_code == 404

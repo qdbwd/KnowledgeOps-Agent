@@ -7,6 +7,10 @@ import { MCPApprovals } from '../mcp/MCPPage';
 import type { Receipt } from '../mcp/MCPPage';
 import type { Run } from '../../shared/types/types';
 
+type ApprovalFileTarget = {
+  kind: string; path: string; bytes?: number; text?: string | null; text_complete?: boolean;
+  members?: ApprovalFileTarget[];
+};
 type Action = {
   id: string;
   run_id: string;
@@ -16,6 +20,12 @@ type Action = {
   cwd: string;
   status: string;
   rule_candidate: { argv: string[]; cwd: string; match: string } | null;
+  decision?: {
+    actor?: string;
+    file_target?: ApprovalFileTarget;
+    review?: { result?: { verdict: string; reason: string } };
+    invalidated_reason?: string;
+  };
 };
 type Command = {
   id: string;
@@ -37,10 +47,46 @@ type FileReceipt = {
 type Approvals = { actions: Action[]; commands: Command[]; mcp: Receipt[]; files?: FileReceipt[] };
 const names: Record<string, string> = {
   pending: '等待批准',
+  reviewing: '正在审查',
   approved: '已批准',
   denied: '已拒绝',
-  invalidated: '已取消或指令变化，未执行',
+  invalidated: '批准已失效，未执行',
 };
+const actionNames: Record<string, string> = {
+  execute: '命令执行', write_file: '新建文件', edit_file: '编辑文件', delete: '删除文件',
+};
+
+function FileActionPreview({ row }: { row: Action }) {
+  const target = row.decision?.file_target;
+  const paths = (item: ApprovalFileTarget): string[] =>
+    (item.members ?? []).flatMap(child => [child.path + (child.kind === 'directory' ? '/' : ''), ...paths(child)]);
+  const members = target ? paths(target) : [];
+  return <div className="my-3 space-y-3">
+    <p className="break-all font-mono text-sm">{String(row.arguments.file_path ?? '')}</p>
+    <p className="text-sm text-muted">
+      {target?.kind === 'missing' ? '当前不存在，将创建文件。'
+        : target?.kind === 'directory' ? '将删除此目录及其中内容。'
+          : '此操作只适用于核对过的文件版本；文件变化后需要重新提出操作。'}
+    </p>
+    {row.tool_name === 'write_file' && <>
+      <strong className="text-sm">待写内容</strong>
+      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words">{String(row.arguments.content ?? '')}</pre>
+    </>}
+    {row.tool_name === 'edit_file' && <div className="grid gap-3 md:grid-cols-2">
+      <div><strong className="text-sm">查找内容</strong><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words">{String(row.arguments.old_string ?? '')}</pre></div>
+      <div><strong className="text-sm">替换为{row.arguments.replace_all ? '（替换全部匹配）' : ''}</strong><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words">{String(row.arguments.new_string ?? '')}</pre></div>
+    </div>}
+    {typeof target?.text === 'string' && <details>
+      <summary>查看核对时的文件内容{target.text_complete ? '' : '（部分内容）'}</summary>
+      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words">{target.text}</pre>
+    </details>}
+    {target?.kind === 'file' && row.status === 'pending' && <Link to={`/files?path=${encodeURIComponent(target.path)}`}>查看当前完整文件</Link>}
+    {target?.kind === 'directory' && <details>
+      <summary>查看目录范围（{members.length} 项）</summary>
+      <ul className="max-h-64 overflow-auto break-all text-sm">{members.map(path => <li key={path}>{path}</li>)}</ul>
+    </details>}
+  </div>;
+}
 
 function ActionCard({
   row,
@@ -54,11 +100,19 @@ function ActionCard({
   decide: (row: Action, approve: boolean, scope: string, match: string) => void;
 }) {
   const [match, setMatch] = useState('exact');
+  const reviewDenied = row.status === 'pending' && row.decision?.review?.result?.verdict === 'deny';
   return (
     <article className="list-card flex items-center gap-[17px] rounded-[9px] border border-line bg-white px-[23px] py-4.5 text-[#5c7057] hover:border-[#aec2a5] hover:no-underline max-md:flex-wrap max-md:gap-3 max-md:p-4 [&>div]:min-w-0 [&>div]:flex-1 [&_h3]:mt-0 [&_h3]:mb-[5px] [&_h3]:text-[#344c37] [&_h3]:[overflow-wrap:anywhere] max-md:[&_h3]:text-[13px] [&_p]:m-0 [&_p]:text-[11px] [&_p]:text-[#85917e] [&_p]:[overflow-wrap:anywhere] [&>span:last-child]:text-[11px] [&>span:last-child]:whitespace-nowrap max-md:[&>span:last-child]:hidden">
       <div>
-        <strong>命令执行 · {names[row.status] ?? row.status}</strong>
-        <pre>{String(row.arguments.command ?? '')}</pre>
+        <strong>{actionNames[row.tool_name] ?? '工具调用'} · {names[row.status] ?? row.status}</strong>
+        {row.tool_name === 'execute' ? <pre>{String(row.arguments.command ?? '')}</pre>
+          : ['write_file', 'edit_file', 'delete'].includes(row.tool_name) ? <FileActionPreview row={row} />
+            : <pre>{JSON.stringify(row.arguments, null, 2)}</pre>}
+        {row.decision?.review?.result && <p className="my-2 text-sm" role="status">
+          审查说明：{row.decision.review.result.reason}
+        </p>}
+        {reviewDenied && <p className="my-2 text-sm">审查未批准，操作尚未执行。你可以保持拒绝，或核对后仅允许这一次；固定禁止仍不可覆盖。</p>}
+        {row.decision?.invalidated_reason && <p className="my-2 text-sm">{row.decision.invalidated_reason}</p>}
         <p className="muted text-muted small text-xs">
           工作目录：{row.cwd} · <Link to={`/runs/${row.run_id}`}>查看执行者</Link>
         </p>
@@ -66,17 +120,17 @@ function ActionCard({
           <>
             <div className="row flex items-center gap-3 wrap flex-wrap">
               <Button disabled={busy || !ready} onClick={() => decide(row, true, 'once', 'exact')}>
-                允许一次
+                {reviewDenied ? '核对后仍允许一次' : '允许一次'}
               </Button>
               <Button
                 className="secondary button-secondary"
                 disabled={busy || !ready}
                 onClick={() => decide(row, false, 'once', 'exact')}
               >
-                拒绝一次
+                {reviewDenied ? '保持拒绝' : '拒绝一次'}
               </Button>
             </div>
-            {row.rule_candidate ? (
+            {row.rule_candidate && !reviewDenied ? (
               <details className="mt-5">
                 <summary>减少重复询问</summary>
                 <label>
@@ -110,7 +164,8 @@ function ActionCard({
               </details>
             ) : (
               <p className="muted text-muted small text-xs">
-                此命令包含脚本或复杂语法，需要逐次确认。
+                {row.tool_name === 'execute' ? '此命令包含脚本或复杂语法，需要逐次确认。'
+                  : '仅批准这一次具体操作，不保存为后续允许规则。'}
               </p>
             )}
           </>

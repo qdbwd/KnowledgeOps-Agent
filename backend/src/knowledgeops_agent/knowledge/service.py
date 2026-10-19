@@ -206,6 +206,7 @@ class KnowledgeService:
         require_prior_read: bool = False,
         guard: Callable | None = None,
         workspace_paths: dict | None = None,
+        independently_saved: bool = False,
     ) -> dict:
         """草稿和幂等标识同事务保存；工具恢复重放不能产生第二份待审核内容。
 
@@ -216,8 +217,11 @@ class KnowledgeService:
             DocumentChange.model_validate(item).model_dump(exclude_unset=True)
             for item in operations
         ]
+        request_values = [root_id, proactive, canonical]
+        if independently_saved:
+            request_values.append({"independently_saved": True})
         fingerprint = hashlib.sha256(
-            json.dumps([root_id, proactive, canonical], ensure_ascii=False, sort_keys=True).encode()
+            json.dumps(request_values, ensure_ascii=False, sort_keys=True).encode()
         ).hexdigest()
         changes = self._changes(root_id, operations)
         if operation_key is not None and not 1 <= len(operation_key) <= 200:
@@ -246,7 +250,8 @@ class KnowledgeService:
                         ]
                         expected = hashlib.sha256(
                             json.dumps(
-                                [root_id, proactive, old_input], ensure_ascii=False, sort_keys=True
+                                [root_id, proactive, old_input] + ([{"independently_saved": True}] if independently_saved else []),
+                                ensure_ascii=False, sort_keys=True
                             ).encode()
                         ).hexdigest()
                     if existing.request_fingerprint != expected:
@@ -256,6 +261,7 @@ class KnowledgeService:
             run = session.get(Run, root_id)
             draft = ChangeSet(
                 root_id=root_id,
+                retention_intent="saved" if independently_saved else "temporary" if run is not None else "legacy",
                 learning_unit_id=run.learning_unit_id if run else None,
                 publication_root_id=root_id,
                 operations=[item.model_dump() for item in changes],
@@ -398,6 +404,7 @@ class KnowledgeService:
         return {
             "id": draft.id,
             "root_id": draft.root_id,
+            "retention_intent": draft.retention_intent,
             "status": draft.status,
             "revision": draft.revision,
             "operation_format": draft.operation_format,
@@ -415,6 +422,25 @@ class KnowledgeService:
             draft = session.get(ChangeSet, changeset_id)
             if draft is None:
                 raise KeyError("changeset not found")
+            return self._draft_view(session, draft)
+
+    def save_draft(self, changeset_id: str, *, expected_revision: int) -> dict:
+        """真人独立保留草稿，不发布内容、不改变正文修订或扩大原授权。"""
+        from knowledgeops_agent.app.runs.control import lock_control
+
+        with self.sessions.begin() as session:
+            lock_control(session)
+            draft = session.get(ChangeSet, changeset_id)
+            if draft is None:
+                raise KeyError("changeset not found")
+            if draft.revision != expected_revision:
+                raise ValueError("草稿已变化，请刷新后再保存")
+            run = session.get(Run, draft.root_id)
+            if run and run.conversation_id:
+                from knowledgeops_agent.sources.ownership import resolve_owner
+
+                resolve_owner(session, conversation_id=run.conversation_id)
+            draft.retention_intent = "saved"
             return self._draft_view(session, draft)
 
     def list_drafts(self, *, root_id: str | None = None) -> list[dict]:
@@ -834,7 +860,7 @@ class KnowledgeService:
                 store = session.info.get("file_store")
                 if store is not None:
                     version.body_storage_key = f"knowledge/versions/{version.id}.md"
-                    version.body_sha256 = store.put(version.body_storage_key, body)
+                    version.body_sha256 = store.put(version.body_storage_key, body, session=session, purpose="knowledge")
                     version._body = ""
                 for evidence_id in citation_ids:
                     session.add(Citation(version_id=version.id, evidence_id=evidence_id))

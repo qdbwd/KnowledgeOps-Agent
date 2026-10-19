@@ -53,6 +53,9 @@ test('source documents open in full and removal preserves pinned versions', asyn
   const response = await page.request.post('/api/sources/text', { data: { title: '全文阅读与删除验收', content: body } });
   expect(response.status()).toBe(201);
   const source = await response.json();
+  // 明确的存活引用才保护旧版本；打开过一次阅读器本身不构成永久保留。
+  await page.request.post('/api/sources/text', { data: { title: '完整阅读引用者', content: `[固定正文](/sources/${source.id}?version=${source.version_id})` } });
+  await page.request.post('/api/__offline/assets-ready');
   await page.goto('/sources');
   const website = page.getByRole('link', { name: '网页阅读示例 ↗' });
   await expect(website).toHaveAttribute('href', 'https://example.org/reader');
@@ -63,7 +66,10 @@ test('source documents open in full and removal preserves pinned versions', asyn
   await page.screenshot({ path: '../artifacts/verification/source-full-reader.png' });
   await page.goto('/sources');
   await page.getByRole('button', { name: '删除材料 全文阅读与删除验收' }).click();
+  const deletion = page.waitForResponse((res) => res.request().method() === 'POST' && res.url().endsWith(`/source/${source.id}/deletion`));
   await page.getByRole('button', { name: '确认删除材料' }).click();
+  const job = await (await deletion).json();
+  expect((await (await page.request.post(`/api/__offline/asset-cleanup/${job.id}`)).json()).status).toBe('completed');
   await expect(page.getByRole('link', { name: '全文阅读与删除验收', exact: true })).toHaveCount(0);
   await page.goto(`/sources/${source.id}?version=${source.version_id}`);
   await expect(page.getByText('最后一段仍可阅读。', { exact: true })).toBeAttached();

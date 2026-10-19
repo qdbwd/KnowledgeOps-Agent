@@ -55,7 +55,7 @@ def disabled_skills(root: Path) -> dict[str, str]:
 
 
 def _bytes(path: Path, root: Path) -> bytes:
-    if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+    if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
         raise SkillPackageError(f"技能资源必须在声明的技能目录内：{path.name}")
     with path.open("rb") as stream:
         raw = stream.read(MAX_FILE_BYTES + 1)

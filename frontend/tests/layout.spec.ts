@@ -26,11 +26,11 @@ test('wide chat is centred in the space beside the sidebar; mobile retains navig
 
 test('skills are discoverable from the capabilities page without model calls', async ({ page }) => {
   await page.goto('/tools');
-  await page.getByText(/^已发现的任务技能（\d+）$/).click();
+  await page.getByRole('button', { name: '管理全部 Skills' }).click();
   await expect(
-    page.getByRole('checkbox', { name: '启用技能 code-documentation', exact: true }),
+    page.getByRole('checkbox', { name: '代码文档', exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole('checkbox', { name: '启用技能 academic-paper-review', exact: true }),
+    page.getByRole('checkbox', { name: '论文审阅', exact: true }),
   ).toBeVisible();
 });

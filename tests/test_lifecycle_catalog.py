@@ -22,7 +22,7 @@ def prepare(sessions):
         session.add(chat)
         session.flush()
         for index in range(3):
-            session.add(db.ChatMessage(conversation_id=chat.id, run_id=identity, role="user", content=f"{index}:{artifact.id}"))
+            session.add(db.ChatMessage(conversation_id=chat.id, run_id=identity, role="user", content=f"{index}: /runs/{identity}/artifacts/{artifact.id}"))
         return artifact.id
 
 
@@ -101,7 +101,7 @@ def test_file_asset_is_read_and_broken_file_blocks_catalog_completion(business_s
     store = FileStore(tmp_path)
     sessions.configure(info={"file_store": store})
     artifact = prepare(sessions)
-    body = "以后查阅原始材料 " + artifact
+    body = f"以后查阅原始材料 /runs/producer/artifacts/{artifact}"
     with sessions.begin() as session:
         profile = db.LearningProfile(identity_key="global")
         session.add(profile)

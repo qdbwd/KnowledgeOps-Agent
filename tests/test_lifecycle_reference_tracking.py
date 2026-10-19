@@ -1,6 +1,7 @@
 """回填完成后的新引用仍在所属事务中维护，材料之间的链接不成为永久根。"""
 
 import hashlib
+import json
 
 import pytest
 from langchain_core.messages import ToolMessage
@@ -21,7 +22,7 @@ def test_new_file_backed_asset_is_tracked_after_backfill_and_rollback_is_atomic(
     finish(ReferenceCatalog(sessions))
     install_reference_tracking(sessions)
     install_reference_tracking(sessions)  # 装配多个入口不能重复安装。
-    body = "参考 " + artifact
+    body = f"参考 /runs/producer/artifacts/{artifact}"
     store.put("profiles/test.md", body)
     with sessions.begin() as session:
         profile = db.LearningProfile(identity_key="global")
@@ -51,15 +52,16 @@ def test_material_graph_preserves_transitive_links_but_not_an_unreachable_cycle(
         session.flush()
         ids = [db.new_id() for _ in range(4)]
         for index, target in enumerate([ids[1], ids[0], ids[3], ids[2]]):
-            session.add(db.RunArtifact(id=ids[index], run_id=run_id, kind=str(index), content=target,
-                                      content_hash=hashlib.sha256(target.encode()).hexdigest()))
+            body = f"/runs/{run_id}/artifacts/{target}"
+            session.add(db.RunArtifact(id=ids[index], run_id=run_id, kind=str(index), content=body,
+                                      content_hash=hashlib.sha256(body.encode()).hexdigest()))
         session.flush()
         memory = db.Preference(content=ids[0], scope="global")
         session.add(memory)
         session.flush()
-        session.add(db.PreferenceRevision(preference_id=memory.id, revision=1, content={"content": ids[0]}))
+        session.add(db.PreferenceRevision(preference_id=memory.id, revision=1, content={"content": f"/runs/{run_id}/artifacts/{ids[0]}"}))
     with sessions() as session:
-        assert set(session.scalars(select(reachable_artifacts().c.id))) == set(ids[:2])
+        assert set(session.scalars(select(reachable_artifacts(session).c.id))) == set(ids[:2])
         assert len(list(session.scalars(select(db.ArtifactRetentionReference).where(
             db.ArtifactRetentionReference.owner_kind == "material",
         )))) == 4
@@ -86,7 +88,11 @@ def test_checkpoint_messages_and_internal_storage_paths_are_real_references(busi
         from knowledgeops_agent.app.lifecycle.references import replace_references
         replace_references(session, "checkpoint", "consumer", {"path": "/" + key})
         assert session.get(db.ArtifactRetentionReference, (artifact_id, "checkpoint", "consumer"))
-    assert mentioned_artifacts({"messages": [ToolMessage(artifact_id, tool_call_id="call")]}) == {artifact_id}
+    assert mentioned_artifacts({"messages": [ToolMessage(json.dumps({"artifact_id": artifact_id}), tool_call_id="call")]}) == {artifact_id}
+    assert mentioned_artifacts({"messages": [ToolMessage(artifact_id, tool_call_id="call")]}) == set()
+    assert mentioned_artifacts(f"完整原始记录可用read_tool_result读取 {artifact_id}。") == {artifact_id}
+    assert mentioned_artifacts({"artifact_ids": [artifact_id]}) == set()
+    assert mentioned_artifacts(json.dumps({"material_catalog": [f"/runs/producer/artifacts/{artifact_id}"]})) == set()
 
 
 def test_imported_source_link_split_at_segment_boundary_still_retains_original(business_sessions, tmp_path):
@@ -94,8 +100,8 @@ def test_imported_source_link_split_at_segment_boundary_still_retains_original(b
     sessions = business_sessions
     identity = prepare(sessions)
     install_reference_tracking(sessions)
-    # import_text按2400字符分段，UUID在两个片段之间被切开。
-    SourceService(sessions, tmp_path).import_text("引用材料", "x" * 2390 + identity)
+    # import_text按2400字符分段，明确链接在两个片段之间被切开。
+    SourceService(sessions, tmp_path).import_text("引用材料", "x" * 2360 + f" /runs/producer/artifacts/{identity}")
     with sessions() as session:
         assert len(list(session.scalars(select(db.ArtifactRetentionReference).where(
             db.ArtifactRetentionReference.artifact_id == identity,

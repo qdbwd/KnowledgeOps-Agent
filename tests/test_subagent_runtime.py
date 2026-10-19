@@ -39,6 +39,7 @@ def call(name, args, identifier):
 
 def test_new_root_reuses_upstream_task_tool(runtime_services):
     module, context, _ = setup_run(runtime_services)
+    role(context)
     context.gateway.client = object()
     graph = module.build_agent(context, checkpointer=InMemorySaver())
     names = set(graph.nodes["tools"].bound.tools_by_name)

@@ -25,6 +25,7 @@ from sqlalchemy import literal, or_, select
 
 from knowledgeops_agent.harness.context.management import working_messages
 from knowledgeops_agent.harness.permissions.receipts import ExecutionUnknown, execution_fingerprint
+from knowledgeops_agent.harness.sandbox.receipts import skip_prepared_file
 from knowledgeops_agent.persistence.files import FileStore
 from knowledgeops_agent.persistence.models import FileOperation, new_id, utcnow
 
@@ -205,10 +206,10 @@ class FileJournal:
                 raise PermissionError("目录包含应用管理区，不能递归删除")
             identifier = new_id()
             content_key = f"artifacts/file-operations/{identifier}/content" if content is not None else None
-            after = self.store.put(content_key, content) if content_key and content is not None else None
             baseline = self._sync_baseline(path)
             with self.context.jobs.sessions.begin() as session:
-                root = self.context.jobs._locked(session, self.context.root_id)
+                root, _ = self.context.jobs.execution_guard(session, self.context.run_id, self.context.worker_id)
+                after = self.store.put(content_key, content, session=session, purpose="file_operation") if content_key and content is not None else None
                 entry = FileOperation(
                     id=identifier, root_id=root.id, run_id=self.context.run_id,
                     tool_call_id=scope.call["id"],
@@ -223,10 +224,7 @@ class FileJournal:
                 row = _row_view(entry)
         current = file_hash(path)
         if row["status"] == "prepared":
-            if current != row["before_hash"]:
-                self._unknown(row, "conflict", "文件在执行前已被其他编辑改变")
-            self.context.jobs.guard(self.context.run_id, worker_id=self.context.worker_id)
-            self._status(row, "running")
+            self._start_prepared(row, scope, path)
             if operation == "delete":
                 # 原子移出工作树，保留删除内容供核对；不先递归删到一半。
                 archived = self.store.path(f"artifacts/file-operations/{row['id']}/deleted")
@@ -246,6 +244,45 @@ class FileJournal:
                           "文件操作结果无法证明；保留现状，需核对原操作后再继续")
         self._status(row, "applied")
         return result_class(**row["result"]["backend"])
+
+    def _start_prepared(self, row: dict, scope: FileCall, path: Path) -> None:
+        """最终授权与启动登记共用控制事务；等待人工不会丢弃原准备内容或重做审查。"""
+        from knowledgeops_agent.harness.permissions.approvals import (
+            ApprovalWaiting,
+            ExecutionApprovals,
+        )
+
+        denied = None
+        pending, conflict = False, False
+        with self.context.jobs.sessions.begin() as session:
+            root, _ = self.context.jobs.execution_guard(session, self.context.run_id, self.context.worker_id)
+            entry = session.get(FileOperation, row["id"], with_for_update=True)
+            if entry.status != "prepared":
+                raise PermissionError("文件操作状态已变化，不能再次登记启动")
+            try:
+                pending = not ExecutionApprovals(self.context).validate_file_execution(
+                    session, scope.call, actual_path=row["path"])
+            except PermissionError as error:
+                # 目标变更或硬禁止结束未执行回执；审批待办则保留prepared等待原调用接续。
+                denied = error
+                skip_prepared_file(entry, str(error))
+            if not denied and not pending:
+                conflict = file_hash(path) != entry.before_hash
+                entry.status = "conflict" if conflict else "running"
+                if conflict:
+                    self.context.jobs._event(session, root, "file_operation_unknown", {
+                        "receipt_id": entry.id, "path": entry.path, "status": "conflict",
+                    })
+            if not pending and not denied:
+                entry.updated_at = utcnow()
+                entry.revision += 1
+        # 控制信号在事务提交后抛出，不能回滚已经持久化的撤回/待办/冲突事实。
+        if denied:
+            raise denied
+        if pending:
+            raise ApprovalWaiting("执行前权限或规则已变化，请重新确认这一次文件操作；目标尚未修改。")
+        if conflict:
+            raise ExecutionUnknown("文件在最终核对后被其他编辑改变")
 
     def _status(self, row: dict, status: str):
         with self.context.jobs.sessions.begin() as session:

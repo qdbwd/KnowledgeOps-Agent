@@ -54,6 +54,11 @@ def reject(changeset_id: str, body: RevisionInput, request: Request):
     return svc(request).knowledge.reject(changeset_id, expected_revision=body.expected_revision)
 
 
+@router.post("/api/changesets/{changeset_id}/save")
+def save_changeset(changeset_id: str, body: RevisionInput, request: Request):
+    return svc(request).knowledge.save_draft(changeset_id, expected_revision=body.expected_revision)
+
+
 @router.post("/api/changesets/{changeset_id}/publish")
 def publish(changeset_id: str, body: PublishInput, request: Request):
     service = svc(request).knowledge

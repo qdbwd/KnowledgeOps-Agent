@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import subprocess
 from threading import Lock
@@ -57,6 +58,12 @@ def _set_status(sources: SourceService, version_id: str, status: str, error: str
         if version is None:
             raise KeyError("source version not found")
         version.status, version.error = status, error
+        if status == "ready":
+            # 仅完整解析完成后封存正文摘要；失败页重试前不伪造完整性证明。
+            body = "".join(session.scalars(select(SourceSegment.text).where(
+                SourceSegment.source_version_id == version_id,
+            ).order_by(SourceSegment.page.asc().nulls_first(), SourceSegment.position)))
+            version.body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 def _save_page(

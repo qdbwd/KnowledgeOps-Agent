@@ -134,7 +134,8 @@ def execute_material(services: Services, run: dict, owner: str) -> dict:
         )
     elif run["input"]["type"] == "web":
         source, cached = WebResearchService(services.sources).import_url(
-            run["input"]["url"], refresh=run["input"].get("refresh", False)
+            run["input"]["url"], refresh=run["input"].get("refresh", False),
+            conversation_id=run["input"].get("conversation_id"),
         )
     else:
         raise ValueError("unsupported material parser")
@@ -225,6 +226,12 @@ def execute_run(
 
             prepare_resources(context)
             material_outcome, compacted_state = compact_context(context)
+        elif run["kind"] == "memory_classification":
+            from knowledgeops_agent.memory.classification import execute as classify_memory
+
+            material_outcome = classify_memory(context)
+            if material_outcome["kind"] == "memory_classification_failed":
+                status, reason = "failed", material_outcome["message"]
         else:
             # 在第一条收费解释请求之前验证/冻结核心规则，避免缺失配置仍消费额度。
             prepare_resources(context)

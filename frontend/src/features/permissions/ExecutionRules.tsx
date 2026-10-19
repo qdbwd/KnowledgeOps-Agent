@@ -52,7 +52,7 @@ export function ExecutionRules() {
     <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
       <h2>命令执行规则</h2>
       <p>
-        审批与能力开关分别管理。自动执行仍遵守拒绝和询问规则；修改或删除规则将在下一次命令执行前重新核对。
+        审批与能力开关分别管理。替我审批也遵守拒绝和询问规则；修改或删除规则将在下一次命令执行前重新核对。
       </p>
       <p className="muted text-muted small text-xs">
         工作区：{root.data?.workspace ?? '尚未加载'}。规则约束是否启动命令，不提供操作系统隔离。

@@ -10,14 +10,26 @@ import builtins
 import hashlib
 import re
 import unicodedata
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select, text
+from sqlalchemy.orm import Session, object_session
 
 from knowledgeops_agent.app.lifecycle.access import require_conversation
 from knowledgeops_agent.app.runs.control import lock_control
+from knowledgeops_agent.memory.categories import (
+    UNSET,
+    CategorySelection,
+    ModelCategoryChoice,
+    UnsetCategory,
+    assign_category,
+    category_rows,
+    legacy_category,
+    resolve_model_choice,
+)
 from knowledgeops_agent.persistence.models import (
     ChatMessage,
     MemoryEvidence,
@@ -28,7 +40,7 @@ from knowledgeops_agent.persistence.models import (
     utcnow,
 )
 
-EXTRACTOR_VERSION = "user-intent-v8-general-memory"
+EXTRACTOR_VERSION = "user-intent-v9-memory-categories"
 MemoryCategory = Literal["preference", "background", "behavior", "cognitive", "goal", "correction"]
 CATEGORIES = {"preference", "background", "behavior", "cognitive", "goal", "correction"}
 
@@ -142,6 +154,8 @@ class PreferenceProposal(BaseModel):
     conflicts: list[str] = Field(max_length=20)
     # 缺省值使旧冻结解释器的输出仍可回放，不重写旧资源和历史响应。
     category: MemoryCategory = "preference"
+    # 分类错误不能取消有真人证据的记忆；具体结构在正文保存前单独校验。
+    display_category: dict | None = None
 
 
 def _memory_evidence(message: str, item: PreferenceProposal) -> tuple[str, str]:
@@ -161,6 +175,14 @@ def _memory_evidence(message: str, item: PreferenceProposal) -> tuple[str, str]:
 
 
 def preference_view(row: Preference) -> dict:
+    classification = dict(row.classification or {})
+    # 分类的进度属于任务状态，不为每次排队/暂停改写一份记忆正文修订。
+    if classification.get("status") == "pending" and (session := object_session(row)) is not None:
+        run = session.get(Run, classification.get("run_id"))
+        if run is None or run.status not in {"queued", "running"}:
+            classification["status"] = run.status if run is not None else "unclassified"
+        elif run.cancel_requested:
+            classification["status"] = "cancelled"
     return {
         "id": row.id,
         "revision": row.revision,
@@ -172,6 +194,8 @@ def preference_view(row: Preference) -> dict:
         "source": row.source,
         "supersedes_id": row.supersedes_id,
         "category": row.category,
+        "display_category_id": row.display_category_id,
+        "classification": classification,
         "confidence": row.confidence,
         "revocation_epoch": row.revocation_epoch,
         "confirmed_at": row.confirmed_at.isoformat() if row.confirmed_at else None,
@@ -230,14 +254,19 @@ def _validate(content: str, scope: str, topic: str) -> None:
 
 
 class MemoryService:
-    def __init__(self, sessions):
+    def __init__(
+        self, sessions, *, on_created: Callable[[Session, Preference], None] | None = None
+    ):
         self.sessions = sessions
+        self.on_created = on_created
 
     @staticmethod
     def _save(session, row):
         session.flush()
         from knowledgeops_agent.memory.retrieval import index_revision
 
+        if not row.classification:
+            legacy_category(session, row)
         if row.status == "active" and row.confirmed_at is None:
             row.confirmed_at = utcnow()
         if row.category in {"background", "goal"} and row.review_after is None:
@@ -299,7 +328,15 @@ class MemoryService:
                 )
             ]
 
-    def create(self, content: str, *, scope: str, topic: str, category: str = "preference") -> dict:
+    def create(
+        self,
+        content: str,
+        *,
+        scope: str,
+        topic: str,
+        category: str = "preference",
+        display_category_id: CategorySelection = UNSET,
+    ) -> dict:
         _validate(content, scope, topic)
         if category not in CATEGORIES:
             raise ValueError("无效记忆类别")
@@ -312,8 +349,12 @@ class MemoryService:
             if existing:
                 existing.status, existing.revision = "active", existing.revision + 1
                 existing.source = {**existing.source, "last_editor": "user"}
+                if not isinstance(display_category_id, UnsetCategory):
+                    assign_category(session, existing, display_category_id)
                 self._evidence(session, existing)
                 self._save(session, existing)
+                if self.on_created is not None:
+                    self.on_created(session, existing)
                 return preference_view(existing)
             row = Preference(
                 content=content,
@@ -324,8 +365,12 @@ class MemoryService:
                 source={"kind": "manual"},
             )
             session.add(row)
+            if not isinstance(display_category_id, UnsetCategory):
+                assign_category(session, row, display_category_id)
             self._evidence(session, row)
             self._save(session, row)
+            if self.on_created is not None:
+                self.on_created(session, row)
             return preference_view(row)
 
     def update(
@@ -339,6 +384,7 @@ class MemoryService:
         status: str | None = None,
         supersedes_id: str | None = None,
         category: str | None = None,
+        display_category_id: CategorySelection = UNSET,
     ) -> dict:
         """乐观修订号和行锁避免覆盖旧页面；取代与确认同事务，不先删除旧偏好。"""
         with self.sessions.begin() as session:
@@ -360,6 +406,18 @@ class MemoryService:
                 raise ValueError("偏好修订已变化，请刷新后再操作")
             if row.status == "deleted":
                 raise ValueError("已删除的偏好保留历史，不自动恢复")
+            if not isinstance(display_category_id, UnsetCategory):
+                assign_category(session, row, display_category_id)
+                if all(
+                    value is None
+                    for value in (content, scope, topic, status, supersedes_id, category)
+                ):
+                    row.revision += 1
+                    self._save(session, row)
+                    return preference_view(row)
+            elif row.classification.get("status") == "pending":
+                # 正文/状态发生人工修改，正在分类的旧修订不能再覆盖它。
+                assign_category(session, row, row.display_category_id)
             new_status = status or row.status
             if new_status not in {"active", "pending", "inactive", "deleted"}:
                 raise ValueError("无效偏好状态")
@@ -397,7 +455,12 @@ class MemoryService:
             return preference_view(row)
 
     def extract(
-        self, message_id: str, proposals: builtins.list, *, known: builtins.list[dict]
+        self,
+        message_id: str,
+        proposals: builtins.list,
+        *,
+        known: builtins.list[dict],
+        known_categories: builtins.list[dict] | None = None,
     ) -> dict:
         """对新消息单次记录有效/忽略/错误结果；个别错误不扩大发布许可或阻塞其他项。"""
         with self.sessions.begin() as session:
@@ -559,6 +622,15 @@ class MemoryService:
                         supersedes_id=target.id if target and certain else None,
                     )
                     session.add(row)
+                    if "display_category" in item.model_fields_set:
+                        # 新提取在同一次语义调用中选展示类别。失败保留正文，不另发模型请求。
+                        assign_category(session, row, None, source="extraction")
+                        try:
+                            choice = ModelCategoryChoice.model_validate(item.display_category)
+                            identity = resolve_model_choice(session, choice, known_categories or [])
+                            assign_category(session, row, identity, source="extraction")
+                        except (ValueError, ValidationError):
+                            row.classification = {**row.classification, "error": "invalid_result"}
                     self._evidence(
                         session,
                         row,
@@ -637,6 +709,11 @@ class MemoryService:
             if old is None:
                 raise KeyError("记忆修订不存在")
             value = old.content
+            identity = value.get(
+                "display_category_id", "memory-category-" + value.get("category", "preference")
+            )
+            if identity not in {row["id"] for row in category_rows(session)}:
+                identity = None
         return self.update(
             memory_id,
             expected_revision=expected_revision,
@@ -644,6 +721,7 @@ class MemoryService:
             scope=value["scope"],
             topic=value["topic"],
             category=value.get("category", "preference"),
+            display_category_id=identity,
         )
 
     def merge(self, *, revisions: dict[str, int], content: str) -> dict:
@@ -699,6 +777,12 @@ class MemoryService:
                 },
             )
             session.add(merged)
+            identity = (
+                first.display_category_id
+                if all(row.display_category_id == first.display_category_id for row in rows)
+                else None
+            )
+            assign_category(session, merged, identity)
             self._evidence(session, merged)
             seen = set()
             for evidence in session.scalars(

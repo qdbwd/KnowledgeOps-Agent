@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from deepagents.backends.local_shell import LocalShellBackend
 from deepagents.backends.protocol import (
+    BackendProtocol,
     DeleteResult,
     EditResult,
     ExecuteResponse,
@@ -27,6 +28,7 @@ from deepagents.middleware.filesystem import (
 )
 
 from knowledgeops_agent.harness.sandbox.execution import execute_local_command
+from knowledgeops_agent.harness.sandbox.targets import mutable_path
 from knowledgeops_agent.harness.skills.resources import FrozenSkillBackend
 
 WORKSPACE_TOOLS: tuple[FsToolName, ...] = (
@@ -39,7 +41,6 @@ WORKSPACE_TOOLS: tuple[FsToolName, ...] = (
     "delete",
     "execute",
 )
-MANAGED_DIRECTORIES = {"uploads", "artifacts", ".knowledgeops-temporary"}
 # 对照 DeerFlow write_file 的 80 KiB 单次整篇写入上限，避免巨大的工具参数。
 # 沿用 SDK 的精确编辑/命令接口处理增量写入，不自建另一套写文件协议。
 MAX_WRITE_BYTES = 80 * 1024
@@ -85,28 +86,11 @@ class WorkspaceBackend(LocalShellBackend):
 
     def _protected(self, path: str) -> bool:
         """普通写工具不能改动发布版本、原件、运行产物和冻结技能。"""
-        parts = PurePosixPath("/" + path.lstrip("/")).parts
-        if len(parts) > 1 and parts[1] in {*MANAGED_DIRECTORIES, "skills"}:
+        try:
+            mutable_path(self.cwd, path)
+        except (PermissionError, OSError, ValueError):
             return True
-        if (
-            len(parts) > 1
-            and parts[1] == "knowledge"
-            and (len(parts) < 3 or parts[2] != "documents")
-        ):
-            return True
-        # 同根符号链接也不能把 outputs 内的普通编辑引向管理区。
-        resolved = self._resolve_path(path)
-        relative = resolved.relative_to(self.cwd)
-        return bool(
-            relative.parts
-            and (
-                relative.parts[0] in MANAGED_DIRECTORIES
-                or (
-                    relative.parts[0] == "knowledge"
-                    and (len(relative.parts) < 2 or relative.parts[1] != "documents")
-                )
-            )
-        )
+        return False
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000):
         if file_path.startswith("/skills/"):
@@ -205,13 +189,18 @@ class WorkspaceBackend(LocalShellBackend):
             )
 
 
-def build_workspace_middleware(backend: WorkspaceBackend, selected: set[str]):
+def build_workspace_middleware(
+    backend: BackendProtocol, selected: set[str], *, max_timeout: int | None = None
+):
     """只声明策略允许的上游工具，沿用已有 Runtime 的预算、撤回和结果外置。"""
     tools = [name for name in WORKSPACE_TOOLS if name in selected]
+    # 管理详情使用无磁盘后端读取同一工具定义，不创建真实工作区。
+    timeout = max_timeout if max_timeout is not None else getattr(backend, "max_timeout", 60)
+    cwd = getattr(backend, "cwd", "本次运行绑定的工作区")
     return FilesystemMiddleware(
         backend=backend,
         tools=tools,
-        max_execute_timeout=backend.max_timeout,
+        max_execute_timeout=timeout,
         grep_max_count=100,
         tool_token_limit_before_evict=None,
         human_message_token_limit_before_evict=None,
@@ -228,7 +217,7 @@ def build_workspace_middleware(backend: WorkspaceBackend, selected: set[str]):
             + "\nSingle-call content limit: 80 KiB UTF-8. For longer content, use incremental edit_file operations or execute a script to append chunks.",
         },
         system_prompt=(
-            f"本地文件工作区实际挂载在 {backend.cwd}。文件工具以此为虚拟根，/skills/ 为冻结只读技能。"
+            f"本地文件工作区实际挂载在 {cwd}。文件工具以此为虚拟根，/skills/ 为冻结只读技能。"
             "先 ls/glob 定位、read_file 分页阅读，再 edit_file 精确修改；write_file 新建文件。"
             "修改现有文件前必须重新读取当前版本；文件被修改或读取正文被压缩后，旧读取标记失效。"
             "delete 删除目录前先 ls 目标并读取其中所有文件，不能删除整个工作区或应用管理区。"
@@ -243,7 +232,7 @@ def build_workspace_middleware(backend: WorkspaceBackend, selected: set[str]):
             '例如 python "$SKILLS_DIR/example/scripts/run.py"；文件工具仍用 /skills/example/...。'
             "SKILLS_DIR 每次命令重建为冻结快照，不能保存该临时路径供下次复用。"
             "脚本不会自动运行或安装依赖，也不会自动获得外部服务密钥。"
-            f"或上述实际挂载路径，单次至多 {backend.max_timeout} 秒。它不是隔离容器，"
+            f"或上述实际挂载路径，单次至多 {timeout} 秒。它不是隔离容器，"
             "取消/失去任务租约/活跃时间预算耗尽时会停止命令；不要用 & 启动需要跨调用存活的后台服务。"
             "输出过长只返回截断内容；需完整日志时显式重定向到 work 下再分页读取。"
             "不得读取应用源码/配置/密钥，不得通过脚本改写管理区或绕过知识发布。"

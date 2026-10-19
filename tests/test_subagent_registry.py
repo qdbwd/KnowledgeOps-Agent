@@ -31,19 +31,20 @@ def fields(**changes):
     }
 
 
-def test_default_snapshot_builtin_and_disabled_custom_are_separate(registry):
-    builtin = registry.snapshot()[0]
+def test_empty_new_directory_and_legacy_builtin_are_separate(registry):
+    assert registry.snapshot() == [] and registry.list() == []
+    builtin = registry.get("builtin-researcher")
     assert builtin == registry.get("builtin-researcher")
     assert builtin["name"] == "researcher" and builtin["builtin"] is True
     assert registry.validate_binding(builtin) == builtin
     created = registry.create(**fields(enabled=False))
-    assert len(registry.list()) == 2
-    assert registry.snapshot() == [builtin]
+    assert len(registry.list()) == 1
+    assert registry.snapshot() == []
     assert registry.history(created["id"]) == [created]
     with pytest.raises(PermissionError):
         registry.update("builtin-researcher", expected_revision=1, system_prompt="替换")
-    with pytest.raises(ValueError):
-        registry.create(**fields(name="researcher"))
+    ordinary = registry.create(**fields(name="researcher"))
+    assert ordinary["builtin"] is False and ordinary["id"] != builtin["id"]
 
 
 @pytest.mark.parametrize("change", ["add", "remove"])
@@ -127,7 +128,7 @@ def test_builtin_catalog_result_cannot_mutate_another_binding(registry):
 
 
 def test_builtin_new_revision_keeps_old_template_available(registry, monkeypatch):
-    """模拟发布新版内置模板；新任务用新版，旧绑定和历史仍按原修订解释。"""
+    """历史协议若曾发布多个修订，绑定仍按原修订解释，不重新加入新目录。"""
     module = importlib.import_module("knowledgeops_agent.harness.subagents.registry")
     original = registry.get("builtin-researcher")
     replacement = {**deepcopy(original), "revision": 2, "system_prompt": "新版模板"}
@@ -225,7 +226,7 @@ def test_catalog_limit_is_atomic_and_disabled_roles_still_count(registry):
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(create, [0, 1]))
     assert sum(row is not None for row in results) == 1
-    assert len(registry.list()) == 21  # 20个自定义加内置。
+    assert len(registry.list()) == 20
     row = next(row for row in registry.list() if not row["builtin"])
     registry.update(row["id"], expected_revision=1, deleted=True)
     assert registry.create(**fields(name="replacement", enabled=False))

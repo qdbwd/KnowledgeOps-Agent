@@ -55,7 +55,7 @@ def edit_document(document_id: str, body: EditInput, request: Request):
         "action": "update",
         "document_id": document_id,
     }
-    draft = service.create_draft(root_id, [operation], operation_key=root_id)
+    draft = service.create_draft(root_id, [operation], operation_key=root_id, independently_saved=True)
     if draft["status"] != "published":
         service.approve(draft["id"], expected_revision=draft["revision"])
     return service.publish(
@@ -71,4 +71,5 @@ def document_action(document_id: str, body: DocumentActionInput, request: Reques
         root_id,
         [{**body.model_dump(exclude={"request_key"}), "document_id": document_id}],
         operation_key=root_id,
+        independently_saved=True,
     )

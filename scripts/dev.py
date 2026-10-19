@@ -20,8 +20,48 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 from urllib.parse import quote
+from urllib.request import ProxyHandler, build_opener
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class StartupError(RuntimeError):
+    """启动前置条件失败；信息可直接展示，不包含DSN、密码或SQL参数。"""
+
+
+def check_database_schema(connection) -> None:
+    """用Alembic公开接口只读比较实际版本与源码head，不自动迁移用户数据库。"""
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    expected = set(ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini"))).get_heads())
+    current = set(MigrationContext.configure(connection).get_current_heads())
+    if current != expected:
+        raise StartupError(
+            f"数据库结构版本不匹配：当前 {', '.join(sorted(current)) or '未初始化'}，"
+            f"代码要求 {', '.join(sorted(expected))}。"
+            "请停止应用、完成备份后，在开发容器执行 "
+            "MODEL_CALLS_ENABLED=false python scripts/dev.py --run python -m alembic upgrade head。"
+            "详细步骤见 docs/increment-migration-and-validation.md；本次没有自动迁移。"
+        )
+
+
+def check_database(environment: Mapping[str, str]) -> None:
+    """在昂贵的API导入和worker启动前检查数据库；连接失败不回显敏感连接串。"""
+    from sqlalchemy import create_engine
+    from sqlalchemy.exc import SQLAlchemyError
+
+    engine = create_engine(environment["DATABASE_URL"], connect_args={"connect_timeout": 5})
+    try:
+        with engine.connect() as connection:
+            connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+            connection.exec_driver_sql("SET LOCAL statement_timeout = '5s'")
+            check_database_schema(connection)
+    except SQLAlchemyError as error:
+        raise StartupError("数据库检查失败，请确认PostgreSQL已就绪及当前连接配置有效。") from error
+    finally:
+        engine.dispose()
 
 
 def build_environment(env_file: Path, inherited: Mapping[str, str]) -> dict[str, str]:
@@ -75,6 +115,40 @@ class Service:
     name: str
     command: list[str]
     directory: Path
+    readiness_url: str | None = None
+
+
+def wait_for_readiness(
+    service: Service, process: subprocess.Popen, stopping: Event, timeout: float
+) -> bool:
+    """等待真实HTTP就绪，不能把Uvicorn热更新父进程存活当作API启动成功。
+
+    仅检查本地健康地址，不使用环境HTTP代理。失败交由统一进程组清理；
+    不启动后续消费者和前端，也不重试运行任务。Ctrl+C仍可立即打断等待。
+    """
+    if service.readiness_url is None:
+        return True
+    opener = build_opener(ProxyHandler({}))
+    deadline = time.monotonic() + timeout
+    print(f"[dev] 等待 {service.name} 健康检查通过…", flush=True)
+    while not stopping.is_set():
+        if process.poll() is not None:
+            raise StartupError(f"{service.name} 在就绪前退出，请检查上方启动日志。")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise StartupError(
+                f"{service.name} 在 {timeout:g} 秒内未就绪，请检查上方启动异常；"
+                "热更新父进程存活不代表服务可用。"
+            )
+        try:
+            with opener.open(service.readiness_url, timeout=min(1.0, remaining)) as response:
+                if response.status == 200:
+                    print(f"[dev] {service.name} 已就绪。", flush=True)
+                    return True
+        except OSError:
+            pass  # 启动期间连接拒绝或非200都继续有界等待，不掩盖最终失败。
+        stopping.wait(0.2)
+    return False
 
 
 def stop_processes(processes: list[subprocess.Popen], timeout: float) -> None:
@@ -100,7 +174,8 @@ def stop_processes(processes: list[subprocess.Popen], timeout: float) -> None:
 
 
 def run_services(
-    services: list[Service], environment: dict[str, str], *, shutdown_timeout: float = 20
+    services: list[Service], environment: dict[str, str], *, shutdown_timeout: float = 20,
+    startup_timeout: float = 180,
 ) -> int:
     """前台监督应用；中断、启动失败或任一进程退出都统一收尾，不自动重试任务。"""
     stopping = Event()
@@ -124,6 +199,8 @@ def run_services(
             processes.append(subprocess.Popen(
                 service.command, cwd=service.directory, env=environment, start_new_session=True
             ))
+            if not wait_for_readiness(service, processes[-1], stopping, startup_timeout):
+                return exit_code
         print("[dev] 启动中，请等待 API/worker 就绪日志。Ctrl+C 停止全部应用进程。", flush=True)
         while not stopping.wait(0.2):
             for service, process in zip(services, processes, strict=False):
@@ -135,6 +212,9 @@ def run_services(
                     )
                     return result if result > 0 else 1
         return exit_code
+    except StartupError as error:
+        print(f"[dev] 启动失败：{error}", file=sys.stderr, flush=True)
+        return 1
     finally:
         print("[dev] 正在停止应用进程；数据库和开发容器继续保留。", flush=True)
         try:
@@ -180,6 +260,11 @@ def main(argv: list[str] | None = None) -> int:
     if not python.is_file() or not npm or not (ROOT / "frontend/node_modules/vite").is_dir():
         print("开发依赖尚未准备好，请检查 init 容器的 bootstrap 日志。", file=sys.stderr)
         return 1
+    try:
+        check_database(environment)
+    except StartupError as error:
+        print(f"[dev] 启动检查失败：{error}", file=sys.stderr, flush=True)
+        return 1
     # 锁只在当前开发容器有效；跨容器重复消费者仍由 worker 的 PG 租约拒绝。
     with Path("/tmp/knowledgeops-dev.lock").open("w") as lock:
         try:
@@ -202,7 +287,7 @@ def main(argv: list[str] | None = None) -> int:
                 "--host", "0.0.0.0", "--port", "8000", "--reload",
                 "--reload-dir", "backend/src", "--log-level", environment.get("APP_LOG_LEVEL", "info"),
                 "--timeout-graceful-shutdown", "5",
-            ], ROOT),
+            ], ROOT, readiness_url="http://127.0.0.1:8000/api/health"),
             Service("worker", [str(python), "-m", "knowledgeops_agent.worker"], ROOT),
             Service("Vite", [npm, "run", "dev", "--", "--port", "5173", "--strictPort"], ROOT / "frontend"),
         ]

@@ -2,8 +2,9 @@
 
 from contextlib import nullcontext
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, literal, or_, select
 
+from knowledgeops_agent.app.lifecycle.asset_references import reachable_assets
 from knowledgeops_agent.app.lifecycle.catalog import ReferenceCatalog, install_reference_tracking
 from knowledgeops_agent.app.lifecycle.files import (
     operation_tree_manifest,
@@ -11,7 +12,8 @@ from knowledgeops_agent.app.lifecycle.files import (
     remove_operation_file,
     remove_operation_tree_entry,
 )
-from knowledgeops_agent.app.lifecycle.references import reachable_artifacts, replace_references
+from knowledgeops_agent.app.lifecycle.promotion import promote_material
+from knowledgeops_agent.app.lifecycle.references import replace_references
 from knowledgeops_agent.app.lifecycle.retained import (
     history_reachability,
     pin_checkpoint_artifacts,
@@ -28,7 +30,7 @@ from knowledgeops_agent.persistence import models as db
 class RunRetentionCleaner:
     """复用同一个CleanupJob，不复制任务正文；每次处理一批记录，失败保留原阶段。"""
 
-    PHASES = ("retained_data", "retained_history", "retained_checkpoints", "retained_artifacts", "retained_files", "retained_file_tree", "retained_guidance", "finalize")
+    PHASES = ("retained_data", "retained_history", "retained_checkpoints", "retained_artifacts", "retained_artifact_files", "retained_files", "retained_file_tree", "retained_guidance", "finalize")
 
     def __init__(self, details):
         self.details = details
@@ -63,9 +65,12 @@ class RunRetentionCleaner:
                     self._checkpoint_step(session, job, saver)
                 elif job.phase == "retained_artifacts":
                     result = self.collect_materials(session, root.id, after=job.cursor.get("after"))
-                    self.jobs.advance_in(job, phase="retained_artifacts" if result["more"] else "retained_files",
-                                         cursor={"after": result["after"]} if result["more"] else {},
-                                         summary={**job.summary, "materials_expired": job.summary.get("materials_expired", 0) + result["expired"]})
+                    self.jobs.advance_in(job, phase="retained_artifact_files",
+                                         cursor={"after": result["after"], "more": result["more"], "files": result["files"]},
+                                         summary={**job.summary, "materials_expired": job.summary.get("materials_expired", 0) + result["expired"],
+                                                  "materials_promoted": job.summary.get("materials_promoted", 0) + result["promoted"]})
+                elif job.phase == "retained_artifact_files":
+                    self._artifact_file_step(session, job)
                 elif job.phase == "retained_files":
                     self._file_step(session, root, job)
                 elif job.phase == "retained_file_tree":
@@ -129,8 +134,8 @@ class RunRetentionCleaner:
     def collect_materials(self, session, root_id, *, after=None):
         """引用目录已回填、活检查点已核对后调用；后续维护也可再扫已过期根的材料。
 
-        过期只是正文不可用，保留小型身份/哈希以说明失效。共享物理文件最后一个
-        可用材料释放时才删除。外部删除成功但PG回滚时，重试相同地址仍可收敛。
+        内部副本释放前先把正式引用的文本转成固定来源，并保留兼容别名。这里只
+        失效DB身份并产生精确文件清单；提交后下一阶段才实际删除文件。
         """
         if not self.catalog.ready(session):
             raise ValueError("reference catalog is incomplete")
@@ -140,31 +145,56 @@ class RunRetentionCleaner:
             db.ArtifactRetentionReference.owner_kind.in_(["run", "run_input", "checkpoint"]),
             db.ArtifactRetentionReference.owner_id.in_(closed),
         ))
+        session.execute(delete(db.AssetReference).where(
+            db.AssetReference.owner_kind.in_(["run", "run_input", "checkpoint"]), db.AssetReference.owner_id.in_(closed),
+        ))
         refresh_workspace_references(session, store)
         owned = select(db.Run.id).where(db.Run.root_id == root_id, db.Run.lifecycle_state.in_(["cleaning", "expired"]))
-        reachable = reachable_artifacts()
-        query = select(db.RunArtifact).where(db.RunArtifact.run_id.in_(owned), db.RunArtifact.expired_at.is_(None),
-                                             db.RunArtifact.id.not_in(select(reachable.c.id)))
+        reachable = reachable_assets(session)
+        durable = reachable_assets(session, durable_only=True)
+        node = literal("material:") + db.RunArtifact.id
+        query = select(db.RunArtifact, node.in_(select(reachable.c.node)).label("kept"),
+                       node.in_(select(durable.c.node)).label("durable"),
+                       (literal("material_file:") + db.RunArtifact.id).in_(select(reachable.c.node)).label("file_used"))\
+            .where(db.RunArtifact.run_id.in_(owned), db.RunArtifact.expired_at.is_(None))
         if after:
             query = query.where(db.RunArtifact.id > after)
-        rows = list(session.scalars(query.order_by(db.RunArtifact.id).limit(self.batch_size + 1)))
-        for row in rows[:self.batch_size]:
+        rows = list(session.execute(query.order_by(db.RunArtifact.id).limit(self.batch_size + 1)))
+        files, expired, promoted = [], 0, 0
+        for row, kept, durable_use, file_used in rows[:self.batch_size]:
+            if durable_use and not row.promoted_version_id:
+                promote_material(session, row)
+                promoted += 1
+            if file_used or (kept and not row.promoted_version_id):
+                continue
             if row.content_storage_key:
-                shared = session.scalar(select(db.RunArtifact.id).where(
-                    db.RunArtifact.content_storage_key == row.content_storage_key, db.RunArtifact.id != row.id,
-                    db.RunArtifact.expired_at.is_(None),
-                ).limit(1))
-                if shared is None:
-                    if store is None:
-                        raise ValueError("material cleanup requires the configured workspace")
-                    remove_artifact_file(store, run_id=row.run_id, content_hash=row.content_hash, storage_key=row.content_storage_key)
+                if store is None:
+                    raise ValueError("material cleanup requires the configured workspace")
+                expected = f"artifacts/{row.run_id}/{row.content_hash}.txt"
+                if row.content_storage_key != expected:
+                    raise ValueError("artifact storage key is outside its managed identity")
+                files.append({"run_id": row.run_id, "content_hash": row.content_hash, "storage_key": row.content_storage_key})
             row.expired_at, row._content, row.content_storage_key = self.now(), "", None
-            session.execute(delete(db.ArtifactRetentionReference).where(
-                db.ArtifactRetentionReference.owner_kind == "material", db.ArtifactRetentionReference.owner_id == row.id,
-            ))
+            replace_references(session, "material", row.id, {})
+            expired += 1
             session.flush()
-        return {"expired": min(len(rows), self.batch_size), "more": len(rows) > self.batch_size,
-                "after": rows[self.batch_size - 1].id if len(rows) > self.batch_size else None}
+        return {"expired": expired, "promoted": promoted, "files": files, "more": len(rows) > self.batch_size,
+                "after": rows[self.batch_size - 1][0].id if len(rows) > self.batch_size else None}
+
+    def _artifact_file_step(self, session, job):
+        """DB失效已提交，失败重试只处理清单；新共享使用者仍能阻止物理删除。"""
+        store = session.info.get("file_store")
+        for entry in job.cursor.get("files", []):
+            shared = session.scalar(select(db.RunArtifact.id).where(
+                db.RunArtifact.content_storage_key == entry["storage_key"], db.RunArtifact.expired_at.is_(None),
+            ).limit(1))
+            if shared is None:
+                if store is None:
+                    raise ValueError("material cleanup requires the configured workspace")
+                remove_artifact_file(store, **entry)
+        more = job.cursor.get("more", False)
+        self.jobs.advance_in(job, phase="retained_artifacts" if more else "retained_files",
+                             cursor={"after": job.cursor["after"]} if more else {})
 
     def _file_step(self, session, root, job):
         rows = list(session.scalars(select(db.FileOperation).where(db.FileOperation.root_id == root.id)

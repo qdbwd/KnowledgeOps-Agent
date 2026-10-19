@@ -5,15 +5,21 @@ import json
 
 from sqlalchemy import delete, func, select, update
 
+from knowledgeops_agent.app.lifecycle.assets import (
+    asset_plan,
+    collect_conversation_assets,
+    collect_source_files,
+)
 from knowledgeops_agent.app.lifecycle.jobs import job_view
 from knowledgeops_agent.app.lifecycle.materials import RunRetentionCleaner
 from knowledgeops_agent.app.lifecycle.provenance import scrub_source_batch
 from knowledgeops_agent.app.runs.control import lock_control
 from knowledgeops_agent.harness.context.history import _digest
+from knowledgeops_agent.knowledge.files import workspace_lock
 from knowledgeops_agent.learning.tasks import LearningTaskService
 from knowledgeops_agent.persistence import models as db
 
-PRESERVED = ["上传资料与来源", "知识文档及版本", "草稿", "独立文件产物", "长期记忆正文", "学习目标与配置"]
+PRESERVED = ["独立保存或仍被使用的材料", "知识文档及版本", "独立保存或仍被引用的草稿", "已交付文件", "长期记忆正文", "学习目标与配置"]
 
 
 def completed_deletion_view(conversation):
@@ -25,7 +31,8 @@ def completed_deletion_view(conversation):
 
 class ConversationCleaner:
     PHASES = ("conversation_detach", "conversation_sources", "conversation_messages",
-              "conversation_snapshots", "conversation_history", "conversation_runs", "conversation_finalize")
+              "conversation_snapshots", "conversation_history", "conversation_runs", "conversation_assets",
+              "conversation_asset_files", "conversation_finalize")
 
     def __init__(self, details, run_service):
         self.details, self.retained = details, RunRetentionCleaner(details)
@@ -68,21 +75,26 @@ class ConversationCleaner:
             "history_records": session.scalar(select(func.count()).select_from(db.TaskHistoryRecord).where(db.TaskHistoryRecord.scope.in_(self._scopes(session, conversation_id)))),
             "learning_tasks": session.scalar(select(func.count()).select_from(db.LearningTask).where(db.LearningTask.conversation_id == conversation_id)),
         }
+        assets = asset_plan(session, conversation_id)
+        if not assets["ready"]:
+            blockers.append("asset_reference_index_pending")
         tasks = list(session.execute(select(db.LearningTask.id, db.LearningTask.revision).where(db.LearningTask.conversation_id == conversation_id).order_by(db.LearningTask.id)))
         version = hashlib.sha256(json.dumps([row.id, row.deletion_state, row.user_sequence, row.runtime_revision,
-            row.latest_snapshot_id, counts, [tuple(task) for task in tasks],
+            row.latest_snapshot_id, counts, assets, [tuple(task) for task in tasks],
             [(r.id, r.status, r.generation, r.event_sequence, r.lifecycle_state) for r in roots], sorted(set(blockers))], sort_keys=True).encode()).hexdigest()
         return {"conversation_id": row.id, "title": row.title if row.deletion_state == "active" else "已删除会话",
                 "state": row.deletion_state, "version": version, "eligible": not blockers,
-                "blockers": sorted(set(blockers)), "counts": counts, "preserved": PRESERVED}
+                "blockers": sorted(set(blockers)), "counts": counts, "preserved": PRESERVED,
+                "assets": {key: value for key, value in assets.items() if key != "fingerprint"}}
 
     def preview(self, conversation_id):
-        with self.sessions() as session:
+        with workspace_lock(self.sessions), self.sessions.begin() as session:
+            lock_control(session)
             return self._preview(session, conversation_id)
 
     def admit(self, conversation_id, *, expected_version):
         """预览版本只是乐观校验；实际执行仍在消息/恢复共用控制锁下重查。"""
-        with self.sessions.begin() as session:
+        with workspace_lock(self.sessions), self.sessions.begin() as session:
             lock_control(session)
             conversation = session.get(db.Conversation, conversation_id)
             if conversation is None:
@@ -100,7 +112,7 @@ class ConversationCleaner:
             conversation.deletion_state, conversation.deletion_requested_at = "deleting", self.now()
             conversation.selected_learning_task_id, conversation.latest_snapshot_id = None, None
             job = self.jobs.create(session, "conversation", conversation_id)
-            job.phase, job.summary = "conversation_detach", {"counts": preview["counts"], "preserved": PRESERVED}
+            job.phase, job.summary = "conversation_detach", {"counts": preview["counts"], "assets": preview["assets"], "preserved": PRESERVED}
             return job_view(job)
 
     def retry(self, identity):
@@ -116,10 +128,15 @@ class ConversationCleaner:
         if claim is None:
             return None
         try:
+            if claim["phase"] == "conversation_assets":
+                indexed = self.retained.catalog.step(limit=self.batch_size)
+                if not indexed["complete"]:
+                    self.jobs.advance(claim["id"], claim["claim_token"], phase=claim["phase"])
+                    return self.jobs.get(claim["id"])
             if claim["phase"] == "conversation_runs":
                 self._runs_step(claim)
             else:
-                with self.sessions.begin() as session:
+                with workspace_lock(self.sessions), self.sessions.begin() as session:
                     lock_control(session)
                     job = self.jobs.owned(session, claim["id"], claim["claim_token"])
                     conversation = session.get(db.Conversation, job.target_id)
@@ -136,6 +153,11 @@ class ConversationCleaner:
                         self._snapshots(session, conversation, job)
                     elif job.phase == "conversation_history":
                         self._history(session, conversation, job)
+                    elif job.phase == "conversation_assets":
+                        self._assets(session, conversation, job)
+                    elif job.phase == "conversation_asset_files":
+                        collect_source_files(session, job.cursor["originals"])
+                        self.jobs.advance_in(job, phase="conversation_assets")
                     elif job.phase == "conversation_finalize":
                         self._finalize(session, conversation, job)
         except Exception as error:
@@ -201,7 +223,7 @@ class ConversationCleaner:
             with self.sessions() as session:
                 root_id = session.scalar(query.order_by(db.Run.id).limit(1))
             if root_id is None:
-                self.jobs.advance(claim["id"], claim["claim_token"], phase="conversation_finalize")
+                self.jobs.advance(claim["id"], claim["claim_token"], phase="conversation_assets")
                 return
             child = self.details.admit(root_id, deleting_conversation=claim["target_id"])
             self.jobs.advance(claim["id"], claim["claim_token"], phase="conversation_runs", cursor={"root": root_id, "run_job": child["id"]})
@@ -215,6 +237,15 @@ class ConversationCleaner:
             raise ValueError("dependent run cleanup needs retry")
         self.jobs.advance(claim["id"], claim["claim_token"], phase="conversation_runs",
                           cursor={"after": cursor["root"]} if child["status"] == "completed" else cursor)
+
+    def _assets(self, session, conversation, job):
+        result = collect_conversation_assets(session, conversation.id, limit=self.batch_size)
+        summary = dict(job.summary)
+        for key in ("drafts_deleted", "versions_deleted"):
+            summary[key] = summary.get(key, 0) + result[key]
+        phase = "conversation_asset_files" if result.get("originals") else "conversation_assets" if result["more"] else "conversation_finalize"
+        self.jobs.advance_in(job, phase=phase, summary=summary,
+                             cursor={"originals": result["originals"]} if result.get("originals") else {})
 
     def _finalize(self, session, conversation, job):
         query = select(db.Run).where(db.Run.id.in_(self._runs(conversation.id)))

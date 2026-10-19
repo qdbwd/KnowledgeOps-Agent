@@ -7,8 +7,8 @@ from knowledgeops_agent.persistence.models import Run, RunControl
 def request_pause(jobs, run_id: str) -> dict:
     with jobs.sessions.begin() as session:
         run = jobs._locked(session, run_id)
-        if run.parent_id or run.kind != "agent":
-            raise ValueError("暂停入口用于根 Agent 任务；子任务随根任务暂停")
+        if run.parent_id or run.kind not in {"agent", "memory_classification"}:
+            raise ValueError("暂停入口用于根 Agent 或记忆分类任务；子任务随根任务暂停")
         if run.status not in {"running", "queued", "paused", "waiting_input", "waiting_children", "interrupted"}:
             raise ValueError("当前运行已结束，不能请求暂停")
         control = session.get(RunControl, run.id)

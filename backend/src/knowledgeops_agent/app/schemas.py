@@ -39,11 +39,22 @@ class PreferenceUpdate(InputModel):
 
 
 class MemoryInput(PreferenceInput):
-    category: MemoryCategory = "preference"
+    # 旧客户端的内部类别参数仍兼容；新UI只管理展示类别。
+    category: MemoryCategory | None = None
+    display_category_id: str | None = Field(default=None, max_length=36)
 
 
 class MemoryUpdate(PreferenceUpdate):
     category: MemoryCategory | None = None
+    display_category_id: str | None = Field(default=None, max_length=36)
+
+
+class MemoryCategoryInput(InputModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class MemoryCategoryUpdate(MemoryCategoryInput):
+    expected_revision: int = Field(ge=1)
 
 
 class MemoryRollback(InputModel):
@@ -58,6 +69,10 @@ class MemoryMerge(InputModel):
 
 class MemoryExpectedRevision(InputModel):
     expected_revision: int = Field(ge=1)
+
+
+class MemoryClassificationInput(MemoryExpectedRevision):
+    request_key: str = Field(min_length=1, max_length=200)
 
 
 class MessageInput(InputModel):
@@ -95,12 +110,14 @@ class MCPDecision(InputModel):
 class TextInput(InputModel):
     title: str = Field(min_length=1, max_length=500)
     content: str = Field(min_length=1, max_length=2000000)
+    conversation_id: str | None = Field(default=None, min_length=1, max_length=36)
 
 
 class UrlInput(InputModel):
     url: str = Field(min_length=1, max_length=4096)
     request_key: str = Field(min_length=1, max_length=160)
     refresh: bool = False
+    conversation_id: str | None = Field(default=None, min_length=1, max_length=36)
 
 
 class RevisionInput(InputModel):

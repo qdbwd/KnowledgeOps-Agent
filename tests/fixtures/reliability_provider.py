@@ -3,7 +3,7 @@
 import json
 
 from fixtures.execution_provider import ExecutionProvider
-from langchain_core.messages import AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 
 class QuestionsProvider:
@@ -33,7 +33,11 @@ class QuestionsProvider:
 class FileProvider:
     """只提出读/修改操作；文件、故障、恢复与回执由生产实现负责。"""
 
-    invoke = ExecutionProvider.invoke
+    def invoke(self, messages, **kwargs):
+        payload = json.loads(messages[-1].content)
+        if payload.get("policy_version") == "execution-review-v1":
+            return AIMessage('{"verdict":"approve","reason":"文件故障恢复验收固定批准"}')
+        return ExecutionProvider.invoke(self, messages, **kwargs)
 
     def __init__(self):
         self.requests = 0
@@ -53,3 +57,16 @@ class FileProvider:
             ("read_file", {"file_path": "/work/review.txt"}, "review-read")
         )
         yield AIMessageChunk("", tool_call_chunks=[{"name": name, "args": json.dumps(args), "id": call_id, "index": 0}])
+
+
+class FileApprovalProvider(FileProvider):
+    """浏览器通过真实审批入口决定一次写入；不代替用户填写或批准动作。"""
+
+    def stream(self, messages, **kwargs):
+        if any(isinstance(message, ToolMessage) for message in messages):
+            yield AIMessageChunk("已收到文件写入回执。")
+            return
+        yield AIMessageChunk("", tool_call_chunks=[{
+            "name": "write_file", "id": "browser-file-approval", "index": 0,
+            "args": json.dumps({"file_path": "/work/approval-note.md", "content": "# 文件审批示例\n批准后才写入。"}),
+        }])

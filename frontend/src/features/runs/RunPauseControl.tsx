@@ -11,7 +11,7 @@ export function RunPauseControl({ run, onChanged }: { run: Run; onChanged: () =>
   const [error, setError] = useState('');
   if (
     run.parent_id ||
-    run.kind !== 'agent' ||
+    !['agent', 'memory_classification'].includes(run.kind) ||
     !['queued', 'running', 'paused', 'waiting_input', 'waiting_children', 'interrupted'].includes(
       run.status,
     )

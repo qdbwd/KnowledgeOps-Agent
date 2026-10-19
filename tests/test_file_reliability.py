@@ -3,13 +3,14 @@
 import json
 
 import pytest
-from langchain_core.messages import AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import select
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
 from test_workspace_runtime import enable
 
+from knowledgeops_agent.harness.permissions.settings import ExecutionSettings
 from knowledgeops_agent.persistence.models import FileOperation
 
 runtime_services = _runtime_services
@@ -23,6 +24,10 @@ class FileProvider:
 
     def bind_tools(self, tools):
         return self
+
+    def invoke(self, messages, **kwargs):
+        assert json.loads(messages[-1].content)["policy_version"] == "execution-review-v1"
+        return AIMessage('{"verdict":"approve","reason":"文件可靠性测试固定批准，不证明风险判断质量"}')
 
     def stream(self, messages, **kwargs):
         index = self.position
@@ -42,6 +47,8 @@ class FileProvider:
 def graph_case(runtime_services, tmp_path, batches, *, publication_mode="preview", **kwargs):
     module, context, run = setup_run(runtime_services, mode=publication_mode)
     context.workspace_root = tmp_path / "workspace"
+    ExecutionSettings(context.jobs.sessions).update(run["conversation_id"], expected_revision=0,
+                                                   permission_mode="auto_review")
     enable(context.jobs.sessions)
     context.gateway.client = FileProvider(batches, **kwargs)
     saver = InMemorySaver()

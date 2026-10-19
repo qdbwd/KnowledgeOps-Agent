@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 
+from knowledgeops_agent.harness.sandbox.receipts import invalidate_prepared_files
 from knowledgeops_agent.persistence.models import ChatMessage, MessageDelivery, RunEvent, TaskGrant
 
 
@@ -78,10 +79,11 @@ def request_guidance(jobs, queued_id: str, *, target_id: str, target_generation:
         for action in session.scalars(
             select(ExecutionAction).where(
                 ExecutionAction.root_id == target.id,
-                ExecutionAction.status.in_(["pending", "approved"]),
+                ExecutionAction.status.in_(["pending", "reviewing", "approved"]),
             )
         ):
             action.status = "invalidated"
+        invalidate_prepared_files(session, root_id=target.id, reason="新的用户引导撤回原文件操作")
         delivery = MessageDelivery(
             message_id=message.id,
             source_run_id=queued_id,
@@ -199,6 +201,7 @@ def pending_payload(jobs, delivery: dict) -> dict:
             "candidates": frozen.get("candidates", []),
             "candidates_truncated": frozen.get("candidates_truncated", False),
             "known_preferences": frozen.get("known_preferences", []),
+            **({"memory_categories": frozen["memory_categories"]} if "memory_categories" in frozen else {}),
             "learning_context": frozen.get("learning_context", {}),
         }
 

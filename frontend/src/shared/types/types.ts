@@ -22,7 +22,7 @@ export type Run = {
   root_id: string;
   parent_id: string | null;
   conversation_id: string | null;
-  kind: 'agent' | 'material' | 'context_compaction';
+  kind: 'agent' | 'material' | 'context_compaction' | 'memory_classification';
   task: string;
   status: string;
   generation: number;
@@ -108,6 +108,7 @@ export type ChangeSet = {
   root_id: string;
   status: string;
   revision: number;
+  retention_intent?: 'legacy' | 'temporary' | 'saved';
   operations: Change[];
   before: Record<string, Knowledge>;
   after?: Record<string, Partial<Knowledge>>;
@@ -116,13 +117,24 @@ export type ChangeSet = {
   impact_confirmed: boolean;
   differences: { document_id: string; action: string; diff: string }[];
 };
-export type Source = { id: string; title: string; kind: string; origin: string | null };
+export type Source = {
+  id: string;
+  title: string;
+  kind: string;
+  origin: string | null;
+  ownership_known?: boolean;
+  independently_saved?: boolean;
+};
 export type SourceDetail = Source & {
   deleted?: boolean;
   version: number;
   version_id: string;
   status: string;
   mime_type: string;
+  body_format?: 'text' | 'markdown';
+  body_hash?: string | null;
+  original_available?: boolean;
+  captured_at?: string;
   error?: string;
   segments: {
     id: string;

@@ -157,3 +157,16 @@ def test_fast_cancel_records_the_real_settlement_time_without_guessing_legacy_ti
     legacy = root(sessions, clock, status="cancelled")
     service.refresh_retention()
     assert f"run:{legacy}:missing_finished_at" in service.preview_root(legacy)["blockers"]
+
+
+def test_cancelling_a_paused_run_releases_pause_as_a_cleanup_dependency(lifecycle):
+    from knowledgeops_agent.app.runs.service import RunService
+
+    service, sessions, clock, _ = lifecycle
+    runs = RunService(sessions, now=lambda: clock[0])
+    chat = runs.create_conversation()
+    queued = runs.enqueue(chat["id"], "暂停后取消", request_key="cancel-paused")
+    runs.pause(queued["id"])
+    assert any(item.endswith(":pause_requested") for item in service.preview_root(queued["id"])["blockers"])
+    runs.cancel(queued["id"])
+    assert service.preview_root(queued["id"], ignore_age=True)["eligible"]

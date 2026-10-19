@@ -31,9 +31,11 @@ def test_real_files_edit_search_and_frozen_skills(tmp_path):
 
 def test_file_boundary_and_managed_knowledge_are_enforced(tmp_path):
     store = backend(tmp_path)
-    with pytest.raises(ValueError, match="traversal"):
-        store.write("/../escape.txt", "x")
+    escaped = tmp_path.parent / (tmp_path.name + "-traversal.txt")
+    assert store.write(f"/../{escaped.name}", "x").error
+    assert not escaped.exists()
     assert store.write("/knowledge/current/test.md", "旁路发布").error
+    assert store.write("/deliveries/blobs/fake", "不能改写交付内容").error
     assert store.write("/knowledge/documents/可编辑.md", "# 知识工作文件").error is None
     assert "80KiB" in store.write("/outputs/too-large.md", "文" * 28000).error
     assert not (tmp_path / "outputs/too-large.md").exists()
@@ -42,8 +44,8 @@ def test_file_boundary_and_managed_knowledge_are_enforced(tmp_path):
     (tmp_path / "escape").symlink_to(outside)
     with pytest.raises(ValueError):
         store.read("/escape")
-    with pytest.raises(ValueError):
-        store.edit("/escape", "outside", "changed")
+    assert store.edit("/escape", "outside", "changed").error
+    assert store.delete("/escape").error
     assert outside.read_text() == "outside"
 
 

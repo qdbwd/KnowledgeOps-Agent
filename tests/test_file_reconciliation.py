@@ -14,6 +14,7 @@ from test_api_worker import services as _services
 from test_workspace_runtime import enable
 
 from knowledgeops_agent.app.runs.worker import execute_run
+from knowledgeops_agent.harness.permissions.settings import ExecutionSettings
 from knowledgeops_agent.persistence.files import FileStore
 from knowledgeops_agent.persistence.models import FileOperation
 
@@ -28,6 +29,8 @@ def prepare(client, services, tmp_path):
     path.write_text("old")
     enable(services.sessions)
     _, run, _ = enqueue(client)
+    ExecutionSettings(services.sessions).update(run["conversation_id"], expected_revision=0,
+                                               permission_mode="auto_review")
     return run, path
 
 

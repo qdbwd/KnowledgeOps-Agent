@@ -3,6 +3,7 @@
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -170,3 +171,90 @@ def test_unexpected_exit_stops_other_services_and_reports_failure(tmp_path, fail
         if runner.poll() is None:
             runner.terminate()
             runner.communicate(timeout=10)
+
+
+def test_old_schema_is_rejected_before_services_start(business_sessions, monkeypatch, capsys):
+    """真实旧版本号留在隔离PG，入口须拒绝启动且不自动升级或改业务数据。"""
+    from sqlalchemy import text
+
+    from scripts import dev
+
+    engine = business_sessions.kw["bind"]
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE alembic_version (version_num varchar(32) PRIMARY KEY)"))
+        connection.execute(text("INSERT INTO alembic_version VALUES ('0030')"))
+    monkeypatch.setattr(dev, "build_environment", lambda *_: {"DATABASE_URL": "postgresql+psycopg://test:fictional@postgres/knowledgeops_test"})
+    # check_database_schema通过现成引擎连本测试schema，不改正式连接或启动任何应用。
+    import sqlalchemy
+    monkeypatch.setattr(sqlalchemy, "create_engine", lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr(dev.shutil, "which", lambda _: "/usr/bin/npm")
+    monkeypatch.setenv("KNOWLEDGEOPS_DEV_CONTAINER", "1")
+    monkeypatch.setenv("KNOWLEDGEOPS_DEV_CONFIG_SOURCE", "dotenv-v2")
+    monkeypatch.setattr(dev, "run_services", lambda *_args, **_kwargs: pytest.fail("old schema started services"))
+    assert dev.main([]) == 1
+    output = capsys.readouterr().err
+    assert "0030" in output and "0038" in output and "alembic upgrade head" in output
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0030"
+
+
+def test_matching_schema_check_is_read_only(business_sessions):
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import text
+
+    from scripts.dev import check_database_schema
+
+    engine = business_sessions.kw["bind"]
+    head = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini"))).get_current_head()
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE alembic_version (version_num varchar(32) PRIMARY KEY)"))
+        connection.execute(text("INSERT INTO alembic_version VALUES (:head)"), {"head": head})
+    with engine.connect() as connection:
+        connection.execute(text("SET TRANSACTION READ ONLY"))
+        check_database_schema(connection)
+        assert connection.execute(text("SHOW transaction_read_only")).scalar_one() == "on"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == head
+
+
+def test_reload_parent_alive_does_not_count_as_api_ready(tmp_path, capfd):
+    """真实Uvicorn reload子进程导入失败时，父进程仍活着，不能继续启动worker/Vite。"""
+    from scripts.dev import Service, run_services
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    marker = tmp_path / "worker-started"
+    api = Service("API", [sys.executable, "-m", "uvicorn", "missing_startup_fixture:app",
+                          "--reload", "--reload-dir", str(tmp_path), "--host", "127.0.0.1",
+                          "--port", str(port)], tmp_path,
+                  readiness_url=f"http://127.0.0.1:{port}/api/health")
+    worker = Service("worker", [sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"], tmp_path)
+    assert run_services([api, worker], dict(os.environ), startup_timeout=8, shutdown_timeout=1) == 1
+    output = capfd.readouterr().err
+    assert 'Error loading ASGI app' in output and 'missing_startup_fixture' in output
+    assert '热更新父进程存活不代表服务可用' in output
+    assert not marker.exists()
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", port))
+
+
+def test_dependants_start_only_after_api_health_succeeds(tmp_path):
+    from scripts.dev import Service, run_services
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    marker = tmp_path / "healthy"
+    program = (
+        "import time; from pathlib import Path; from http.server import HTTPServer, BaseHTTPRequestHandler\n"
+        "class Handler(BaseHTTPRequestHandler):\n"
+        " def do_GET(self):\n"
+        f"  Path({str(marker)!r}).touch(); self.send_response(200); self.end_headers()\n"
+        f"time.sleep(0.5); HTTPServer(('127.0.0.1', {port}), Handler).serve_forever()"
+    )
+    api = Service("API", [sys.executable, "-c", program], tmp_path,
+                  readiness_url=f"http://127.0.0.1:{port}/api/health")
+    dependant = Service("worker", [sys.executable, "-c",
+                                   f"from pathlib import Path; import sys; sys.exit(7 if Path({str(marker)!r}).exists() else 9)"], tmp_path)
+    assert run_services([api, dependant], dict(os.environ), startup_timeout=5, shutdown_timeout=1) == 7

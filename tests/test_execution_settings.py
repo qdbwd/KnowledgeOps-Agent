@@ -17,7 +17,7 @@ def test_conversation_defaults_revision_and_no_cross_conversation_leak(business_
         "revision": 0,
     }
     value = settings.update(
-        first, expected_revision=0, permission_mode="auto", reasoning_effort="high"
+        first, expected_revision=0, permission_mode="auto_review", reasoning_effort="high"
     )
     assert value["revision"] == 1
     assert settings.get(second)["permission_mode"] == "ask"

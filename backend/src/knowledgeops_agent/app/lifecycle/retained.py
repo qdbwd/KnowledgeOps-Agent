@@ -56,6 +56,9 @@ def prune_snapshots(session, conversation_id: str, *, limit: int = 100) -> dict:
             db.ArtifactRetentionReference.owner_kind == "snapshot",
             db.ArtifactRetentionReference.owner_id.in_(batch),
         ))
+        session.execute(delete(db.AssetReference).where(
+            db.AssetReference.owner_kind == "snapshot", db.AssetReference.owner_id.in_(batch),
+        ))
         session.execute(delete(db.ContinuationSnapshot).where(db.ContinuationSnapshot.id.in_(batch)))
     return {"deleted": len(batch), "remaining": len(identities) > limit}
 
@@ -115,6 +118,10 @@ def prune_history(session, scope: str, *, protected_batches: set[str],
         session.execute(delete(db.ArtifactRetentionReference).where(
             db.ArtifactRetentionReference.owner_kind == "history",
             db.ArtifactRetentionReference.owner_id.in_([f"{scope}:{identity}" for identity in batch_ids]),
+        ))
+        session.execute(delete(db.AssetReference).where(
+            db.AssetReference.owner_kind == "history",
+            db.AssetReference.owner_id.in_([f"{scope}:{identity}" for identity in batch_ids]),
         ))
         session.execute(delete(db.TaskHistoryRecord).where(
             db.TaskHistoryRecord.scope == scope, db.TaskHistoryRecord.source_id.in_(batch_ids),

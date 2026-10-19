@@ -2,7 +2,6 @@
 
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 from langchain.tools import ToolRuntime, tool
 
@@ -49,7 +48,7 @@ def import_file(file_path: str, runtime: ToolRuntime[Any]) -> dict:
     if target.suffix.lower() == ".pdf":
         from knowledgeops_agent.sources.pdf import parse_pdf
 
-        source = context.sources.register_pdf(target.name, data)
+        source = context.sources.register_pdf(target.name, data, root_id=context.root_id)
         return parse_pdf(
             context.sources,
             source["version_id"],
@@ -60,29 +59,25 @@ def import_file(file_path: str, runtime: ToolRuntime[Any]) -> dict:
         content = data.decode("utf-8-sig")
     except UnicodeDecodeError:
         raise ValueError("text file must use UTF-8 encoding") from None
-    return context.sources.import_text(target.name, content, kind="file", raw_bytes=data)
+    return context.sources.import_text(target.name, content, kind="file", raw_bytes=data, root_id=context.root_id)
 
 
 @tool
 def present_files(file_paths: list[str], runtime: ToolRuntime[Any]) -> list[dict]:
-    """核对已生成的 work/outputs 文件，返回真实下载 URL；回答使用返回链接。
+    """将 work/outputs 文件交付为固定版本，返回查看与下载 URL；回答使用返回链接。
 
-    不创建文件、不发布知识、不把一般产物当证据。至多 20 个虚拟路径；文件
-    后续改动会改变下载内容，需固定引用的材料请 import_file 后 read_source。
+    不生成工作文件、不发布知识、不把一般产物当证据。至多20个不同虚拟路径，
+    每份最多100MiB。后续工作文件修改或会话删除不改变已交付内容；再次交付是新资产。
+    需要作为知识引用的材料仍使用 import_file 后 read_source。
     """
     if not 1 <= len(file_paths) <= 20:
         raise ValueError("请提供 1 至 20 个文件路径")
-    root = _root(runtime.context)
-    result = []
-    for path in file_paths:
-        target = workspace_file(root, path, delivery=True)
-        key = target.relative_to(root.resolve()).as_posix()
-        result.append(
-            {
-                "path": "/" + key,
-                "name": target.name,
-                "bytes": target.stat().st_size,
-                "url": "/api/workspace/download?path=" + quote(key, safe=""),
-            }
-        )
-    return result
+    from knowledgeops_agent.sources.deliveries import DeliveryService
+
+    context = runtime.context
+    root = _root(context)
+    return DeliveryService(context.jobs.sessions, root).present(
+        file_paths, run_id=context.run_id, root_id=context.root_id, call_id=runtime.tool_call_id or "",
+        guard=lambda: context.jobs.guard(context.run_id, worker_id=context.worker_id),
+        commit_guard=lambda session: context.jobs.execution_guard(session, context.run_id, context.worker_id),
+    )

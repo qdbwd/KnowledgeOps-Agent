@@ -27,6 +27,7 @@ from knowledgeops_agent.app.lifecycle.access import (
 from knowledgeops_agent.app.lifecycle.references import replace_references
 from knowledgeops_agent.app.runs.control import lock_control
 from knowledgeops_agent.core.pagination import page_rows
+from knowledgeops_agent.harness.sandbox.receipts import invalidate_prepared_files
 from knowledgeops_agent.persistence.models import (
     ChangeSet,
     ChatMessage,
@@ -406,6 +407,10 @@ class RunService:
             )
             session.add(run)
             session.flush()
+            from knowledgeops_agent.sources.ownership import claim_source
+
+            for source_id in inputs["source_ids"]:
+                claim_source(session, source_id, conversation_id=conversation_id)
             session.add(
                 RunDispatch(run_id=run.id, generation=run.generation, next_attempt_at=self.now())
             )
@@ -477,6 +482,7 @@ class RunService:
                         "candidates": candidates[:20],
                         "candidates_truncated": len(candidates) > 20,
                         "known_preferences": self._preference_context(session, task),
+                        "memory_categories": self._memory_category_context(session),
                         "learning_context": self._learning_context(
                             session, conversation_id, selected_task_id
                         ),
@@ -484,6 +490,12 @@ class RunService:
                 },
             )
             return self._view(run)
+
+    @staticmethod
+    def _memory_category_context(session) -> list[dict]:
+        from knowledgeops_agent.memory.categories import model_catalog
+
+        return model_catalog(session)
 
     @staticmethod
     def _learning_context(session, conversation_id: str, selected_task_id: str | None) -> dict:
@@ -594,6 +606,11 @@ class RunService:
             raise ValueError("invalid material request")
         key = "material:" + request_key
         with self.sessions.begin() as session:
+            from knowledgeops_agent.app.runs.control import lock_control
+            from knowledgeops_agent.sources.ownership import resolve_owner
+
+            lock_control(session)
+            resolve_owner(session, conversation_id=inputs.get("conversation_id"))
             session.execute(
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": key}
             )
@@ -602,7 +619,7 @@ class RunService:
                 from knowledgeops_agent.app.lifecycle.idempotency import request_fingerprint
 
                 matching = prior.input_fingerprint == request_fingerprint(
-                    None, prior.task, inputs, prior.budgets,
+                    inputs.get("conversation_id"), prior.task, inputs, prior.budgets,
                 ) if prior.lifecycle_state != "active" and prior.input_fingerprint else prior.input_data == inputs
                 if prior.kind != "material" or not matching:
                     raise ValueError("idempotency key belongs to a different material")
@@ -614,6 +631,7 @@ class RunService:
                 checkpoint_id=run_id,
                 request_key=key,
                 kind="material",
+                conversation_id=inputs.get("conversation_id"),
                 origin="system",
                 task="导入网页材料" if inputs["type"] == "web" else "解析 PDF 材料",
                 input_data=inputs,
@@ -1179,11 +1197,21 @@ class RunService:
             )
             for action in session.scalars(
                 select(ExecutionAction).where(
-                    action_scope, ExecutionAction.status.in_(["pending", "approved"])
+                    action_scope, ExecutionAction.status.in_(["pending", "reviewing", "approved"])
                 )
             ):
                 action.status = "invalidated"
                 action.decision = {**action.decision, "invalidated_reason": "用户取消运行"}
+            # 取消替代暂停请求；保留历史事件，但不能让已取消的任务永久受暂停标志保护。
+            control_runs = select(Run.id).where(Run.id == run.id if run.parent_id else Run.root_id == run.id)
+            for control in session.scalars(select(RunControl).where(
+                RunControl.run_id.in_(control_runs), RunControl.pause_requested.is_(True),
+            )):
+                control.pause_requested = False
+                control.revision += 1
+                control.updated_at = self.now()
+            invalidate_prepared_files(session, reason="用户取消运行", run_id=run.id if run.parent_id else None,
+                                      root_id=run.id if not run.parent_id else None)
             if run.learning_unit_id and not run.parent_id:
                 from knowledgeops_agent.persistence.models import LearningTask
 
@@ -1337,6 +1365,10 @@ class RunService:
         """仅由用户入口恢复。新预算是总上限，不重置已消费次数或活跃时长。"""
         with self.sessions.begin() as session:
             run = self._locked(session, run_id)
+            if run.kind == "memory_classification" and any(
+                value != run.budgets.get(key) for key, value in (budgets or {}).items()
+            ):
+                raise ValueError("分类任务仅允许一次模型请求，不能修改原分类预算；需要时请明确重新分类")
             if run.kind != "material" and run.format_version != 2:
                 raise ValueError("旧格式运行没有可信资源/延续快照；保留成果并发送新任务继续。")
             if run.parent_id or run.status not in {
@@ -1489,7 +1521,7 @@ class RunService:
             store = session.info.get("file_store")
             key = f"artifacts/{run_id}/{digest}.txt" if store else None
             if store is not None:
-                store.put(key, content)
+                store.put(key, content, session=session, purpose="artifact")
             session.execute(
                 insert(cast(Table, RunArtifact.__table__))
                 .values(
@@ -1521,7 +1553,7 @@ class RunService:
             if store is None:
                 raise RuntimeError("stream artifacts require the workspace FileStore")
             key = f"artifacts/{run_id}/{digest}.txt"
-            store.adopt(temporary, key)
+            store.adopt(temporary, key, session=session, purpose="artifact")
             session.execute(
                 insert(cast(Table, RunArtifact.__table__)).values(
                     run_id=run_id, kind=kind, content_hash=digest,
@@ -1542,8 +1574,8 @@ class RunService:
                 {
                     "id": row.id,
                     "kind": row.kind,
-                    "length": len(row.content) if row.expired_at is None else None,
-                    "available": row.expired_at is None,
+                    "length": len(row.content) if row.expired_at is None or row.promoted_version_id else None,
+                    "available": row.expired_at is None or row.promoted_version_id is not None,
                     "url": f"/api/runs/{run_id}/artifacts/{row.id}",
                 }
                 for row in session.scalars(
@@ -1566,7 +1598,7 @@ class RunService:
             run = session.get(Run, artifact.run_id)
             if not self._artifact_allowed(session, run, root_id, artifact_id):
                 raise PermissionError("artifact belongs to another root task")
-            if artifact.expired_at is not None:
+            if artifact.expired_at is not None and artifact.promoted_version_id is None:
                 raise DetailsExpired("内部材料已过期清理，无法补读原文。")
             content = artifact.content
             if not (0 <= start < len(content) or start == 0 and not content) or not 1 <= length <= 12000:
@@ -1594,7 +1626,7 @@ class RunService:
             run = session.get(Run, artifact.run_id)
             if not self._artifact_allowed(session, run, root_id, artifact_id):
                 raise PermissionError("artifact belongs to another root task")
-            if artifact.expired_at is not None:
+            if artifact.expired_at is not None and artifact.promoted_version_id is None:
                 raise DetailsExpired("内部材料已过期清理，无法补读原文。")
             content = artifact.content
             self._retain_read(session, consumer, artifact.id)
@@ -1608,11 +1640,31 @@ class RunService:
         再释放；若随后写入消息/笔记，长期引用由对应拥有者接替。
         """
         if consumer.lifecycle_state == "active":
-            from knowledgeops_agent.persistence.models import ArtifactRetentionReference
+            from knowledgeops_agent.persistence.models import (
+                ArtifactRetentionReference,
+                AssetReference,
+            )
 
             session.execute(insert(ArtifactRetentionReference).values(
                 artifact_id=artifact_id, owner_kind="run", owner_id=consumer.id, reason="material_read",
             ).on_conflict_do_nothing())
+            session.execute(insert(AssetReference).values(
+                owner_kind="run", owner_id=consumer.id, origin_node="run:" + consumer.id,
+                target_node="material:" + artifact_id,
+            ).on_conflict_do_nothing())
+
+    def artifact_source_url(self, run_id: str, artifact_id: str) -> str | None:
+        """旧人类阅读链接转到独立正文；不作为工具补读的权限旁路。"""
+        from knowledgeops_agent.persistence.models import SourceVersion
+
+        with self.sessions() as session:
+            artifact = session.get(RunArtifact, artifact_id)
+            requested = session.get(Run, run_id)
+            owner = session.get(Run, artifact.run_id) if artifact else None
+            if not artifact or not requested or not owner or owner.root_id != requested.root_id:
+                return None
+            version = session.get(SourceVersion, artifact.promoted_version_id) if artifact.promoted_version_id else None
+            return f"/sources/{version.source_id}?version={version.id}" if version else None
 
     def _artifact_allowed(self, session, owner: Run, root_id: str, artifact_id: str) -> bool:
         """跨run只接受首次领取时冻结的继承清单，不按同会话扩大到任意新产物。"""

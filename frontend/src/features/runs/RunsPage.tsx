@@ -1,17 +1,17 @@
 import { Button } from '../../shared/ui/Button';
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { Activity, ArrowLeft, Download, RotateCcw } from 'lucide-react';
+import { Link, Navigate, useParams } from 'react-router-dom';
+import { Activity, ArrowLeft, RotateCcw } from 'lucide-react';
 import { messageOf, send, terminal, usePagedResource, useResource } from '../../shared/api/api';
 import { RunPauseControl } from './RunPauseControl';
 import { Badge, Empty, ErrorBox, Loading, Markdown, PageTitle } from '../../shared/ui/components';
-import type { Budgets, ModelRecord, Run, RunEvent } from '../../shared/types/types';
+import type { Budgets, Run } from '../../shared/types/types';
 import { useWorkspace } from '../../shared/state/workspace';
 import { ExecutionApprovals } from '../permissions/ExecutionApprovals';
 import { RunQuestions } from './RunQuestions';
 import { RunChildren } from './RunChildren';
-import { RuntimeResources } from './RuntimeResources';
-import type { RuntimeManifest, Continuation } from './RuntimeResources';
+import { TaskActivity } from './TaskActivity';
+import { RunDiagnostics } from './RunDiagnostics';
 
 export function RunsPage() {
   const { version } = useWorkspace();
@@ -40,7 +40,15 @@ export function RunsPage() {
                 <h3>{run.task.slice(0, 90)}</h3>
                 <p>
                   {new Date(run.created_at).toLocaleString()} ·{' '}
-                  {run.kind === 'material' ? '材料解析' : run.parent_id ? '研究子任务' : '主任务'}
+                  {run.kind === 'material'
+                    ? '材料解析'
+                    : run.kind === 'memory_classification'
+                      ? '记忆分类'
+                      : run.kind === 'context_compaction'
+                        ? '上下文压缩'
+                        : run.parent_id
+                          ? '研究子任务'
+                          : '主任务'}
                 </p>
               </div>
               <Badge status={run.status} />
@@ -74,16 +82,24 @@ function ResumeControls({ run, onChanged }: { run: Run; onChanged: () => void })
     searches: '搜索总上限',
     active_seconds: '活跃时间总上限（秒）',
   };
+  if (run.kind === 'memory_classification' && !['paused', 'interrupted'].includes(run.status))
+    return (
+      <p>
+        原文已保留。<Link to="/preferences">返回长期记忆选择类别或重新分类</Link>。
+      </p>
+    );
   return (
     <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
       <h2>从已保存的进展继续</h2>
       <p className="muted text-muted">
         {run.kind === 'material'
           ? '继续下载或解析材料，此操作不调用大模型。若材料为 PDF，已完成的页面会保留。'
-          : '继续使用同一次运行和检查点，已消耗的次数不会清零。已提交的知识变更会保留。'}
+          : run.kind === 'memory_classification'
+            ? '继续原分类任务，已收到的模型响应会复用，不会再次发送同一请求。'
+            : '继续使用同一次运行和检查点，已消耗的次数不会清零。已提交的知识变更会保留。'}
       </p>
       <ErrorBox message={error} />
-      {run.kind !== 'material' && (
+      {run.kind !== 'material' && run.kind !== 'memory_classification' && (
         <div className="budget-inputs grid grid-cols-4 gap-3 max-md:grid-cols-2 [&_label]:text-[11px]">
           {(Object.keys(labels) as (keyof Budgets)[]).map((key) => (
             <label key={key}>
@@ -124,21 +140,12 @@ export function RunPage() {
   const { runId } = useParams();
   const { version, refresh } = useWorkspace();
   const [tick, setTick] = useState(0);
-  const [eventPosition, setEventPosition] = useState({ runId, after: 0 });
-  const eventAfter = eventPosition.runId === runId ? eventPosition.after : 0;
+  const [diagnosticRun, setDiagnosticRun] = useState<string | null>(null);
+  const diagnosticsOpen = diagnosticRun === runId;
   const key = `${version}:${tick}`;
   const result = useResource<Run>(`/api/runs/${runId}`, key);
-  // 状态和记录是独立请求。状态先进入终态时，再读取对应事件版本，
-  // 避免轮询停止后仍保留执行前的空回执；普通轮询只刷新发生变化的记录。
-  const recordsKey = `${version}:${result.data?.status ?? ''}:${result.data?.last_event ?? ''}:${result.data?.details_available ?? ''}`;
-  const records = useResource<{
-    models: ModelRecord[];
-    events: RunEvent[];
-    event_page: { after: number; next_after: number | null; total: number };
-    artifacts: { id: string; kind: string; length: number; available?: boolean }[];
-    resources?: RuntimeManifest | null;
-    continuation?: Continuation | null;
-  }>(`/api/runs/${runId}/records?after=${eventAfter}`, recordsKey);
+  // 状态进入终态后刷新摘要；诊断组件只在用户打开后请求完整记录。
+  const detailsKey = `${version}:${result.data?.status ?? ''}:${result.data?.last_event ?? ''}:${result.data?.details_available ?? ''}`;
   const [error, setError] = useState('');
   const status = result.data?.status;
   useEffect(() => {
@@ -175,28 +182,8 @@ export function RunPage() {
           )}
           {run.outcome.answer && <Markdown text={run.outcome.answer} />}
           {run.conversation_id && <Link to={`/chat/${run.conversation_id}`}>回到对话 →</Link>}
-          {(run.outcome.draft_ids ?? []).map((id) => (
-            <p key={id}>
-              <Link to={`/changes/${id}`}>查看保留的草稿 →</Link>
-            </p>
-          ))}
         </section>
-        <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
-          <h2>内部材料</h2>
-          <ErrorBox message={records.error} />
-          {records.loading && !records.data && <Loading />}
-          {records.data?.artifacts?.map((artifact) => (
-            <p key={artifact.id}>
-              {artifact.available === false ? (
-                <span>{artifact.kind}：正文已过期</span>
-              ) : (
-                <Link to={`/runs/${run.id}/artifacts/${artifact.id}`}>
-                  {artifact.kind}：查看保留内容 →
-                </Link>
-              )}
-            </p>
-          ))}
-        </section>
+        <TaskActivity key={run.id} run={run} refreshKey={detailsKey} />
       </>
     );
   return (
@@ -205,18 +192,22 @@ export function RunPage() {
         <ArrowLeft size={15} />
         全部运行
       </Link>
-      <PageTitle eyebrow="RUN / OBSERVABILITY" title="运行详情">
+      <PageTitle eyebrow="TASK" title="任务详情">
         <div className="row flex items-center gap-3">
           <Button className="secondary button-secondary" onClick={refresh}>
             刷新
           </Button>
-          <a className="button secondary button-secondary" href={`/api/runs/${run.id}/export`}>
-            <Download size={15} />
-            导出记录
-          </a>
+          <Button
+            className="secondary button-secondary"
+            aria-expanded={diagnosticsOpen}
+            aria-controls="run-diagnostics"
+            onClick={() => setDiagnosticRun(diagnosticsOpen ? null : run.id)}
+          >
+            {diagnosticsOpen ? '关闭诊断' : '诊断'}
+          </Button>
         </div>
       </PageTitle>
-      <ErrorBox message={error || records.error} />
+      <ErrorBox message={error || result.error} />
       <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
         <div className="row flex items-center gap-3 wrap flex-wrap">
           <Badge status={run.status} />
@@ -284,44 +275,10 @@ export function RunPage() {
             停止本次任务
           </Button>
         )}
-        <details className="mt-5">
-          <summary>运行标识与检查点</summary>
-          <dl className="metadata my-5 grid gap-2.5 text-xs [&>div]:flex [&>div]:gap-5 max-md:[&>div]:gap-2.5 [&_dt]:min-w-[90px] [&_dt]:text-[#87937e] max-md:[&_dt]:min-w-[60px] [&_dd]:m-0 [&_dd]:[overflow-wrap:anywhere]">
-            <div>
-              <dt>运行 ID</dt>
-              <dd>{run.id}</dd>
-            </div>
-            <div>
-              <dt>根任务 ID</dt>
-              <dd>{run.root_id}</dd>
-            </div>
-            <div>
-              <dt>检查点</dt>
-              <dd>{run.checkpoint_id}</dd>
-            </div>
-            <div>
-              <dt>调度代次</dt>
-              <dd>{run.generation}</dd>
-            </div>
-          </dl>
-        </details>
       </section>
       <ExecutionApprovals run={run} refreshKey={key} onChanged={refresh} />
       <RunQuestions run={run} refreshKey={key} onChanged={refresh} />
       <RunChildren run={run} refreshKey={key} onChanged={refresh} />
-      {records.data ? (
-        <RuntimeResources
-          resources={records.data.resources}
-          continuation={records.data.continuation}
-        />
-      ) : (
-        <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
-          <h2>本次运行依据</h2>
-          <p className="muted text-muted">
-            {records.error ? '运行依据暂不可用。' : '正在加载运行依据…'}
-          </p>
-        </section>
-      )}
       {terminal(run.status) &&
         run.status !== 'completed' &&
         !run.parent_id &&
@@ -334,116 +291,8 @@ export function RunPage() {
           <Markdown text={run.outcome.answer} />
         </section>
       )}
-      {(run.outcome.draft_ids ?? []).map((id) => (
-        <Link
-          key={id}
-          className="draft-link my-3.5 flex items-center gap-[15px] rounded-lg border border-[#d8e1d0] bg-[#f8faf1] px-5 py-4.5 text-[#52673f] [&>span:nth-child(2)]:flex-1 [&_strong]:block [&_small]:mt-1 [&_small]:block [&_small]:text-[11px] [&_small]:text-[#879375] [&>span:last-child]:text-xs"
-          to={`/changes/${id}`}
-        >
-          打开待审核草稿 →
-        </Link>
-      ))}
-      <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
-        <h2>
-          模型调用{' '}
-          <span className="muted text-muted">
-            {records.loading
-              ? records.data
-                ? '更新中…'
-                : '加载中…'
-              : records.data
-                ? `${records.data.models.length} 次`
-                : '记录暂不可用'}
-          </span>
-        </h2>
-        {records.data?.models.map((record, index) => (
-          <details
-            className="trace-entry mt-[13px] border-t border-[#e5eddd] pt-[13px] [&>summary]:flex [&>summary]:flex-wrap [&>summary]:justify-between [&>summary]:gap-2.5 max-md:[&>summary]:text-[11px] [&_pre]:max-h-[420px] [&_pre]:overflow-auto"
-            key={record.id}
-          >
-            <summary>
-              <span>
-                #{index + 1} · {record.purpose}
-              </span>
-              <span>
-                {record.usage?.total_tokens ?? '未知'} tokens ·{' '}
-                {record.duration_ms == null
-                  ? '耗时未知'
-                  : `${(record.duration_ms / 1000).toFixed(1)}s`}{' '}
-                · {record.status}
-              </span>
-            </summary>
-            <p className="muted text-muted">
-              首响应：
-              {record.first_token_ms == null ? '未观测到' : `${record.first_token_ms.toFixed(0)}ms`}
-            </p>
-            {record.error && <ErrorBox message={record.error} />}
-            <h3>实际输入</h3>
-            <pre>{JSON.stringify(record.request, null, 2)}</pre>
-            <h3>实际输出</h3>
-            <pre>{JSON.stringify(record.response, null, 2)}</pre>
-          </details>
-        ))}
-      </section>
-      <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
-        <h2>保留的运行材料</h2>
-        <p className="muted text-muted">
-          这里保存压缩前历史、工作摘要和长工具结果；它们不属于已发布知识。
-        </p>
-        {records.data?.artifacts?.map((artifact) => (
-          <Link
-            className="list-card flex items-center gap-[17px] rounded-[9px] border border-line bg-white px-[23px] py-4.5 text-[#5c7057] hover:border-[#aec2a5] hover:no-underline max-md:flex-wrap max-md:gap-3 max-md:p-4 [&>div]:min-w-0 [&>div]:flex-1 [&_h3]:mt-0 [&_h3]:mb-[5px] [&_h3]:text-[#344c37] [&_h3]:[overflow-wrap:anywhere] max-md:[&_h3]:text-[13px] [&_p]:m-0 [&_p]:text-[11px] [&_p]:text-[#85917e] [&_p]:[overflow-wrap:anywhere] [&>span:last-child]:text-[11px] [&>span:last-child]:whitespace-nowrap max-md:[&>span:last-child]:hidden"
-            key={artifact.id}
-            to={`/runs/${run.id}/artifacts/${artifact.id}`}
-          >
-            <span>{artifact.kind}</span>
-            <span>{artifact.length} 字符 · 分页查看 →</span>
-          </Link>
-        ))}
-        {records.data && !records.data.artifacts?.length && (
-          <p className="muted text-muted">此运行暂未产生独立材料。</p>
-        )}
-      </section>
-      <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
-        <h2>事件时间线</h2>
-        <p className="muted text-muted">
-          {records.data
-            ? `事件 ${records.data.events[0]?.sequence ?? 0}–${records.data.events.at(-1)?.sequence ?? 0} / ${records.data.event_page.total}`
-            : records.error
-              ? '事件记录暂不可用。'
-              : '正在加载事件记录…'}
-        </p>
-        <div className="row flex items-center gap-3">
-          <Button
-            className="secondary button-secondary"
-            disabled={records.loading || eventAfter === 0}
-            onClick={() => setEventPosition({ runId, after: Math.max(0, eventAfter - 200) })}
-          >
-            上一页事件
-          </Button>
-          <Button
-            className="secondary button-secondary"
-            disabled={records.loading || records.data?.event_page.next_after == null}
-            onClick={() => setEventPosition({ runId, after: records.data!.event_page.next_after! })}
-          >
-            下一页事件
-          </Button>
-        </div>
-        {records.data?.events.map((event) => (
-          <details
-            className="trace-entry mt-[13px] border-t border-[#e5eddd] pt-[13px] [&>summary]:flex [&>summary]:flex-wrap [&>summary]:justify-between [&>summary]:gap-2.5 max-md:[&>summary]:text-[11px] [&_pre]:max-h-[420px] [&_pre]:overflow-auto"
-            key={event.sequence}
-          >
-            <summary>
-              <span>
-                #{event.sequence} · {event.kind}
-              </span>
-              <time>{new Date(event.created_at).toLocaleTimeString()}</time>
-            </summary>
-            <pre>{JSON.stringify(event.data, null, 2)}</pre>
-          </details>
-        ))}
-      </section>
+      <TaskActivity key={run.id} run={run} refreshKey={detailsKey} />
+      {diagnosticsOpen && <RunDiagnostics key={run.id} run={run} refreshKey={detailsKey} />}
     </>
   );
 }
@@ -452,6 +301,7 @@ export function RunArtifactPage() {
   const { runId, artifactId } = useParams();
   const [start, setStart] = useState(0);
   const result = useResource<{
+    source_url?: string;
     text: string;
     kind: string;
     start: number;
@@ -459,6 +309,7 @@ export function RunArtifactPage() {
     total_length: number;
     next_start: number | null;
   }>(`/api/runs/${runId}/artifacts/${artifactId}?start=${start}`);
+  if (result.data?.source_url) return <Navigate to={result.data.source_url} replace />;
   return (
     <>
       <Link to={`/runs/${runId}`}>← 返回运行详情</Link>

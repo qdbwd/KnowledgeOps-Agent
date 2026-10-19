@@ -53,7 +53,7 @@ def test_full_root_cleanup_keeps_assets_history_protocol_and_retry_identity(deta
         used = artifact(session, store, run["id"], "当前笔记还要使用")
         workspace = artifact(session, store, run["id"], "用户工作文件引用")
         shared = artifact(session, store, run["id"], "当前笔记还要使用", "other_kind")
-        dependent = artifact(session, store, run["id"], f"进一步见 {used.id}")
+        dependent = artifact(session, store, run["id"], f"进一步见 /runs/{run['id']}/artifacts/{used.id}")
         snapshot = session.get(db.ContinuationSnapshot, session.get(db.Conversation, chat["id"]).latest_snapshot_id)
         scope = "fixture-scope"
         sources = visible_records([HumanMessage("旧索引原话"), HumanMessage("当前索引原话")])
@@ -61,9 +61,9 @@ def test_full_root_cleanup_keeps_assets_history_protocol_and_retry_identity(deta
         for batch, source in zip(["old", "kept"], sources, strict=True):
             session.add(db.TaskHistoryBatch(scope=scope, id=batch, run_id=run["id"], source_ids=[source["id"]]))
         snapshot.content = {**snapshot.content, "artifact_ids": [stale.id, used.id, workspace.id, shared.id, dependent.id],
-                            "task_notes": {"link": dependent.id}, "task_history": {"scope": scope, "batches": ["kept"]}}
+                            "task_notes": {"artifact_id": dependent.id}, "task_history": {"scope": scope, "batches": ["kept"]}}
         snapshot.content_hash = content_hash(snapshot.content)
-        store.replace("outputs/kept.md", f"输出原文参照 {workspace.id}".encode())
+        store.replace("outputs/kept.md", f"输出原文参照 /runs/{run['id']}/artifacts/{workspace.id}".encode())
         identities = [stale.id, used.id, workspace.id, shared.id, dependent.id]
         stale_path, shared_path = store.path(stale.content_storage_key), store.path(used.content_storage_key)
     job = details.admit(run["id"])
@@ -72,7 +72,8 @@ def test_full_root_cleanup_keeps_assets_history_protocol_and_retry_identity(deta
     assert result["status"] == "completed", result
     assert not stale_path.exists() and shared_path.read_text() == "当前笔记还要使用"
     with details.sessions() as session:
-        assert [session.get(db.RunArtifact, identity).expired_at is not None for identity in identities] == [True, False, False, True, False]
+        assert [session.get(db.RunArtifact, identity).expired_at is not None for identity in identities] == [True, False, True, True, False]
+        assert session.get(db.RunArtifact, identities[2]).promoted_version_id is not None
         assert session.get(db.TaskHistoryRecord, (scope, sources[0]["id"])) is None
         assert session.get(db.TaskHistoryRecord, (scope, sources[1]["id"])) is not None
         assert session.get(db.Run, run["id"]).input_data == {}
@@ -87,7 +88,7 @@ def test_full_root_cleanup_keeps_assets_history_protocol_and_retry_identity(deta
     assert runs.claim("next", run_id=next_run["id"], generation=next_run["generation"])
     assert runs.read_artifact(identities[2], root_id=next_run["id"])["text"] == "用户工作文件引用"
     assert runs.messages(chat["id"])[1]["content"] == "用户看到的最终回答"
-    assert store.path("outputs/kept.md").read_text() == f"输出原文参照 {identities[2]}"
+    assert store.path("outputs/kept.md").read_text() == f"输出原文参照 /runs/{run['id']}/artifacts/{identities[2]}"
 
 
 def test_active_checkpoint_and_actual_read_pin_old_material_without_widening_access(detail_case, tmp_path):
@@ -106,7 +107,7 @@ def test_active_checkpoint_and_actual_read_pin_old_material_without_widening_acc
     drain(details, job["id"])
     next_run = runs.enqueue(chat["id"], "续接", request_key=db.new_id())
     runs.claim("next", run_id=next_run["id"], generation=next_run["generation"])
-    save_messages(saver, {"configurable": {"thread_id": next_run["id"], "checkpoint_ns": ""}}, first_id, 1)
+    save_messages(saver, {"configurable": {"thread_id": next_run["id"], "checkpoint_ns": ""}}, f"/runs/{run['id']}/artifacts/{first_id}", 1)
     assert runs.read_artifact(second_id, root_id=next_run["id"])["text"] == "读过后暂留"
     assert finish(retained, job["id"])["status"] == "completed"
     assert runs.read_artifact(first_id, root_id=next_run["id"])["text"] == "状态材料"
@@ -134,9 +135,9 @@ def test_nested_checkpoint_and_pending_write_protect_materials_and_unbatched_his
     live = runs.enqueue(chat["id"], "继续", request_key=db.new_id())
     runs.claim("next", run_id=live["id"], generation=live["generation"])
     config = {"configurable": {"thread_id": live["id"], "checkpoint_ns": "tools:reader"}}
-    checkpoint = save_messages(saver, config, ids[0], 1)
+    checkpoint = save_messages(saver, config, f"/runs/{run['id']}/artifacts/{ids[0]}", 1)
     saver.put_writes(checkpoint, [("messages", [HumanMessage("子图待写消息", id="pending")]),
-                                 ("task_notes", {"pending": ids[1]})], "reader")
+                                 ("task_notes", {"pending": {"artifact_id": ids[1]}})], "reader")
     # 多个主图检查点让子图落在后续分页，不能只检查第一页或空namespace。
     config = {"configurable": {"thread_id": live["id"], "checkpoint_ns": ""}}
     for version in range(1, 5):
@@ -169,10 +170,10 @@ def test_unlink_then_transaction_failure_retries_without_touching_user_files(det
 
     monkeypatch.setattr(module, "remove_artifact_file", fail_after_unlink)
     result = finish(retained, job["id"])
-    assert result["status"] == "failed" and result["phase"] == "retained_artifacts"
+    assert result["status"] == "failed" and result["phase"] == "retained_artifact_files"
     assert not path.exists() and result["last_error"] == "OSError"
     with details.sessions() as session:
-        assert session.get(db.RunArtifact, identity).expired_at is None
+        assert session.get(db.RunArtifact, identity).expired_at is not None
     monkeypatch.setattr(module, "remove_artifact_file", original)
     retained.jobs.retry(job["id"])
     assert finish(retained, job["id"])["status"] == "completed"

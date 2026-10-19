@@ -7,6 +7,8 @@ restore 仅允许新建的 knowledgeops_restore_* 空数据库和全新来源卷
 param(
     [ValidateSet('create', 'restore')][string]$Mode = 'create',
     [string]$BackupFolder,
+    [ValidateSet('deployment', 'development')][string]$Runtime = 'deployment',
+    [string]$WorkspacePath,
     [ValidatePattern('^knowledgeops(?:_backupfixture_[a-f0-9]{12})?$')][string]$Database = 'knowledgeops',
     [ValidatePattern('^knowledgeops-agent-backupfixture-[a-f0-9]{12}$')][string]$SourceVolume,
     [ValidatePattern('^knowledgeops_restore_[a-f0-9]{12}$')][string]$RestoreDatabase,
@@ -26,14 +28,34 @@ Push-Location $projectRoot
 try {
     $pg = (docker compose ps -q postgres).Trim()
     if (-not $pg) { throw 'Start this project postgres container first.' }
+    $backupInDev = '/workspace/' + [IO.Path]::GetRelativePath($projectRoot, $BackupFolder).Replace('\', '/')
+    $dev = $null
+    if ($Runtime -eq 'development') {
+        $dev = (docker compose -f compose.yaml -f compose.dev.yaml ps -q dev).Trim()
+        if (-not $dev) { throw 'Start this project dev container first.' }
+        if ($SourceVolume -or $RestoreVolume) { throw 'Development backups use an isolated workspace directory, not a named volume.' }
+        if ($WorkspacePath -and ($Database -eq 'knowledgeops' -or $WorkspacePath -notmatch '^/workspace/artifacts/verification/backup-[a-f0-9]{12}/workspace$')) {
+            throw 'An explicit development workspace is allowed only for a dedicated backup fixture.'
+        }
+    } elseif ($WorkspacePath) { throw 'WorkspacePath is supported only for development fixtures.' }
     if ($Mode -eq 'create') {
+        if ($Runtime -eq 'development' -and $Database -ne 'knowledgeops' -and -not $WorkspacePath) {
+            throw 'A fixture backup requires its explicit isolated workspace.'
+        }
         if (Test-Path -LiteralPath $BackupFolder) { throw 'Use a new backup folder; existing backups are immutable.' }
         New-Item -ItemType Directory -Path $BackupFolder | Out-Null
         docker compose exec -T postgres pg_dump -U knowledgeops -d $Database -Fc --file="/tmp/$backupId-business.dump"
-        docker compose exec -T postgres pg_dump -U knowledgeops -d knowledgeops_accounting -Fc --file="/tmp/$backupId-accounting.dump"
+        # 测试种子必须使用自己的回执库，不复制正式任务预算来伪装隔离验证。
+        $accountingSource = "${Database}_accounting"
+        docker compose exec -T postgres pg_dump -U knowledgeops -d $accountingSource -Fc --file="/tmp/$backupId-accounting.dump"
         docker cp "${pg}:/tmp/$backupId-business.dump" (Join-Path $BackupFolder 'business.dump')
         docker cp "${pg}:/tmp/$backupId-accounting.dump" (Join-Path $BackupFolder 'accounting.dump')
-        if ($SourceVolume) {
+        if ($Runtime -eq 'development') {
+            $sourceWorkspace = if ($WorkspacePath) { $WorkspacePath } else { '/data/agent-workspace' }
+            docker exec $dev tar -C $sourceWorkspace -czf "$backupInDev/workspace.tar.gz" .
+            $format = 2
+            $fileNames = @('business.dump', 'accounting.dump', 'workspace.tar.gz')
+        } elseif ($SourceVolume) {
             # 测试种子使用单独卷；只读挂载，不能更改原件。
             docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" -v "${SourceVolume}:/backup-sources:ro" api tar -C /backup-sources -czf /backup/sources.tar.gz .
             $format = 1
@@ -50,6 +72,7 @@ try {
         }
         @{
             format = $format; created_at = [DateTime]::UtcNow.ToString('o'); source_database = $Database
+            source_accounting_database = $accountingSource
             files = $hashes
             accounting_policy = 'Restore only into a fresh isolated database; never overwrite active task budgets or model replay receipts.'
             consistency = 'Stop api/worker and local file editors before backup. PG pointers and the complete workspace form one backup set; immutable files may include harmless orphans.'
@@ -64,23 +87,33 @@ try {
             if ($actual -ne $manifest.files.$name) { throw "Backup checksum mismatch: $name" }
         }
         if (-not $RestoreDatabase) { $RestoreDatabase = "knowledgeops_restore_$backupId" }
-        if (-not $RestoreVolume) { $RestoreVolume = "knowledgeops-agent-restore-$backupId" }
+        if ($Runtime -eq 'deployment' -and -not $RestoreVolume) { $RestoreVolume = "knowledgeops-agent-restore-$backupId" }
         $accountingTarget = "${RestoreDatabase}_accounting"
         # 不使用 IF NOT EXISTS。碰到已有 DB/卷即拒绝，绝不清空后继续。
-        $existing = @(docker volume ls --format '{{.Name}}')
-        if ($existing -contains $RestoreVolume) { throw 'Restore volume already exists.' }
+        if ($Runtime -eq 'deployment') {
+            $existing = @(docker volume ls --format '{{.Name}}')
+            if ($existing -contains $RestoreVolume) { throw 'Restore volume already exists.' }
+        }
         docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U knowledgeops -d postgres -c "CREATE DATABASE $RestoreDatabase OWNER knowledgeops"
         docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U knowledgeops -d postgres -c "CREATE DATABASE $accountingTarget OWNER knowledgeops"
-        docker volume create $RestoreVolume | Out-Null
+        if ($Runtime -eq 'deployment') { docker volume create $RestoreVolume | Out-Null }
         docker cp (Join-Path $BackupFolder 'business.dump') "${pg}:/tmp/$backupId-restore-business.dump"
         docker cp (Join-Path $BackupFolder 'accounting.dump') "${pg}:/tmp/$backupId-restore-accounting.dump"
         docker compose exec -T postgres pg_restore --exit-on-error --no-owner -U knowledgeops -d $RestoreDatabase "/tmp/$backupId-restore-business.dump"
         docker compose exec -T postgres pg_restore --exit-on-error --no-owner -U knowledgeops -d $accountingTarget "/tmp/$backupId-restore-accounting.dump"
-        if ($manifest.format -eq 2) {
-            docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" -v "${RestoreVolume}:/restore-workspace" api python scripts/backup_fixture.py verify --database $RestoreDatabase --accounting-database $accountingTarget --source-root /restore-workspace/uploads/originals --workspace-root /restore-workspace --workspace-archive "/backup/workspace.tar.gz" --output "/backup/restore-verification.json"
+        if ($Runtime -eq 'development') {
+            $restoreRoot = "/workspace/artifacts/verification/restores/$RestoreDatabase"
+            $arguments = @('scripts/backup_fixture.py', 'verify', '--database', $RestoreDatabase, '--accounting-database', $accountingTarget,
+                '--source-root', "$restoreRoot/uploads/originals", '--backup-manifest', "$backupInDev/manifest.json", '--output', "$backupInDev/restore-verification.json")
+            if ($manifest.format -eq 2) {
+                $arguments += @('--workspace-root', $restoreRoot, '--workspace-archive', "$backupInDev/workspace.tar.gz")
+            } else { $arguments += @('--archive', "$backupInDev/sources.tar.gz") }
+            docker exec -w /workspace -e MODEL_CALLS_ENABLED=false $dev .venv/bin/python scripts/dev.py --run .venv/bin/python @arguments
+        } elseif ($manifest.format -eq 2) {
+            docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" -v "${RestoreVolume}:/restore-workspace" api python scripts/backup_fixture.py verify --database $RestoreDatabase --accounting-database $accountingTarget --source-root /restore-workspace/uploads/originals --workspace-root /restore-workspace --workspace-archive "/backup/workspace.tar.gz" --backup-manifest "/backup/manifest.json" --output "/backup/restore-verification.json"
         } else {
-            docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" -v "${RestoreVolume}:/restore-sources" api python scripts/backup_fixture.py verify --database $RestoreDatabase --accounting-database $accountingTarget --source-root /restore-sources --archive "/backup/sources.tar.gz" --output "/backup/restore-verification.json"
+            docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" -v "${RestoreVolume}:/restore-sources" api python scripts/backup_fixture.py verify --database $RestoreDatabase --accounting-database $accountingTarget --source-root /restore-sources --archive "/backup/sources.tar.gz" --backup-manifest "/backup/manifest.json" --output "/backup/restore-verification.json"
         }
-        Write-Output "Restored into $RestoreDatabase and $RestoreVolume; active application configuration was not changed."
+        Write-Output "Restored into $RestoreDatabase; active application configuration was not changed."
     }
 } finally { Pop-Location }

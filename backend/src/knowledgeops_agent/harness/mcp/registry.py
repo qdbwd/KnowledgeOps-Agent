@@ -14,6 +14,7 @@ from pathlib import PurePosixPath
 
 from sqlalchemy import select
 
+from knowledgeops_agent.app.runs.control import lock_control
 from knowledgeops_agent.harness.mcp.transport import MCPConnectionConfig, connected_tools
 from knowledgeops_agent.harness.runtime.resources import content_hash
 from knowledgeops_agent.persistence.models import MCPConnection, MCPConnectionRevision
@@ -164,6 +165,8 @@ class MCPRegistry:
     ) -> dict:
         """所有变更带修订号；权限减小使旧绑定永久失效，重新启用不撤销这道屏障。"""
         with self.sessions.begin() as session:
+            # 与执行前最后一次许可核对串行，避免核对后、登记发送前插入撤回。
+            lock_control(session)
             row = session.scalar(
                 select(MCPConnection).where(MCPConnection.id == identifier).with_for_update()
             )

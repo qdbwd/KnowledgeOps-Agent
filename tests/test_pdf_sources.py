@@ -70,6 +70,7 @@ def test_real_pdf_pages_are_located_and_ocr_is_used_only_when_needed(
         sources, uploaded["version_id"], progress=lambda item: progress.append(item)
     )
     assert ready["status"] == "ready"
+    assert sources.full_content(ready["version_id"])["integrity"] == "verified"
     texts = [sources.get_segment(item["id"])["text"] for item in ready["segments"]]
     assert "80" in "\n".join(texts)
     if kind in {"chi_sim", "mixed"}:

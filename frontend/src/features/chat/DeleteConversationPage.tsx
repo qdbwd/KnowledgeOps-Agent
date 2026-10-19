@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, messageOf, send } from '../../shared/api/api';
 import { useWorkspace } from '../../shared/state/workspace';
 import { ErrorBox, Loading, PageTitle } from '../../shared/ui/components';
+import { clearComposerDraft } from './composerDraft';
 
 type Preview = {
   conversation_id: string;
@@ -14,6 +15,7 @@ type Preview = {
   blockers: string[];
   counts: { messages: number; runs: number; snapshots: number; history_records: number };
   preserved: string[];
+  assets?: { versions_delete: number; versions_keep: number; drafts_delete: number; drafts_keep: number; ready: boolean };
 };
 type Deletion = {
   id: string | null;
@@ -24,6 +26,7 @@ type Deletion = {
 };
 
 function blockerText(reason: string) {
+  if (reason === 'asset_reference_index_pending') return '正在核对已有内容的引用关系，请稍后重新预览。';
   if (reason.includes('unknown') || reason.includes('ledger_unavailable'))
     return '有执行结果尚未核实，需先完成核对。';
   if (reason.includes('run_cleanup_in_progress'))
@@ -99,6 +102,7 @@ function ConversationDeletion({ conversationId }: { conversationId: string }) {
           retry ? 'POST' : 'DELETE',
         ),
       );
+      clearComposerDraft(conversationId);
       refresh();
     } catch (failure) {
       setError(messageOf(failure));
@@ -127,7 +131,7 @@ function ConversationDeletion({ conversationId }: { conversationId: string }) {
               </h2>
               <p>
                 {status === 'completed'
-                  ? '独立资料、知识、草稿、文件和学习配置已保留。'
+                  ? '无依赖的会话材料和临时草稿已清理；独立资产、仍被使用的内容及学习配置已保留。'
                   : '会话已停止读写。后台分步处理，关闭此页面后仍会继续；隐藏会话不代表清理已经完成。'}
               </p>
               {status === 'failed' && (
@@ -147,6 +151,11 @@ function ConversationDeletion({ conversationId }: { conversationId: string }) {
                 以下内容会保留：{preview.preserved.join('、')}
                 。学习任务将解除会话关联并停止自动推进。
               </p>
+              {preview.assets?.ready && <div className="my-4 rounded-lg bg-[#f6f8f3] p-4 text-sm">
+                <p>将回收：{preview.assets.versions_delete} 个材料版本、{preview.assets.drafts_delete} 份临时草稿。</p>
+                <p>继续保留：{preview.assets.versions_keep} 个材料版本、{preview.assets.drafts_keep} 份草稿。它们有独立保存意图、被其他内容使用，或属于归属待核对的旧数据。</p>
+                <Link to={`/sources?conversation_id=${conversationId}`}>查看会话材料并选择独立保存</Link>
+              </div>}
               {!preview.eligible && (
                 <div
                   className="notice border-l-[3px] border-[#c0a76b] bg-[#f5f0e0] px-4 py-3 text-[13px] [overflow-wrap:anywhere]"

@@ -119,6 +119,7 @@ class ResourceService:
                 from knowledgeops_agent.harness.models.auxiliary import ISOLATED_INSTRUCTION
                 from knowledgeops_agent.harness.runtime.agent import SYSTEM_PROMPT
                 from knowledgeops_agent.harness.subagents.registry import active_definitions
+                from knowledgeops_agent.harness.tools.configuration import lock_configuration
                 from knowledgeops_agent.harness.tools.policy import read_policy
                 from knowledgeops_agent.knowledge.intent import INTENT_PROMPT
                 from knowledgeops_agent.learning.profiles import LearningProfileService
@@ -145,6 +146,8 @@ class ResourceService:
                             task_id=learning_task.id, query=root.task[:500], memory=memory
                         ),
                     }
+                # 组编辑同时更新策略与角色；冻结期间取共享配置锁，不读取半套新修订。
+                lock_configuration(session, shared=True)
                 tool_policy = read_policy(session)
                 skill_catalog_rows, skill_resources = scan_packages(
                     resource_path("SKILLS_DIRECTORY", SKILLS_PATH),

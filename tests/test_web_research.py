@@ -123,9 +123,15 @@ def test_search_discovery_is_not_evidence_and_page_cache_preserves_snapshot(
     again = service.read("https://example.org/guide", root_id="research-two")
     assert len(fetches) == 1 and again["cached"] is True
     assert first["source"]["version_id"] == again["source"]["version_id"]
+    assert sources.list_sources() == []
+    assert sources.list_sources(root_id="research-one")[0]["id"] == first["source"]["id"]
+    assert sources.list_sources(root_id="research-two")[0]["id"] == first["source"]["id"]
     assert first["evidence"]["root_id"] != again["evidence"]["root_id"]
     assert "committed operation" in first["evidence"]["text"]
-    assert sources.original(first["source"]["version_id"])[0] == html
+    assert "committed operation" in sources.full_content(first["source"]["version_id"])["text"]
+    assert not first["source"]["original_available"]
+    with pytest.raises(ValueError, match="no retained original"):
+        sources.original(first["source"]["version_id"])
 
 
 def test_empty_extraction_and_search_failure_are_not_successful_sources(

@@ -45,7 +45,35 @@ class Source(Base):
     title: Mapped[str] = mapped_column(String(500))
     kind: Mapped[str] = mapped_column(String(30))
     origin: Mapped[str | None] = mapped_column(Text)
+    # 旧来源没有保存意图，不能从文件名或运行日志推断后自动回收。
+    ownership_known: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AssetReference(Base):
+    """正文实际使用的资产边；记录存在本身不使目标获得永久保留。"""
+
+    __tablename__ = "asset_references"
+    __table_args__ = (Index("ix_asset_references_origin", "origin_node"),
+                      Index("ix_asset_references_target", "target_node"))
+    owner_kind: Mapped[str] = mapped_column(String(30), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    target_node: Mapped[str] = mapped_column(String(200), primary_key=True)
+    origin_node: Mapped[str] = mapped_column(String(200))
+
+
+class SourceUse(Base):
+    """一份去重材料可以独立保存，也可以同时属于多个会话。"""
+
+    __tablename__ = "source_uses"
+    __table_args__ = (
+        CheckConstraint("owner_kind IN ('library', 'conversation', 'run')"),
+        Index("ix_source_uses_owner", "owner_kind", "owner_id"),
+    )
+    source_id: Mapped[str] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"), primary_key=True)
+    owner_kind: Mapped[str] = mapped_column(String(20), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(120), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -55,8 +83,13 @@ class SourceVersion(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     source_id: Mapped[str] = mapped_column(ForeignKey("sources.id"), index=True)
     number: Mapped[int] = mapped_column(Integer)
+    # content_hash 保留旧原件摘要语义；新网页用正文+解析器指纹去重，不改旧身份。
     content_hash: Mapped[str] = mapped_column(String(64))
-    storage_key: Mapped[str] = mapped_column(Text)
+    content_hash_kind: Mapped[str] = mapped_column(String(30), default="original", server_default="original")
+    body_hash: Mapped[str | None] = mapped_column(String(64))
+    body_format: Mapped[str | None] = mapped_column(String(30))
+    original_hash: Mapped[str | None] = mapped_column(String(64))
+    storage_key: Mapped[str | None] = mapped_column(Text)
     mime_type: Mapped[str] = mapped_column(String(120))
     status: Mapped[str] = mapped_column(String(30), default="ready")
     parser: Mapped[str] = mapped_column(String(80), default="text-v1")
@@ -81,6 +114,23 @@ class SourceSegment(Base):
     method: Mapped[str] = mapped_column(String(30), default="text")
     status: Mapped[str] = mapped_column(String(30), default="ready")
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class DeliveredFile(Base):
+    """用户已收到的独立文件资产；来源Run仅用于追溯，不授予级联删除权。"""
+
+    __tablename__ = "delivered_files"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(String(36), index=True)
+    root_id: Mapped[str] = mapped_column(String(36), index=True)
+    name: Mapped[str] = mapped_column(Text)
+    source_path: Mapped[str] = mapped_column(Text)
+    storage_key: Mapped[str] = mapped_column(Text)
+    sha256: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    mime_type: Mapped[str] = mapped_column(String(120))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class KnowledgeDocument(Base):
@@ -225,6 +275,7 @@ class ChangeSet(Base):
     operation_key: Mapped[str | None] = mapped_column(String(200))
     request_fingerprint: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(30), default="draft")
+    retention_intent: Mapped[str] = mapped_column(String(20), default="legacy", server_default="legacy")
     proactive: Mapped[bool] = mapped_column(Boolean, default=False)
     requires_impact_confirmation: Mapped[bool] = mapped_column(Boolean, default=False)
     impact_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -632,11 +683,23 @@ class RunArtifact(Base):
     content_hash: Mapped[str] = mapped_column(String(64))
     _content: Mapped[str] = mapped_column("content", Text)
     content_storage_key: Mapped[str | None] = mapped_column(Text)
+    # 正式引用已转成固定来源后，旧产物身份只保留别名，不再次成为保留根。
+    promoted_version_id: Mapped[str | None] = mapped_column(ForeignKey("source_versions.id", ondelete="SET NULL"), index=True)
     expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     @property
     def content(self) -> str:
+        if self.promoted_version_id:
+            from sqlalchemy.orm import object_session
+
+            from knowledgeops_agent.sources.service import SourceService
+
+            session = object_session(self)
+            version = session.get(SourceVersion, self.promoted_version_id) if session is not None else None
+            if version is None:
+                raise ValueError("promoted material source is unavailable")
+            return SourceService._verified_body(session, version)[1]
         from knowledgeops_agent.persistence.files import stored_text
 
         return stored_text(self, self.content_storage_key, self.content_hash, self._content)
@@ -733,6 +796,23 @@ class ResourceRevocation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class MemoryCategoryDefinition(Base):
+    """用户可维护的展示类别；与记忆内部 category 语义及权限完全分开。"""
+
+    __tablename__ = "memory_categories"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(100))
+    name_key: Mapped[str] = mapped_column(String(200))
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    origin: Mapped[str] = mapped_column(String(20), default="user")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        Index("uq_memory_category_active_name", "name_key", unique=True,
+              postgresql_where=text("NOT deleted")),
+    )
+
+
 class Preference(Base):
     """通用长期记忆的当前指针；沿用表名和ID，旧偏好属于preference类别。"""
 
@@ -746,6 +826,9 @@ class Preference(Base):
     category: Mapped[str] = mapped_column(
         String(30), default="preference", server_default="preference"
     )
+    display_category_id: Mapped[str | None] = mapped_column(ForeignKey("memory_categories.id"))
+    # 只保存分类进度/来源与短错误码；任务正文、请求和恢复事实沿用 Run。
+    classification: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
     confidence: Mapped[float] = mapped_column(Float, default=1.0, server_default="1")
     revocation_epoch: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -924,6 +1007,29 @@ class SubagentDefinitionRevision(Base):
     definition_id: Mapped[str] = mapped_column(
         ForeignKey("subagent_definitions.id"), primary_key=True
     )
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    content: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ToolGroup(Base):
+    """可编辑本地工具组；稳定身份与删除墓碑不能因默认目录回退而复活。"""
+
+    __tablename__ = "tool_groups"
+    id: Mapped[str] = mapped_column(String(100), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str] = mapped_column(String(500), default="")
+    tool_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ToolGroupRevision(Base):
+    """工具组历史用于核对配置变更；执行许可使用原策略和角色的冻结展开结果。"""
+
+    __tablename__ = "tool_group_revisions"
+    group_id: Mapped[str] = mapped_column(ForeignKey("tool_groups.id"), primary_key=True)
     revision: Mapped[int] = mapped_column(Integer, primary_key=True)
     content: Mapped[dict] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

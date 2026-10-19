@@ -14,8 +14,8 @@ from knowledgeops_agent.sources.web import WebResearchService
 
 @tool
 def list_materials(runtime: ToolRuntime[RunContext]) -> list[dict]:
-    """列出本项目已导入材料的 ID 和标题；正文须通过来源片段读取。"""
-    return runtime.context.sources.list_sources()
+    """列出独立材料库及当前会话材料的 ID 和标题；正文须通过来源片段读取。"""
+    return runtime.context.sources.list_sources(root_id=runtime.context.root_id)
 
 
 @tool

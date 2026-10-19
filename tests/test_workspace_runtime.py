@@ -5,6 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from fixtures.execution_provider import ExecutionProvider
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from test_api_worker import services as _services
@@ -31,12 +32,14 @@ def enable(sessions):
 def test_real_graph_writes_edits_executes_presents_and_imports(runtime_services, tmp_path):
     module, context, run = setup_run(runtime_services)
     ExecutionSettings(context.jobs.sessions).update(
-        run["conversation_id"], expected_revision=0, permission_mode="auto"
+        run["conversation_id"], expected_revision=0, permission_mode="auto_review"
     )
     context.workspace_root = tmp_path / "workspace"
     enable(context.jobs.sessions)
 
     class Provider:
+        invoke = ExecutionProvider.invoke
+
         def bind_tools(self, tools):
             assert {
                 "read_file",
@@ -68,8 +71,9 @@ def test_real_graph_writes_edits_executes_presents_and_imports(runtime_services,
                 name, args = "read_source", {"segment_id": source["segments"][0]["id"]}
             elif len(observations) > len(steps):
                 evidence = json.loads(observations[-1].content)
+                delivery = json.loads(observations[4].content)[0]
                 yield AIMessageChunk(
-                    "已生成[笔记](/api/workspace/download?path=outputs%2Fnote.md)。"
+                    f"已生成[笔记]({delivery['url']})。"
                     + evidence["citation"]
                 )
                 return
@@ -96,7 +100,7 @@ def test_real_graph_writes_edits_executes_presents_and_imports(runtime_services,
     )
     assert (context.workspace_root / "outputs/note.md").read_text() == "# 定稿\n本地材料"
     assert (context.workspace_root / "outputs/result.txt").read_text() == "脚本产物"
-    assert "/api/workspace/download" in result["messages"][-1].text
+    assert "/api/deliveries/" in result["messages"][-1].text
     assert context.jobs.get_run(run["id"])["tool_calls"] == 7
     assert context.sources.evidence_catalog(context.root_id)
 
@@ -122,7 +126,7 @@ def test_graph_executes_frozen_skill_script_and_records_resource_use(
     """从部署包到冻结清单、真实 SDK 工具、子进程和回执，只有模型响应是替身。"""
     module, context, run = setup_run(runtime_services)
     ExecutionSettings(context.jobs.sessions).update(
-        run["conversation_id"], expected_revision=0, permission_mode="auto"
+        run["conversation_id"], expected_revision=0, permission_mode="auto_review"
     )
     context.workspace_root = tmp_path / "workspace"
     directory = tmp_path / "skills" / "script-example"
@@ -136,6 +140,8 @@ def test_graph_executes_frozen_skill_script_and_records_resource_use(
     enable(context.jobs.sessions)
 
     class Provider:
+        invoke = ExecutionProvider.invoke
+
         def bind_tools(self, tools):
             assert "execute" in {tool.name for tool in tools}
             return self
@@ -194,13 +200,15 @@ def test_real_graph_cancellation_reaches_running_shell(runtime_services, tmp_pat
     """模拟 Web 的取消写入 PG，验证真实图/SDK 调用中的命令会及时退出。"""
     module, context, run = setup_run(runtime_services)
     ExecutionSettings(context.jobs.sessions).update(
-        run["conversation_id"], expected_revision=0, permission_mode="auto"
+        run["conversation_id"], expected_revision=0, permission_mode="auto_review"
     )
     context.workspace_root = tmp_path / "workspace"
     context.workspace_execute_timeout = 15
     enable(context.jobs.sessions)
 
     class Provider:
+        invoke = ExecutionProvider.invoke
+
         def bind_tools(self, tools):
             return self
 

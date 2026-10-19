@@ -11,7 +11,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, text
 
 from knowledgeops_agent.harness.runtime.resources import content_hash
-from knowledgeops_agent.harness.tools.catalog import expand_groups, selected_groups, tool_options
+from knowledgeops_agent.harness.tools.catalog import tool_options
+from knowledgeops_agent.harness.tools.configuration import lock_configuration
+from knowledgeops_agent.harness.tools.groups import (
+    expand_group_ids,
+    normalize_group_ids,
+    select_groups,
+)
 from knowledgeops_agent.persistence.models import ToolPolicy, ToolPolicyRevision
 
 POLICY_ID = "default"
@@ -88,7 +94,7 @@ class ToolPolicyUpdate(BaseModel):
     @field_validator("main_tool_groups")
     @classmethod
     def known_groups(cls, value: list[str] | None) -> list[str] | None:
-        return None if value is None else selected_groups(value)
+        return None if value is None else normalize_group_ids(value)
 
 
 def _selected_ids(policy: dict, *, is_root: bool) -> set[str]:
@@ -103,6 +109,30 @@ def read_policy(session) -> dict:
     """可复用调用方事务读取当前指针；运行资源冻结与其他资源保持同一事务。"""
     row = session.get(ToolPolicy, POLICY_ID)
     return deepcopy(row.content) if row is not None else baseline_policy()
+
+
+def advance_main_epochs(current: dict, updated: dict) -> None:
+    """选择收窄只撤回主 Agent，不撤回子角色的独立工具许可。"""
+    old = current['resolved_main_tools']
+    new = updated['resolved_main_tools']
+    old_selection = set(current['enabled']) if old is None else set(old)
+    new_selection = set(updated['enabled']) if new is None else set(new)
+    for identifier in old_selection - new_selection:
+        updated['main_epochs'][identifier] = current['main_epochs'].get(identifier, 0) + 1
+
+
+def save_policy(session, current: dict, updated: dict) -> None:
+    """调用方持有配置锁；当前指针与不可变修订必须和关联组/角色一起提交。"""
+    updated['revision'] = current['revision'] + 1
+    row = session.get(ToolPolicy, POLICY_ID)
+    if row is None:
+        row = ToolPolicy(id=POLICY_ID, revision=updated['revision'], content=deepcopy(updated))
+        session.add(row)
+        session.flush()
+        session.add(ToolPolicyRevision(policy_id=POLICY_ID, revision=0, content=deepcopy(current)))
+    else:
+        row.revision, row.content = updated['revision'], deepcopy(updated)
+    session.add(ToolPolicyRevision(policy_id=POLICY_ID, revision=updated['revision'], content=deepcopy(updated)))
 
 
 class ToolPolicyService:
@@ -130,6 +160,7 @@ class ToolPolicyService:
         ).model_dump(exclude_unset=True)
         data.pop("expected_revision")
         with self.sessions.begin() as session:
+            lock_configuration(session)
             # 单应用配置更新很少；沿用角色目录的PG表锁，包含首写时还没有行的竞争。
             session.execute(text("LOCK TABLE tool_policies IN SHARE ROW EXCLUSIVE MODE"))
             current = read_policy(session)
@@ -162,40 +193,14 @@ class ToolPolicyService:
             if "main_tools" in data or "main_tool_groups" in data:
                 updated.update(data)
                 groups, tools = updated["main_tool_groups"], updated["main_tools"]
+                select_groups(groups or [], session)
                 updated["resolved_main_tools"] = (
                     None
                     if groups is None and tools is None
-                    else list(dict.fromkeys([*(tools or []), *expand_groups(groups or [])]))
+                    else list(dict.fromkeys([*(tools or []), *expand_group_ids(groups or [], session)]))
                 )
-                # 角色选择收窄与全局开关分别记代次，不意外撤回子角色的独立工具许可。
-                old_selection = (
-                    set(current["enabled"])
-                    if current["resolved_main_tools"] is None
-                    else set(current["resolved_main_tools"])
-                )
-                new_selection = (
-                    set(updated["enabled"])
-                    if updated["resolved_main_tools"] is None
-                    else set(updated["resolved_main_tools"])
-                )
-                for identifier in old_selection - new_selection:
-                    updated["main_epochs"][identifier] = (
-                        current["main_epochs"].get(identifier, 0) + 1
-                    )
-            updated["revision"] += 1
-            row = session.get(ToolPolicy, POLICY_ID)
-            if row is None:
-                row = ToolPolicy(id=POLICY_ID, revision=updated["revision"], content=updated)
-                session.add(row)
-                session.flush()
-                session.add(ToolPolicyRevision(policy_id=POLICY_ID, revision=0, content=current))
-            else:
-                row.revision, row.content = updated["revision"], updated
-            session.add(
-                ToolPolicyRevision(
-                    policy_id=POLICY_ID, revision=updated["revision"], content=deepcopy(updated)
-                )
-            )
+                advance_main_epochs(current, updated)
+            save_policy(session, current, updated)
             return deepcopy(updated)
 
     def allowed_ids(self, binding: dict, *, is_root: bool) -> set[str]:

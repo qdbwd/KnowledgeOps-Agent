@@ -222,6 +222,7 @@ def capture_conversation(runtime: ToolRuntime[RunContext]) -> dict:
         kind="conversation",
         origin="conversation:" + run["conversation_id"],
         parser="conversation-v1",
+        root_id=context.root_id,
     )
     return {
         "source_id": source["id"],

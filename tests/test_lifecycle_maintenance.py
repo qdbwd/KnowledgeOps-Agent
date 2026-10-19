@@ -17,6 +17,31 @@ from knowledgeops_agent.persistence.files import FileStore
 detail_case, ledger, checkpoint_case, redis_case = _detail_case, _ledger, _checkpoint_case, _redis_case
 
 
+def test_maintenance_resumes_only_explicitly_accepted_html_job(detail_case, tmp_path):
+    from test_legacy_html import old_web, proof
+
+    from knowledgeops_agent.app.lifecycle.legacy_html import LegacyHtmlCleaner
+    from knowledgeops_agent.sources.service import SourceService
+
+    details, _, _, _, _, _, _, _, _ = detail_case
+    store = FileStore(tmp_path / "originals")
+    details.sessions.configure(info={**details.sessions.kw.get("info", {}), "source_store": store})
+    cleaner = LegacyHtmlCleaner(details.sessions, details.jobs)
+    sources = SourceService(details.sessions, store.root)
+    first = old_web((cleaner, sources, store))
+    second = old_web((cleaner, sources, store), html=b"<html>not approved</html>")
+    entries = {item["version_id"]: item for item in cleaner.preview()["items"]}
+    maintenance = LifecycleMaintenance(details, enabled=False)
+    assert maintenance.advance() is None
+    accepted = entries[first["version_id"]]
+    job = cleaner.admit(accepted, backup_folder=proof(tmp_path, cleaner, [accepted]))
+    assert maintenance.advance(job["id"])["phase"] == "html_files"
+    assert maintenance.advance(job["id"])["status"] == "completed"
+    assert not store.path(accepted["storage_key"]).exists()
+    assert store.path(entries[second["version_id"]]["storage_key"]).is_file()
+    assert sources.full_content(first["version_id"])["text"] == "旧正文仍完整。"
+
+
 def test_daily_scanner_resumes_all_stages_and_reclaims_material_after_last_reference_disappears(detail_case, tmp_path):
     details, runs, run, _, clock, _, _, _, _ = detail_case
     store = FileStore(tmp_path)
@@ -24,8 +49,8 @@ def test_daily_scanner_resumes_all_stages_and_reclaims_material_after_last_refer
     maintenance = LifecycleMaintenance(details)
     with details.sessions.begin() as session:
         item = artifact(session, store, run["id"], "被文件引用")
-        identity, path = item.id, store.path(item.content_storage_key)
-    store.replace("work/reference.md", identity.encode())
+        path, storage_key = store.path(item.content_storage_key), item.content_storage_key
+    store.replace("work/reference.md", f"/{storage_key}".encode())
     for _ in range(150):
         result = maintenance.tick()
         assert not (result.get("scan") or {}).get("error"), result
@@ -70,7 +95,8 @@ def test_reconcile_refreshes_checkpoint_pins_and_finds_unbatched_history(detail_
         identity = item.id
     live = runs.enqueue(chat["id"], "继续", request_key=db.new_id())
     runs.claim("next", run_id=live["id"], generation=live["generation"])
-    config = save_messages(saver, {"configurable": {"thread_id": live["id"], "checkpoint_ns": ""}}, identity, 1)
+    config = save_messages(saver, {"configurable": {"thread_id": live["id"], "checkpoint_ns": ""}},
+                           f"/runs/{run['id']}/artifacts/{identity}", 1)
     job = details.admit(run["id"])
     drain(details, job["id"])
     assert finish(maintenance.retained, job["id"])["status"] == "completed"
@@ -91,7 +117,9 @@ def test_reconcile_refreshes_checkpoint_pins_and_finds_unbatched_history(detail_
 def test_disabling_scan_preserves_new_data_but_continues_already_accepted_cleanup(detail_case):
     details, runs, run, _, _, _, _, _, _ = detail_case
     maintenance = LifecycleMaintenance(details, enabled=False)
-    assert maintenance.tick() == {"job": None}
+    tick = maintenance.tick()
+    assert tick["job"] is None and "scan" not in tick
+    assert "references" in tick  # 只回填派生引用，使人工删除预览可用，不启动自动清理。
     with details.sessions() as session:
         assert session.get(db.MaintenanceState, SCAN_STATE) is None
     job = details.admit(run["id"])

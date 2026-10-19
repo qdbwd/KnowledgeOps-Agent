@@ -29,6 +29,7 @@ export type Receipt = {
   tool_name: string;
   connection_revision: number;
   request: { service_name: string; description: string; arguments: unknown; schema_hash: string };
+  decision?: { actor?: string; review?: { result?: { verdict: string; reason: string } } };
   result?: { error?: string; source_id?: string; source_version_id?: string };
 };
 
@@ -338,6 +339,12 @@ export function MCPApprovals({
               连接修订 {row.connection_revision} · {row.status}
             </p>
             <pre>{JSON.stringify(row.request.arguments, null, 2)}</pre>
+            {row.decision?.review?.result && <p role="status" className="my-2 text-sm">
+              审查说明：{row.decision.review.result.reason}
+            </p>}
+            {row.status === 'pending' && row.decision?.review?.result?.verdict === 'deny' && <p className="my-2 text-sm">
+              审查未批准，尚未调用服务。你可以保持拒绝，或核对后仅允许这一次；连接及工具的固定禁止仍然有效。
+            </p>}
             {row.status === 'pending' && (
               <div className="row flex items-center gap-3">
                 <Button disabled={Boolean(busy)} onClick={() => decide(row, true)}>

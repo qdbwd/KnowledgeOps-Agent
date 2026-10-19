@@ -4,6 +4,7 @@ import shlex
 from types import SimpleNamespace
 
 import pytest
+from fixtures.execution_provider import ExecutionProvider
 from sqlalchemy import select
 
 from knowledgeops_agent.app.runs.service import RunService, RunStopped
@@ -110,8 +111,10 @@ def test_real_graph_execute_receipt_contains_streamed_artifact(business_sessions
     module, context, run = setup_run(services)
     context.workspace_root = tmp_path / "workspace"
     enable(business_sessions)
-    ExecutionSettings(business_sessions).update(run["conversation_id"], expected_revision=0, permission_mode="auto")
+    ExecutionSettings(business_sessions).update(run["conversation_id"], expected_revision=0, permission_mode="auto_review")
     class Provider:
+        invoke = ExecutionProvider.invoke
+
         def bind_tools(self, tools):
             return self
         def stream(self, messages, **kwargs):

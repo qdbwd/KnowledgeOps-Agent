@@ -63,6 +63,7 @@ def test_successful_call_has_source_and_same_call_id_replays_without_external_ca
     assert result["status"] == "succeeded" and result["source_version_id"]
     source = context.sources.get_version(result["source_version_id"])
     assert source["kind"] == "mcp"
+    assert source["ownership_known"] and not source["independently_saved"]
 
     async def unexpected(*args, **kwargs):
         raise AssertionError("已成功的调用不能重做")

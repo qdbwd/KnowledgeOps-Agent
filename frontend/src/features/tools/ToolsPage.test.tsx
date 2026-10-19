@@ -111,13 +111,19 @@ afterEach(() => {
   window.history.replaceState({}, '', '/');
 });
 
-it('unifies management links and shows the saved effective result without saving', async () => {
+it('keeps the page compact and loads effective tools only when requested', async () => {
   const sent = serve();
   open();
   expect(await screen.findByRole('heading', { name: '工具与能力', level: 1 })).toBeVisible();
   expect(screen.getByRole('link', { name: '管理MCP连接' })).toHaveAttribute('href', '/mcp');
   expect(screen.getByRole('link', { name: '管理子Agent' })).toHaveAttribute('href', '/subagents');
-  const preview = within(await screen.findByRole('region', { name: '有效工具预览' }));
+  expect(screen.queryByRole('region', { name: '有效工具预览' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '查看配置历史' })).not.toBeInTheDocument();
+  expect(
+    vi.mocked(fetch).mock.calls.some(([url]) => String(url).startsWith('/api/tools/effective')),
+  ).toBe(false);
+  await userEvent.click(await screen.findByRole('button', { name: '查看有效工具' }));
+  const preview = within(await screen.findByRole('dialog', { name: '主 Agent 的有效工具' }));
   expect(await preview.findByText('read_source')).toBeVisible();
   expect(sent).toHaveLength(0);
 });
@@ -125,10 +131,10 @@ it('unifies management links and shows the saved effective result without saving
 it('shows imported but unavailable skills with reasons without enabling them', async () => {
   const sent = serve();
   open();
-  await userEvent.click(await screen.findByText(/已发现的任务技能/));
-  expect(await screen.findByText('guided-learning · 已启用')).toBeVisible();
-  expect(screen.getByText('image-generation · 不可用')).toBeVisible();
-  expect(screen.getByRole('checkbox', { name: '启用技能 image-generation' })).toBeDisabled();
+  await userEvent.click(await screen.findByRole('button', { name: '管理全部 Skills' }));
+  const picker = within(screen.getByRole('dialog', { name: 'Skills' }));
+  expect(picker.getByRole('checkbox', { name: 'guided-learning' })).toBeChecked();
+  expect(picker.getByRole('checkbox', { name: 'image-generation' })).toBeDisabled();
   expect(screen.getByText('尚未配置生成服务')).toBeVisible();
   expect(sent).toHaveLength(0);
 });
@@ -136,31 +142,36 @@ it('shows imported but unavailable skills with reasons without enabling them', a
 it('persists skill switches through the versioned policy without changing deployment availability', async () => {
   const sent = serve();
   open();
-  await userEvent.click(await screen.findByText(/已发现的任务技能/));
-  await userEvent.click(screen.getByRole('checkbox', { name: '启用技能 guided-learning' }));
+  await userEvent.click(await screen.findByRole('button', { name: '管理全部 Skills' }));
+  await userEvent.click(screen.getByRole('checkbox', { name: 'guided-learning' }));
+  await userEvent.click(screen.getByRole('button', { name: '完成' }));
   await userEvent.click(screen.getByRole('button', { name: '保存工具配置' }));
   await waitFor(() =>
     expect(sent).toEqual([{ expected_revision: 0, skill_enabled: { 'guided-learning': false } }]),
   );
-  await waitFor(() =>
-    expect(
-      screen.getByRole('checkbox', { name: '启用技能 guided-learning', hidden: true }),
-    ).not.toBeChecked(),
-  );
+  await screen.findByText('当前配置修订 1');
+  await userEvent.click(screen.getByRole('button', { name: '管理全部 Skills' }));
+  expect(screen.getByRole('checkbox', { name: 'guided-learning' })).not.toBeChecked();
 });
 
 it('saves only changed global flags and refreshes the saved preview', async () => {
   const sent = serve();
   open();
   const form = within(await screen.findByRole('form', { name: '工具策略配置' }));
-  const global = within(form.getByRole('group', { name: '全局工具开关' }));
+  await userEvent.click(form.getByRole('button', { name: '管理全部工具' }));
+  const global = within(screen.getByRole('dialog', { name: '全局工具开关' }));
   await userEvent.click(global.getByRole('checkbox', { name: /read_source/ }));
+  await userEvent.click(global.getByRole('button', { name: '完成' }));
   await userEvent.click(form.getByRole('button', { name: '保存工具配置' }));
   await waitFor(() =>
     expect(sent).toEqual([{ expected_revision: 0, enabled: { 'builtin:read_source': false } }]),
   );
+  await screen.findByText('当前配置修订 1');
+  await userEvent.click(screen.getByRole('button', { name: '查看有效工具' }));
   expect(
-    await within(screen.getByRole('region', { name: '有效工具预览' })).findByText('全局已关闭'),
+    await within(screen.getByRole('dialog', { name: '主 Agent 的有效工具' })).findByText(
+      '全局已关闭',
+    ),
   ).toBeVisible();
 });
 
@@ -175,7 +186,9 @@ it('distinguishes default inheritance, explicit empty selection and selected gro
   );
   await screen.findByText('当前配置修订 1');
   form = within(screen.getByRole('form', { name: '工具策略配置' }));
-  await userEvent.click(form.getByRole('checkbox', { name: '材料读取' }));
+  await userEvent.click(form.getByRole('button', { name: '选择工具组' }));
+  await userEvent.click(screen.getByRole('checkbox', { name: '材料读取' }));
+  await userEvent.click(screen.getByRole('button', { name: '完成' }));
   await userEvent.click(form.getByRole('button', { name: '保存工具配置' }));
   await waitFor(() =>
     expect(sent[1]).toEqual({ expected_revision: 1, main_tool_groups: ['materials_read'] }),
@@ -193,24 +206,29 @@ it('retains local edits on conflict and reloads only when explicitly discarded',
   const sent = serve(true);
   open();
   let form = within(await screen.findByRole('form', { name: '工具策略配置' }));
+  await userEvent.click(form.getByRole('button', { name: '管理全部工具' }));
   await userEvent.click(
-    within(form.getByRole('group', { name: '全局工具开关' })).getByRole('checkbox', {
+    within(screen.getByRole('dialog', { name: '全局工具开关' })).getByRole('checkbox', {
       name: /read_source/,
     }),
   );
+  await userEvent.click(screen.getByRole('button', { name: '完成' }));
   await userEvent.click(form.getByRole('button', { name: '保存工具配置' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('修订已变化');
+  await userEvent.click(form.getByRole('button', { name: '管理全部工具' }));
   expect(
-    within(form.getByRole('group', { name: '全局工具开关' })).getByRole('checkbox', {
+    within(screen.getByRole('dialog', { name: '全局工具开关' })).getByRole('checkbox', {
       name: /read_source/,
     }),
   ).not.toBeChecked();
   expect(sent).toHaveLength(1);
+  await userEvent.click(screen.getByRole('button', { name: '完成' }));
   await userEvent.click(form.getByRole('button', { name: '放弃本地修改并刷新' }));
   await screen.findByText('当前配置修订 1');
   form = within(screen.getByRole('form', { name: '工具策略配置' }));
+  await userEvent.click(form.getByRole('button', { name: '管理全部工具' }));
   expect(
-    within(form.getByRole('group', { name: '全局工具开关' })).getByRole('checkbox', {
+    within(screen.getByRole('dialog', { name: '全局工具开关' })).getByRole('checkbox', {
       name: /read_source/,
     }),
   ).toBeChecked();

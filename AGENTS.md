@@ -1,12 +1,13 @@
 # KnowledgeOps 工程规则
 
-更新：2026-10-16。“临时数据生命周期与清理机制”已完成交付，完整确认计划在 docs/implementation-plan.md，逐项结果与边界在 docs/lifecycle-delivery.md。已交付的Harness可靠性计划原文保留为 docs/implementation-plan-harness-reliability.source.md，执行权限和学习模式计划分别保留 permissions.source / learning-memory.source。源码目录职责见 backend/README.md、frontend/README.md 和决策0026。部署设计见0024；实际状态和证据见 docs/progress.md，不能把计划当成已实现。
+更新：2026-10-19。“统一增量修改计划”已完成代码与隔离验收，完整确认范围及验收在 docs/implementation-plan.md，正式迁移结果与清理/收费验证边界见 docs/increment-migration-and-validation.md；旧生命周期计划保存为 docs/implementation-plan-lifecycle.source.md，已交付结果仍在 docs/lifecycle-delivery.md。本轮按保存意图和真实依赖清理资产，并增加统一模型审批；不能沿用旧的来源/草稿一律保留或把 auto 当模型审批。已交付的Harness可靠性、执行权限和学习模式计划保留为对应 source 文档。源码职责见 backend/README.md、frontend/README.md 和决策0026。实际状态和证据见 docs/progress.md，不能把计划当成已实现。
 
 ## 阅读与维护
 
 - 开发对象为 D:\codes\KnowledgeOps Agent。每次改动前读取 PROJECT_CONTEXT.md、docs/progress.md，再读相关设计、代码和测试。
 - 当前架构在 docs/architecture.md，唯一实施与验收依据在 docs/implementation-plan.md；首版取代关系见决策0006，本轮优化取代关系见决策0010。exports 是历史快照，*.source.md 是资料，不构成第二套指令。
 - 实际代码/运行证据与设计分开。进度写 docs/progress.md，问题及时写 docs/development-issues.md，重要取舍写 docs/decisions/。
+- 2026-10-19用户决定：根docs/、evaluation/（兼容拼写evalution/）仅本地维护，永久不提交Git；已跟踪文件只从索引移除，本地保留。文档维护要求继续适用，但新克隆可能没有这些本地资料，缺失时以现有源码、README及可见用户要求为准，不补造历史结论。
 - 每次长期目标交付及用户要求的阶段审查，主动在聊天中说明实际做了哪些开发，并同步 docs/architecture.md。按功能或机制连贯解释要解决的问题、参考项目的具体设计、采用理由、直接依赖/源码摘取/自行适配的区别、模块协作与数据流、带来的行为变化和当前限制；不等用户逐项追问，不以功能名称和通过数量替代说明，也不只贴文件链接。篇幅按设计复杂度安排，不机械套用用户举例的句式。
 - 架构说明服务于用户理解当前项目，保留具体例子和必要的设计取舍；明确区分已实现与待实施。验收批次和统计集中在 progress，详细诊断在 development-issues，架构与交付正文引用必要证据即可，不反复复制流水记录。
 - 完整开发实现记录是最终交付必需产物，正文仍维护在 docs/architecture.md。按当前真实运行顺序从 Agent 创建、状态与上下文、模型/工具循环写到 Web 接单、会话、任务恢复和 UI，并解释应用需求怎样反向影响 Agent 状态、接口及权限设计。解释顺序不冒充历史开发顺序；直接依赖、源码摘取和设计适配逐处说明具体采用内容。用户提供的写法示例不是项目事实。最终在聊天中主动交付说明及文件入口，不只列目录或许诺以后补写。

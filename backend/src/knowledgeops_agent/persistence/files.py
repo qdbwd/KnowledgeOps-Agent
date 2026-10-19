@@ -1,7 +1,7 @@
 """工作目录中的不可变正文存储，数据库只保存相对地址和校验值。
 
 先将文件写入并 fsync，再提交引用它的数据库事务。事务回滚可能留下孤立文件，
-但不会提交指向尚未写成文件的版本。当前不自动垃圾回收，以免删除恢复所需文件。
+但不会提交指向尚未写成文件的版本。受管写入登记安装日志，孤立对象另经实际DB核对回收。
 """
 
 from __future__ import annotations
@@ -31,10 +31,19 @@ class FileStore:
             raise ValueError("workspace path escapes storage root")
         return path
 
-    def put(self, key: str, content: str) -> str:
+    def put(self, key: str, content: str, *, session=None, purpose=None) -> str:
         """原子写入 UTF-8 不可变文件；相同键仅允许相同内容，返回 SHA256。"""
-        data = content.encode("utf-8")
+        return self.put_bytes(key, content.encode("utf-8"), session=session, purpose=purpose)
+
+    def put_bytes(self, key: str, data: bytes, *, session=None, purpose=None) -> str:
+        """受管正文/原件显式传用途和事务，普通用户工作文件不自动纳入回收。"""
         digest = hashlib.sha256(data).hexdigest()
+        if session is not None:
+            from knowledgeops_agent.persistence.installations import record_installation
+
+            record_installation(session, self, purpose, key, digest)
+        elif purpose is not None:
+            raise ValueError("managed file installation requires its transaction")
         target = self.path(key)
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
@@ -66,8 +75,8 @@ class FileStore:
             os.fsync(temporary.stream.fileno())
             os.replace(temporary.path, target)
 
-    def adopt(self, temporary: Path, key: str) -> str:
-        """接收本工作区已经流式写好并关闭的文件；不再把完整正文读入内存。"""
+    def adopt(self, temporary: Path, key: str, *, consume: bool = True, session=None, purpose=None) -> str:
+        """接收流式写好的文件；批次安装可保留暂存到元数据提交，以便重试安装。"""
         if temporary.is_symlink():
             raise ValueError("stream artifact must not be a symbolic link")
         temporary = temporary.resolve()
@@ -75,6 +84,12 @@ class FileStore:
             raise ValueError("stream artifact must be inside its workspace")
         with temporary.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        if session is not None:
+            from knowledgeops_agent.persistence.installations import record_installation
+
+            record_installation(session, self, purpose, key, digest)
+        elif purpose is not None:
+            raise ValueError("managed file installation requires its transaction")
         target = self.path(key)
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -83,7 +98,8 @@ class FileStore:
             with target.open("rb") as stream:
                 if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
                     raise ValueError("immutable stream artifact content mismatch") from None
-        temporary.unlink()
+        if consume:
+            temporary.unlink()
         return digest
 
     def read(self, key: str, digest: str | None) -> str:

@@ -76,6 +76,16 @@ def test_worker_saves_entire_response_before_pause_and_resumes_original_tools(cl
     assert answer.content == "准备写入，响应已完整接收。" and answer.tool_calls[0]["id"] == "pause-write"
     original_users = [m.content for m in values["messages"] if isinstance(m, HumanMessage)]
     resumed = client.post(f"/api/runs/{run['id']}/resume", json={"budgets": {}}).json()
+    waiting = execute_run(run["id"], resumed["generation"], services=services, checkpointer=saver, worker_id="pause-worker")
+    # 恢复暂停只继续原图，默认ask仍需确认该次文件写入，不能顺便授予许可。
+    assert waiting["outcome"]["kind"] == "waiting_approval" and not path.exists()
+    assert provider.requests == 1
+    action = client.get(f"/api/runs/{run['id']}/approvals").json()["actions"][0]
+    approved = client.post(f"/api/runs/{run['id']}/approvals/{action['id']}/decision", json={
+        "expected_fingerprint": action["fingerprint"], "approve": True,
+    })
+    assert approved.status_code == 200
+    resumed = services.jobs.get_run(run["id"])
     finished = execute_run(run["id"], resumed["generation"], services=services, checkpointer=saver, worker_id="pause-worker")
     assert finished["status"] == "completed" and path.read_text() == "once"
     assert provider.requests == 2 and finished["tool_calls"] == 1

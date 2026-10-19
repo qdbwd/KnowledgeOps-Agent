@@ -59,7 +59,7 @@ class LearningProfileService:
         digest = hashlib.sha256(content.encode()).hexdigest()
         # 失败事务留下的文件不能占住未来修订的路径；带内容哈希保持可重试。
         key = f"profiles/versions/{row.id}/{row.revision}-{digest}.md"
-        self._store(session).put(key, content)
+        self._store(session).put(key, content, session=session, purpose="profile")
         revision = LearningProfileRevision(
             profile_id=row.id,
             revision=row.revision,
@@ -182,7 +182,7 @@ class LearningProfileService:
             self._locked(session, profile_id, expected_revision)
             preview_id = new_id()
             key = f"profiles/imports/{preview_id}.md"
-            digest = self._store(session).put(key, content)
+            digest = self._store(session).put(key, content, session=session, purpose="profile_import")
             session.add(
                 LearningProfileImport(
                     id=preview_id,

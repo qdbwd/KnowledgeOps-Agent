@@ -7,6 +7,7 @@ import type { Source } from '../../shared/types/types';
 
 type Props = {
   conversationId?: string;
+  onManageMaterials: () => void;
   permission: string;
   reasoning: string;
   model?: string;
@@ -147,7 +148,9 @@ export function ComposerControls(props: Props) {
                   允许辅助模型
                 </label>
                 {props.conversationId && (
-                  <Link to={`/tools?conversation_id=${props.conversationId}`}>命令规则</Link>
+                  <Link to={`/tools?conversation_id=${props.conversationId}#execution-rules`}>
+                    命令规则
+                  </Link>
                 )}
                 <div className="composer-materials border-t border-line pt-3 [&_label]:items-start">
                   <strong>关联材料</strong>
@@ -170,7 +173,14 @@ export function ComposerControls(props: Props) {
                       {source.title}
                     </label>
                   ))}
-                  <Link to="/sources">导入或管理材料 →</Link>
+                  <Button
+                    type="button"
+                    className="quiet button-quiet"
+                    disabled={props.busy}
+                    onClick={props.onManageMaterials}
+                  >
+                    {props.conversationId ? '导入或管理会话材料 →' : '导入会话材料 →'}
+                  </Button>
                 </div>
                 <small className="muted text-muted">Ctrl / ⌘ + Enter 发送，Enter 换行</small>
               </div>
@@ -178,7 +188,7 @@ export function ComposerControls(props: Props) {
           </div>
           <label
             className="composer-permission m-0 flex-row items-center gap-[3px] max-md:[&>svg]:hidden"
-            title="本会话后续任务的执行权限"
+            title="请求批准：逐次确认修改操作。替我审批：独立模型审查具体动作，共享任务预算；不确定时仍询问你。"
           >
             <ShieldCheck size={15} />
             <span className="sr-only">执行权限</span>
@@ -190,7 +200,7 @@ export function ComposerControls(props: Props) {
               onChange={(e) => props.changeSetting('permission_mode', e.target.value)}
             >
               <option value="ask">请求批准</option>
-              <option value="auto">自动执行</option>
+              <option value="auto_review">替我审批</option>
             </select>
           </label>
         </div>

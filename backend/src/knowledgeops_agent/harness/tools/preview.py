@@ -20,6 +20,7 @@ REASONS = {
     "knowledge_only": "仅知识库模式不允许联网或外部MCP",
     "auxiliary_disabled": "本次任务未开启辅助模型",
     "delegation_disabled": "本次任务未开启子Agent分工",
+    "no_subagents": "没有已启用的子Agent角色，可先创建并启用角色",
     "no_skills": "该角色没有配置可加载的Skills",
     "role_disabled": "该角色已停用或删除",
     "connection_disabled": "MCP连接已停用",
@@ -42,10 +43,11 @@ def effective_catalog(
     """预览已保存配置；真正执行仍冻结资源并重新核对许可、预算和业务条件。"""
     policy = ToolPolicyService(sessions).get()
     role = SubagentRegistry(sessions).get(role_id) if role_id else None
+    has_subagents = bool(SubagentRegistry(sessions).snapshot()) if role is None else False
     root = {"knowledge_only": knowledge_only, "auxiliary": auxiliary, "delegation": delegation}
     is_root = role is None
     selected = role_tool_names(role) if role else None
-    available_skills = {row["resource"].split("/")[2] for row in load_skills()}
+    available_skills = {row["resource"].split("/")[2] for row in load_skills(policy)}
     has_skills = bool(available_skills & set(role["skills"])) if role else bool(available_skills)
     catalog = catalog_view(MCPRegistry(sessions).list())
     output = []
@@ -62,6 +64,8 @@ def effective_catalog(
                 reasons.append("knowledge_only")
         else:
             reasons += local_tool_reasons(item, root, is_root=is_root, role_tools=selected)
+            if is_root and item["name"] == "task" and not has_subagents:
+                reasons.append("no_subagents")
             if policy["enabled"].get(item["id"]) is not True:
                 reasons.append("globally_disabled")
             if (
@@ -104,7 +108,7 @@ def effective_catalog(
         "task_options": root,
         "tools": output,
         "skills": {
-            "available": skill_tool["available"],
-            "explanation": "渐进Skills依赖read_file；核心知识库规则仍然生效。",
+            "available": skill_tool["available"] and has_skills,
+            "explanation": "渐进Skills依赖read_file；核心知识库规则仍然生效。" if has_skills else "当前没有已启用且为该角色选择的技能。",
         },
     }

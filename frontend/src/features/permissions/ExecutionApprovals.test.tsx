@@ -27,6 +27,44 @@ const row = {
   rule_candidate: { argv: ['touch', 'work/file'], cwd: '/work', match: 'exact' },
 };
 
+it('shows exact file changes and the review fallback reason with only once approval', async () => {
+  const sent: unknown[] = [];
+  const file = { ...row, tool_name: 'edit_file', rule_candidate: null,
+    arguments: { file_path: '/work/note.md', old_string: '原内容', new_string: '更新内容', replace_all: true },
+    decision: { actor: 'system', file_target: { kind: 'file', path: '/work/note.md', text: '原内容及背景', text_complete: true },
+      review: { result: { verdict: 'ask', reason: '模型调用已关闭，请人工确认本次操作。' } } },
+  };
+  vi.stubGlobal('fetch', vi.fn(async (_path: string, init?: RequestInit) => {
+    if (init?.method === 'POST') { sent.push(JSON.parse(String(init.body))); return Response.json({}); }
+    return Response.json({ actions: [file], commands: [], mcp: [] });
+  }));
+  render(<MemoryRouter><ExecutionApprovals run={run} refreshKey={0} onChanged={() => {}} /></MemoryRouter>);
+  expect(await screen.findByText('编辑文件 · 等待批准')).toBeInTheDocument();
+  expect(screen.getByText('/work/note.md')).toBeInTheDocument();
+  expect(screen.getByText('原内容', { exact: true })).toBeInTheDocument();
+  expect(screen.getByText('更新内容')).toBeInTheDocument();
+  expect(screen.getByText('替换为（替换全部匹配）')).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('模型调用已关闭');
+  expect(screen.queryByText('减少重复询问')).not.toBeInTheDocument();
+  expect(screen.queryByText(/此命令包含脚本/)).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: '允许一次' }));
+  expect(sent).toEqual([{ expected_fingerprint: file.fingerprint, approve: true, scope: 'once', match: 'exact' }]);
+});
+
+it('keeps model denial visible and allows only an explicit once decision', async () => {
+  const sent: unknown[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (_path: string, init?: RequestInit) => {
+    if (init?.method === 'POST') { sent.push(JSON.parse(String(init.body))); return Response.json({}); }
+    return Response.json({ actions: [{ ...row, decision: { actor: 'model', review: { result: { verdict: 'deny', reason: '目标未获授权' } } } }], commands: [], mcp: [] });
+  }));
+  render(<MemoryRouter><ExecutionApprovals run={run} refreshKey={0} onChanged={() => {}} /></MemoryRouter>);
+  expect(await screen.findByRole('status')).toHaveTextContent('目标未获授权');
+  expect(screen.getByRole('button', { name: '保持拒绝' })).toBeEnabled();
+  expect(screen.queryByText('减少重复询问')).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: '核对后仍允许一次' }));
+  expect(sent).toEqual([{ expected_fingerprint: row.fingerprint, approve: true, scope: 'once', match: 'exact' }]);
+});
+
 it('can stop a run waiting only for MCP approval', async () => {
   const paths: string[] = [];
   vi.stubGlobal(

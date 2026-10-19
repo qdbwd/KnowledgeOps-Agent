@@ -3,11 +3,44 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from knowledgeops_agent.app.dependencies import svc
 
 router = APIRouter()
+
+
+def _deliveries(request):
+    from knowledgeops_agent.sources.deliveries import DeliveryService
+
+    services = svc(request)
+    if services.settings.workspace_root is None:
+        raise HTTPException(404, "workspace is not configured")
+    return DeliveryService(services.sessions, services.settings.workspace_root)
+
+
+@router.get("/api/deliveries")
+def delivered_files(request: Request, root_id: str | None = None):
+    if svc(request).settings.workspace_root is None:
+        return []
+    return _deliveries(request).list(root_id=root_id)
+
+
+@router.get("/api/deliveries/{identity}/preview")
+def delivered_file_preview(identity: str, request: Request):
+    return _deliveries(request).preview(identity)
+
+
+@router.get("/api/deliveries/{identity}/download")
+def delivered_file_download(identity: str, request: Request):
+    from urllib.parse import quote
+
+    item, data = _deliveries(request).read(identity)
+    return Response(data, media_type="application/octet-stream", headers={
+        "Content-Disposition": f"attachment; filename*=UTF-8''{quote(item['name'])}",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "sandbox; default-src 'none'",
+    })
 
 
 @router.get("/api/workspace/download")

@@ -1,9 +1,10 @@
-import { useLocation, useSearchParams } from 'react-router-dom';
+import { useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { useResource } from '../../shared/api/api';
 import { DocumentReader } from '../../shared/ui/DocumentReader';
 import { ErrorBox, Loading, PageTitle } from '../../shared/ui/components';
 
 export function WorkspaceFilePage() {
+  const { deliveryId } = useParams();
   const [params] = useSearchParams();
   const { hash } = useLocation();
   const path = params.get('path') ?? '';
@@ -13,15 +14,26 @@ export function WorkspaceFilePage() {
     text: string | null;
     markdown?: boolean;
     reason?: string;
-  }>(`/api/workspace/preview?path=${encodeURIComponent(path)}`);
+  }>(
+    deliveryId
+      ? `/api/deliveries/${deliveryId}/preview`
+      : `/api/workspace/preview?path=${encodeURIComponent(path)}`,
+  );
   if (result.loading) return <Loading />;
   if (!result.data) return <ErrorBox message={result.error} />;
   return (
     <>
-      <PageTitle eyebrow="WORKSPACE FILE" title={result.data.name}>
+      <PageTitle
+        eyebrow={deliveryId ? 'DELIVERED FILE' : 'WORKSPACE FILE'}
+        title={result.data.name}
+      >
         <a
           className="button secondary button-secondary"
-          href={`/api/workspace/download?path=${encodeURIComponent(path)}`}
+          href={
+            deliveryId
+              ? `/api/deliveries/${deliveryId}/download`
+              : `/api/workspace/download?path=${encodeURIComponent(path)}`
+          }
           download
         >
           下载文件
@@ -32,7 +44,7 @@ export function WorkspaceFilePage() {
           <p>{result.data.reason}</p>
         ) : (
           <DocumentReader
-            key={path}
+            key={deliveryId ?? path}
             text={result.data.text}
             markdown={result.data.markdown}
             line={line}

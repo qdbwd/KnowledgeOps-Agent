@@ -10,7 +10,7 @@
 
 项目展示与面试准备的38题问答已迁入个人知识库的任务板块，见[迁移入口](docs/interview-qa.md)。完整正文在知识库维护，项目不再保留另一份问答副本；本仓库继续维护工程说明与验证证据。
 
-2026-10-12增加两种学习模式、通用长期记忆和可维护的读者配置，设计见[决策0023](docs/decisions/0023-learning-modes-and-general-memory.md)。2026-10-14按[当前实施计划](docs/implementation-plan.md)增加会话执行权限、命令审批和恢复回执，正常数据库已增量升级到0024。完成状态与证据见[进展](docs/progress.md)。新增机制通过离线模型替身验证实际图、服务和浏览器，未进行付费语义质量验证；历史23/24业务结果不能作为新功能的效果评分。
+2026-10-19已完成[统一增量计划](docs/implementation-plan.md)的代码与隔离验收：网页正文与资产管理、保存意图及回收、记忆分类、工具组/角色配置、统一执行审批和任务详情已形成前后端闭环。完整回归的失败项已逐项复核通过，实际行为及证据见[本轮交付核对](docs/increment-delivery.md)。随后修复实际启动故障，重新备份及隔离恢复通过后正式库已从0030升级0038；切换与清理边界见[迁移说明](docs/increment-migration-and-validation.md)。本轮机制使用模型替身验证，真实分类和风险判断质量尚未验证；早期学习/权限及真实模型样例保留在[进展](docs/progress.md)，不冒充本轮效果评分。
 
 ## 首版范围
 
@@ -24,7 +24,7 @@
 
 - 固定业务评估、多轮交互、真实子 Agent 验证、备份恢复与可复现演示。辅助工具默认关闭，其效果实验已按用户要求移出本轮交付范围；各项当前证据见进展，能力存在不代表效果已验收。
 
-技能启停入口：“工具与能力 → 已发现的任务技能”，勾选后点击“保存工具配置”。用户选择保存在PG并可查看配置历史；部署条件不满足的技能不可通过UI开启。启用用于新任务，关闭会撤回后续读取和脚本资源装配，重新开启不会恢复旧任务已撤回的许可。目录与扩展方式见[Skills说明](skills/README.md)。
+技能启停入口：“工具与能力 → 管理全部 Skills”，在搜索选择器中勾选后点击“保存工具配置”；点击详情查看完整说明和资源。用户选择保存在PG，相关运行固定实际使用的修订；普通配置页不再展开大段历史。部署条件不满足的技能不可通过UI开启。启用用于新任务，关闭会撤回后续读取和脚本资源装配，重新开启不会恢复旧任务已撤回的许可。目录与扩展方式见[Skills说明](skills/README.md)。
 
 MCP入口为“工具服务”。添加连接、发现工具并审查许可后，主Agent在同一聊天中可以跨多轮使用连接，子Agent和其他聊天分开。依赖有状态握手会话的服务可在连接JSON中加`"protocol_mode":"legacy"`；默认`auto`自动协商，保持连接不保证远端保存页面或任务状态。空闲回收、worker重启都会建立新连接，成功调用仍可从数据库回执读取，未知结果不会自动重做。池容量和回收时间由`.env`的`MCP_SESSION_*`配置，修改后重启应用；机制和参考来源见[决策0027](docs/decisions/0027-mcp-session-lifecycle.md)。
 
@@ -56,11 +56,11 @@ Python 3.12、FastAPI、LangChain/LangGraph、PostgreSQL 17 + pg_search BM25；C
 
 ## 执行权限与命令确认
 
-聊天输入区的“执行权限”保存到当前会话。默认“请求批准”：已开放的文件读写和公开网页检索照常使用，执行Shell命令前显示命令原文、工作目录和执行者，等待用户允许或拒绝。选择“自动执行”可以跳过普通命令询问，但不能开启已关闭的工具、扩大只读子Agent能力，也不绕过命令deny规则、MCP强制确认或正式知识发布授权。这是应用层审批，不是额外的操作系统沙盒。
+聊天输入区的“执行权限”保存到当前会话。默认“请求批准”：安全读取和公开网页检索照常使用，Shell命令、文件新建/修改/删除及需确认的MCP操作按具体提案等待决定；文件提案还显示目标内容或修改范围。“替我审批”先交给独立、无工具的模型请求审查这一次动作，无法判断、模型关闭或请求失败时转人工，模型拒绝也先停止动作并显示理由。固定禁止、工具/角色上限和知识发布授权始终优先；批准后实际执行前再次核对目标版本与最新权限。旧auto在升级和兼容读取中降为请求批准，不会自动给旧会话启用收费审查。这是应用执行门禁，不是额外的操作系统沙盒。
 
 每条命令可以允许一次、拒绝一次或停止任务。对于能够可靠解析的简单命令，还可以按展示的完整参数数组保存本会话规则或跨会话规则；前缀规则允许追加参数，确认前应核对范围。脚本、解释器、变量和组合命令只提供单次批准。命令规则在“工具与能力 → 命令执行规则”维护，也可以从聊天框的“命令规则”入口查看本会话规则；支持allow/ask/deny、停用和删除。规则绑定工作区及工作目录，属于权限配置，不会从用户偏好或Skill文字自动提取。
 
-全部待办处理后，应用自动继续同一个任务。页面刷新不会丢失待办，等待期间不消耗活跃执行时间。排队消息仍排在当前任务之后；明确插入新要求会使旧提议失效。异常重启后仍须用户明确恢复，不会因为曾经批准过就自行运行。
+全部待办处理后，应用自动继续同一个任务。页面刷新不会丢失待办，等待期间不消耗活跃执行时间。文件/MCP批准仅对这次精确动作生效，不生成命令规则。暂停保留原待办；取消或明确插入新要求撤回尚未启动的提议，不能撤销已经发生的副作用。异常重启后仍须用户明确恢复，不会因为曾经批准过就自行运行。完整设计及本轮迁移边界见[架构说明](docs/architecture.md#独立执行审查的增量接入)和[迁移说明](docs/increment-migration-and-validation.md)。
 
 如果命令已启动，但应用没能保存结果，页面显示“执行结果未知”。先检查文件或外部结果，再选择“跳过并继续”或“明确重试一次”；重试可能重复副作用，会记为新的执行尝试。已有完整结果的调用恢复时只重放回执。详细设计与边界见[决策0025](docs/decisions/0025-execution-permissions.md)。
 
@@ -73,6 +73,8 @@ Python 3.12、FastAPI、LangChain/LangGraph、PostgreSQL 17 + pg_search BM25；C
 新工具沿用工具管理界面/API的开关，旧任务和子Agent不会因升级自动获得工作区。可通过 `.env` 的 `AGENT_WORKSPACE_HOST` 更换专用宿主目录；更换前先停止应用并搬齐整个工作区。备份必须包含业务数据库、模型回执库和完整工作区，不能只复制PG。命令可访问worker已有挂载，适用于本机可信任务；运行中约每秒检查取消、租约和活跃时间预算，默认60秒超时，`.env`的`WORKSPACE_EXECUTE_TIMEOUT`最多可设300秒。普通子进程在工具结束时回收，不支持跨调用后台服务；写出的文件保留。应用命令输出边接收边保存为工作区产物，`WORKSPACE_OUTPUT_LIMIT_BYTES`默认10485760（10 MiB），模型获得有界预览及补读引用。超过保存上限、超时或取消都有明确标记，不把预览截断解释为产物内容丢失，也不承诺保存超过上限的输出。
 
 新根运行的上下文配置位于 `config/model-capacity.json`：保留262144工作窗口与90%压缩阈值，`compact_target_fraction`为压缩后80%输入目标；`optional_background_tokens`和`optional_background_fraction`共同限制压力下可补读背景。`deferred_mcp_tools`默认启用，获准的可选MCP工具先经tool_search发现，再加载参数定义；工具管理仍控制权限。旧快照保持原行为，不因升级自动获得能力。聊天页可展开上下文分项，数值是最近一次输入或轮末整理后的估计，不是累计消费。
+
+工程文档`docs/`和评估材料`evaluation/`仅在本地维护，不随Git发布。新克隆的日常应用运行不依赖这两个目录；评估专属测试仅在本地评估目录存在时收集。
 
 ## Docker 快速启动
 
@@ -216,7 +218,7 @@ API和worker使用镜像内安装的Python依赖；web使用Nginx提供构建后
 | 准备开发环境 | init在`/workspace`执行`uv sync --locked --group dev`，再进入frontend执行`npm ci`。随后执行Alembic和工作区迁移；失败时dev不会继续启动。 |
 | 构建生产镜像 | 后端按uv.lock安装运行依赖（不含dev组）；前端按package-lock执行npm ci并构建静态文件。 |
 | 启动生产应用 | init执行数据库与工作区迁移；成功后API/worker及web继续启动，不在运行时重复安装依赖。 |
-| 每次运行dev.py | 直接使用已经安装的依赖，不安装、不迁移；只启动应用进程。 |
+| 每次运行dev.py | 只读检查数据库版本，API健康检查通过后再启动worker/Vite；不安装依赖、不自动迁移。 |
 
 开发`.venv`实际保存在宿主项目目录，由Linux容器创建，解释器为`/workspace/.venv/bin/python`，不能当Windows虚拟环境使用。开发前端依赖使用Docker命名卷挂到`/workspace/frontend/node_modules`，所以Windows文件夹里不一定能看到依赖内容。生产依赖保存在镜像内，不依赖宿主机是否存在这些文件夹。
 
@@ -252,6 +254,8 @@ npm ci
 切换模式时，先结束当前任务和开发启动脚本，再在宿主运行目标模式的`start.ps1 -Mode development/production`或`make dev/up`。这些入口会先停止旧应用及dev，再重新准备所选模式，共用持久数据但不同时运行两套worker。不要只启动另一组容器并让原应用继续消费同一个队列。
 
 ### 停止与启动排查
+
+若提示“数据库结构版本不匹配”，按[迁移说明](docs/increment-migration-and-validation.md)先停止应用并备份，再显式执行迁移。`0030`等编号是本项目表结构版本，不是PostgreSQL软件版本。API必须通过健康检查后才会启动worker和Vite；单独看到Uvicorn reload父进程或Celery ready，不能证明API可访问。
 
 以下命令均在**Windows PowerShell、项目根目录**执行：
 
@@ -342,7 +346,7 @@ docker compose exec -T dev sh -c 'cd frontend && npm run lint && npm run build &
 docker compose exec -T -e MODEL_CALLS_ENABLED=false dev python scripts/dev.py --run sh -c 'cd frontend && npx playwright install chromium && npm run test:browser'
 ```
 
-测试使用 `knowledgeops_test` 的独立 schema、Redis 的测试数据库和模型替身，不消耗真实模型额度。浏览器流程使用真实 HTTP/数据库，供应商仍是离线替身。按用户决定不使用 GitHub CI；这些检查在本项目开发容器中按改动范围执行。
+测试使用 `knowledgeops_test` 的独立 schema、Redis 的测试数据库和模型替身，不消耗真实模型额度。浏览器流程使用真实 HTTP/数据库，供应商仍是离线替身。后端集成批次和浏览器批次应顺序运行：它们虽然使用不同schema，配置/控制的PostgreSQL advisory锁仍在同一数据库范围内，重叠执行会导致验证相互阻塞。按用户决定不使用 GitHub CI；这些检查在本项目开发容器中按改动范围执行。
 
 以下是**收费评估**入口，仅在明确授权及任务预算内运行；每次新建不可变批次，失败不会被覆盖。执行前停止开发应用进程，以免验证进程和 Celery 消费者争抢同一执行租约，保持dev和基础服务运行；下列命令仍在Windows项目根目录执行。业务数据使用隔离 schema，调用回执与每根任务预算仍由统一网关保存，不恢复已废弃的项目累计统计。旧 comparison 的36次开关对照保留历史，本轮不要求重跑：
 
@@ -402,7 +406,7 @@ docker compose exec -T -e MODEL_CALLS_ENABLED=false dev python scripts/dev.py --
 
 ## 数据生命周期维护
 
-运行详情默认在根任务及依赖都结束后保留30天，每日检查；聊天记录由用户主动删除。暂停、待审批、待回答、未消费子结果和结果未知的执行受到保护。删除聊天保留上传资料、知识正文及版本、草稿、工作文件、长期记忆正文和学习配置；页面先预览范围，接受后封闭会话，再显示后台进度和失败重试。详细所有权和存储设计见[数据存储与生命周期](docs/database-design.md)，本轮实现与验证边界见[交付核对](docs/lifecycle-delivery.md)。
+运行详情默认在根任务及依赖都结束后保留30天，每日检查；聊天记录由用户主动删除。暂停、待审批、待回答、未消费子结果和结果未知的执行受到保护。删除聊天按保存意图和存活依赖处理：正式知识、已交付文件、明确存入材料库的来源及独立草稿保留；会话附件、自动读取的网页和临时草稿在最后一个有效使用者消失后回收。记忆和学习配置保留有效正文，移除被删会话的原话副本及关联；未登记共享工作文件和旧归属不明数据先保留。页面先预览回收、保留和阻塞原因，接受后显示持久进度及失败重试。详细设计见[数据存储与生命周期](docs/database-design.md)，本轮状态以[统一增量计划](docs/implementation-plan.md)和[进展](docs/progress.md)为准。
 
 2026-10-16正常库已完成0029业务迁移及0003_lifecycle模型回执迁移，正式应用尚未重新启动，整体完成状态见[进展](docs/progress.md)。已有0028数据的其他部署先停止应用并完成完整备份，在开发容器的`/workspace`中显式迁移；此入口不会启动任务、纳管或删除数据：
 
@@ -416,6 +420,7 @@ MODEL_CALLS_ENABLED=false python scripts/dev.py --run python -m scripts.migrate_
 # 默认只查看候选与保护原因，不设置期限、不删除内容。
 python scripts/dev.py --run python scripts/maintain_lifecycle.py
 python scripts/dev.py --run python scripts/maintain_lifecycle.py --run-id ROOT_ID
+python scripts/dev.py --run python scripts/maintain_lifecycle.py --configuration-history subagent
 
 # 显式纳管/扫描，或推进已经接受的一个清理作业；替换实际ID。
 python scripts/dev.py --run python scripts/maintain_lifecycle.py --scan --execute --steps 20
@@ -425,6 +430,8 @@ python scripts/dev.py --run python scripts/maintain_lifecycle.py --job-id JOB_ID
 
 普通运行由API原有维护循环推进，无需另加定时容器。`.env`中的`LIFECYCLE_CLEANUP_ENABLED`控制自动扫描，`LIFECYCLE_RETENTION_DAYS`默认30，`LIFECYCLE_SCAN_INTERVAL_SECONDS`默认86400，`LIFECYCLE_BATCH_SIZE`控制每批工作量；`LIFECYCLE_TEMPORARY_GRACE_SECONDS`默认86400，`LIFECYCLE_JOB_RETENTION_DAYS`默认30，租约和重试分别由`LIFECYCLE_JOB_LEASE_SECONDS`与`LIFECYCLE_RETRY_SECONDS`控制。关闭自动扫描不会撤销已接受的清理。失败作业保留阶段，不复制待删除正文到维护日志。命令不会绕过暂停、unknown或引用保护；要删除整段聊天，使用聊天页的“删除会话”入口。
 
+配置历史维护支持`subagent`、`tool_policy`和`tool_group`三类。默认返回一批候选、保留原因及`next_cursor`；下一页用`--after`传入该JSON数组。只有明确添加`--execute`才删除该批无依赖且过保留期的旧修订，`--steps`限制推进批数。当前配置、删除墓碑、冻结任务与学习审读仍需要的版本保持；此步也接入上述自动扫描。正式环境首次启用前应先审阅影响与备份，不将数据库升级当作清理授权。
+
 暂存回收只处理程序登记的上传、原子写入和命令捕获；活写入锁、原任务恢复依赖与24小时保护期共同决定是否可删。未知或旧未登记暂存保留，不能用通配符清理整个工作目录。回退代码不能恢复已删除内容，恢复需要下面的完整备份集；本功能不会自动执行VACUUM FULL或删除备份。
 
 ## 备份、恢复与故障
@@ -432,18 +439,38 @@ python scripts/dev.py --run python scripts/maintain_lifecycle.py --job-id JOB_ID
 正常备份前先让任务结束，并停止应用写入和本地工作区编辑，保留postgres运行。开发模式在dev.py终端按Ctrl+C；生产部署模式在Windows执行`docker compose stop api worker`。然后在Windows项目根目录创建备份：
 
 ```powershell
-./scripts/backup.ps1 -Mode create
+./scripts/backup.ps1 -Mode create -Runtime development
 ```
 
-备份脚本使用临时应用容器打包文件，不依赖dev中的应用进程；如果从未构建过生产应用镜像，可先在Windows执行`docker compose build api`准备该镜像，不必切换部署模式。备份完成后，开发模式回到dev重新执行`python scripts/dev.py`；生产部署模式执行`./scripts/start.ps1 -Mode production`。
+开发模式使用正在运行的dev容器打包工作区，并用当前源码验证恢复，不需要构建应用镜像，也不会启动普通API/worker。部署环境使用`-Runtime deployment`（旧命令默认值），通过临时应用容器执行；镜像应与备份所需迁移版本一致。备份完成后，开发模式回到dev重新执行`python scripts/dev.py`；生产部署模式执行`./scripts/start.ps1 -Mode production`。
 
 需要验证恢复时，另行在Windows执行以下命令，传入上一条命令输出的实际备份路径。这会创建隔离数据库和文件卷，不恢复到正在使用的数据位置：
 
 ```powershell
-./scripts/backup.ps1 -Mode restore -BackupFolder '<本项目 artifacts/backups 下的备份目录>'
+./scripts/backup.ps1 -Mode restore -Runtime development -BackupFolder '<本项目 artifacts/backups 下的备份目录>'
 ```
 
 备份格式2包含PostgreSQL业务库、独立模型回执库副本、完整工作区包及SHA-256清单。恢复脚本验证哈希，在新数据库/卷验证原件、正文文件、版本、引用、索引与检查点，不切换当前应用、不回滚当前模型回执库。旧格式1的原件卷备份仍可读取，恢复验证会先升级隔离库表结构。跨设备应将PG与完整工作区作为一组恢复，再显式调整连接/挂载；模型回执副本用于追溯和恢复核验，不用于覆盖当前调用记录。此脚本的自动验证目标是本机隔离恢复，不是一键切换到恢复后的数据。
+
+开发恢复目录位于`artifacts/verification/restores/knowledgeops_restore_*`，部署恢复使用全新命名卷；两个模式都拒绝覆盖已有数据库。测试备份使用与`backupfixture`库配套的隔离回执库。完整隔离演练入口为`./scripts/verify_backup.ps1`：检查0030旧表恢复、当前正文/交付/配置/检查点，以及去掉HTML后的再次备份恢复；不调用模型，默认收尾删除本次随机创建的测试数据库，保留归档和报告。
+
+### 旧网页HTML的显式整理
+
+新网页不长期写HTML，旧文件不会因启动或迁移自动删除。先在dev中运行只读检查（可在0030旧库运行）：
+
+```bash
+python scripts/dev.py --run python scripts/retire_web_originals.py --output artifacts/verification/html-preview.json
+```
+
+清单给出固定版本、大小、正文与引用校验、共享使用者及不能整理的原因；默认最多100个，可用`--after`接续。通过表示现有正文连续、哈希/引用一致，不证明历史提取与网页全文完全相同。先完成同库完整备份和恢复核验，再审阅并授权精确版本清单。完成正式结构迁移后，才可以显式执行：
+
+```bash
+python scripts/dev.py --run python scripts/retire_web_originals.py --execute \
+  --approved-report artifacts/verification/html-preview.json \
+  --backup artifacts/backups/实际备份目录 --version-id 已确认的固定版本ID
+```
+
+可重复传`--version-id`选择同一清单的版本。工具重新校验归档哈希、同批恢复结果和当前预览，先保存正文哈希并解除HTML关联，提交后再检查共享使用者并删除原件；不重新提取旧正文、不改ID或引用位置。失败作业用`--job-id`查看，`--execute --job-id ID --retry`重试已接受的同一作业；后台维护也可接续已明确接受的作业，不会自行接受其他HTML清理。
 
 - 任务服务重启：遗留任务转“中断”，页面选择恢复；关闭浏览器本身不会停止任务。
 - 取消/预算耗尽：保留已发布版本和草稿，展示部分结果；恢复后的新模型请求仍计费。

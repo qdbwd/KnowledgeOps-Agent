@@ -48,7 +48,7 @@ def test_old_snapshot_is_pinned_by_live_run_then_released_without_changing_lates
         artifact = db.RunArtifact(run_id=old.id, kind="tool_result", content="old", content_hash="a" * 64)
         session.add(artifact)
         session.flush()
-        first = snapshot_row(session, chat, old, content={"task_notes": {"source": artifact.id}})
+        first = snapshot_row(session, chat, old, content={"task_notes": {"artifact_id": artifact.id}})
         recent = run_row(session, chat.id)
         recent.continuation_snapshot_id = first.id
         latest_content = {"artifact_ids": [artifact.id], "summary": "新摘要"}
@@ -116,7 +116,7 @@ def test_checkpoint_reference_is_replaceable_and_does_not_grant_access(business_
         artifact = db.RunArtifact(run_id=owner.id, kind="tool_result", content="text", content_hash="a" * 64)
         session.add(artifact)
         session.flush()
-        pin_checkpoint_artifacts(session, consumer.id, {"task_notes": {"material": artifact.id}})
+        pin_checkpoint_artifacts(session, consumer.id, {"task_notes": {"artifact_id": artifact.id}})
         assert len(list(session.scalars(select(db.ArtifactRetentionReference)))) == 1
         pin_checkpoint_artifacts(session, consumer.id, {})
         assert list(session.scalars(select(db.ArtifactRetentionReference))) == []

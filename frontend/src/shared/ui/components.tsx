@@ -24,6 +24,9 @@ export function Markdown({
         skipHtml
         components={{
           a: ({ href, children }) => {
+            const delivery = href?.match(/^\/api\/deliveries\/([a-f0-9-]+)\/download(#L\d+)?$/);
+            if (delivery)
+              return <Link to={`/deliveries/${delivery[1]}${delivery[2] ?? ''}`}>{children}</Link>;
             // 交付文件先进入全文阅读器；下载按钮在阅读器中仍走原HTTP接口。
             if (href?.startsWith('/api/workspace/download?')) {
               return (

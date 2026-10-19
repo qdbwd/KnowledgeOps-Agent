@@ -20,14 +20,14 @@ def test_conversation_defaults_freeze_for_human_child_and_automatic_roots(servic
     url = f"/api/conversations/{conv}/runtime-settings"
     assert (
         client.patch(
-            url, json={"expected_revision": 0, "permission_mode": "auto", "reasoning_effort": "max"}
+            url, json={"expected_revision": 0, "permission_mode": "auto_review", "reasoning_effort": "max"}
         ).status_code
         == 200
     )
     body = {"content": "整理事务", "request_key": str(uuid4())}
     first = client.post(f"/api/conversations/{conv}/messages", json=body).json()
     assert first["input"]["reasoning"]["effective"] == "max"
-    assert first["input"]["runtime_settings"]["permission_mode"] == "auto"
+    assert first["input"]["runtime_settings"]["permission_mode"] == "auto_review"
     services.jobs.claim("worker", run_id=first["id"], generation=1)
     child = services.jobs.start_child(first["id"], "读取资料", operation_key="child")
     assert child["input"]["reasoning"] == first["input"]["reasoning"]

@@ -32,7 +32,7 @@ class CleanupJobs:
 
     def create(self, session, target_kind: str, target_id: str) -> db.CleanupJob:
         """由调用方与封闭业务对象同事务保存；唯一目标防止重复删除作业。"""
-        if target_kind not in {"run", "conversation"}:
+        if target_kind not in {"run", "conversation", "source", "delivery", "draft", "html_original"}:
             raise ValueError("unsupported cleanup target")
         session.execute(insert(db.CleanupJob).values(
             id=db.new_id(), target_kind=target_kind, target_id=target_id,

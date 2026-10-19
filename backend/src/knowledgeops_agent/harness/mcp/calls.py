@@ -19,10 +19,11 @@ from mcp.shared.exceptions import MCPError
 from mcp.types import ElicitResult, InputRequiredResult
 from sqlalchemy import select
 
-from knowledgeops_agent.app.runs.service import SteeringPending
+from knowledgeops_agent.app.runs.service import RunStopped, SteeringPending
 from knowledgeops_agent.harness.mcp.access import check_access, role_allows_mcp
 from knowledgeops_agent.harness.mcp.input import MCPInputs, MCPInputUnsupported
 from knowledgeops_agent.harness.mcp.registry import MCPRegistry, descriptor, redact
+from knowledgeops_agent.harness.mcp.review import review_call
 from knowledgeops_agent.harness.mcp.transport import MCPConnectionConfig
 from knowledgeops_agent.harness.runtime.resources import content_hash
 from knowledgeops_agent.harness.tools.catalog import mcp_tool_id, mcp_tool_name
@@ -92,12 +93,26 @@ class MCPCalls:
                 raise ValueError("MCP调用已经作出决定，不能改写历史")
             if approve and (
                 root.cancel_requested
+                or root.status not in {"running", "interrupted", "paused"}
                 or root.authority_epoch != row.authority_epoch
                 or root.authority_epoch != root.applied_authority_epoch
             ):
                 raise PermissionError("任务已取消或指令变化，本次确认失效")
+            if approve:
+                from dataclasses import replace
+
+                from knowledgeops_agent.harness.runtime.resources import ResourceService
+
+                snapshot = ResourceService(self.context.jobs.sessions).read(root.id)
+                binding = next((item for item in (snapshot or {}).get("content", {}).get("mcp", [])
+                                if item["id"] == row.connection_id and item["revision"] == row.connection_revision), None)
+                if snapshot is None or binding is None or root.input_data.get("knowledge_only"):
+                    raise PermissionError("原MCP许可不可用，不能批准")
+                bound = replace(self.context, resources=snapshot["content"])
+                check_access(bound, binding, self.registry.check(binding, row.tool_name))
             row.status = "approved" if approve else "denied"
             row.decision = {
+                **(row.decision or {}),
                 "actor": "user",
                 "approve": approve,
                 "input_hash": expected_hash,
@@ -139,6 +154,7 @@ class MCPCalls:
             "tool_name": name,
         }
         fingerprint = content_hash(request)
+        safe_arguments = context.gateway._redact(redact(arguments, binding["config"]))
         with context.jobs.sessions.begin() as session:
             root, executor = context.jobs.execution_guard(session, context.run_id, context.worker_id)
             if decision_epoch is not None and decision_epoch != executor.authority_epoch:
@@ -181,12 +197,14 @@ class MCPCalls:
                                 "permission": tool["permission"],
                                 "description": tool["description"],
                                 "root_authority_epoch": root.authority_epoch,
+                                "arguments_redacted": safe_arguments != arguments,
                             },
                             binding["config"],
                         )
                     ),
                     status="pending" if tool["permission"] == "confirm" else "approved",
                     authority_epoch=executor.authority_epoch,
+                    decision={},
                 )
                 session.add(row)
                 session.flush()
@@ -206,6 +224,10 @@ class MCPCalls:
                 }
             receipt = call_view(row)
             response = row.response
+        if receipt["status"] in {"pending", "reviewing", "approved"}:
+            review_call(context, binding, name, receipt["id"])
+            with context.jobs.sessions() as session:
+                receipt = call_view(session.get(MCPCall, receipt["id"]))
         if receipt["status"] == "pending":
             raise MCPApprovalRequired(receipt["id"])
         if receipt["status"] in {"succeeded", "unknown", "failed"}:
@@ -233,6 +255,17 @@ class MCPCalls:
                     inputs.save(receipt["id"], binding, response)
                     receipt["status"] = "waiting_input"
                     continue
+            except MCPApprovalRequired:
+                raise  # 最终发送前模式收窄，保留pending及同一回执，不误记成调用失败。
+            except RunStopped:
+                # 未发送的审批可继续；已经发送但未保存响应只能等待未知结果核对。
+                with context.jobs.sessions.begin() as session:
+                    row = session.get(MCPCall, receipt["id"])
+                    if row.status == "running":
+                        row.status = "unknown"
+                        row.result = {"status": "unknown", "receipt_id": row.id,
+                                      "error": "执行期间停止，外部结果尚不确定，禁止自动重发。"}
+                raise
             except Exception as error:
                 # 不回传底层异常正文：协议/HTTP异常可能携带凭据。已发请求无结果保持未知。
                 with context.jobs.sessions.begin() as session:
@@ -280,27 +313,61 @@ class MCPCalls:
                     raise ValueError("MCP工具Schema已变化，需要重新发现和审查")
                 self.registry.check(binding, tool["name"])
                 check_access(context, binding, tool)
+                if not continuation:
+                    review_call(context, binding, tool["name"], receipt_id)
                 with context.jobs.sessions.begin() as session:
                     root, executor = context.jobs.execution_guard(
                         session, context.run_id, context.worker_id
                     )
                     row = session.get(MCPCall, receipt_id)
+                    # 连接建立/远端目录校验期间仍可撤回权限；控制锁内再核对后才扣额发出请求。
+                    self.registry.check(binding, tool["name"])
+                    check_access(context, binding, tool)
+                    if (row.decision or {}).get("actor") == "model" and not continuation:
+                        from knowledgeops_agent.harness.permissions.settings import (
+                            ExecutionSettings,
+                        )
+
+                        current = (ExecutionSettings(context.jobs.sessions).get(root.conversation_id)
+                                   if root.conversation_id else {"permission_mode": "ask", "revision": 0})
+                        reviewed = json.loads(row.decision["review"]["input"])["facts"]
+                        if (current["permission_mode"] != reviewed["mode"]
+                                or current["revision"] != reviewed["settings_revision"]):
+                            # 必须提交pending后再抛等待信号；不能回滚后留下可复用的旧批准。
+                            row.status = "pending"
+                            row.decision = {**row.decision, "actor": "system", "review": {
+                                **row.decision["review"], "state": "complete", "result": {
+                                    "verdict": "ask", "code": "binding_changed",
+                                    "reason": "发送前执行设置已变化，原模型批准失效，请重新核对。",
+                                }}}
+                            session.flush()
+                            # 返回事务后再进入统一人工中断；这个分支从未预占工具或发业务请求。
+                            pending = True
+                        else:
+                            pending = False
+                    else:
+                        pending = row.status == "pending"
+                    if row.status == "pending":
+                        pending = True
                     expected = "waiting_input" if continuation else "approved"
-                    if (row.status != expected or executor.authority_epoch != row.authority_epoch
+                    if ((not pending and row.status != expected) or executor.authority_epoch != row.authority_epoch
                             or root.authority_epoch != row.request.get("root_authority_epoch", root.authority_epoch)):
                         raise PermissionError("MCP调用许可已变化")
-                    if continuation:
+                    if continuation and not pending:
                         round_row = session.get(MCPContinuation, continuation["id"])
                         if round_row.mcp_call_id != receipt_id or round_row.status != "ready":
                             raise PermissionError("MCP协议续接已变化")
                         round_row.status, round_row.updated_at = "sent", utcnow()
-                    context.jobs._reserve_tool(
-                        session,
-                        context.run_id,
-                        mcp_tool_name(binding["id"], tool["name"]),
-                        call_key=call_id,
-                    )
-                    row.status, row.updated_at = "running", utcnow()
+                    if not pending:
+                        context.jobs._reserve_tool(
+                            session,
+                            context.run_id,
+                            mcp_tool_name(binding["id"], tool["name"]),
+                            call_key=call_id,
+                        )
+                        row.status, row.updated_at = "running", utcnow()
+                if pending:
+                    raise MCPApprovalRequired(receipt_id)
                 session_info = {"id": lease.session_id, "reused": lease.reused,
                                 "protocol_version": lease.protocol_version}
                 if lease.protocol_version and lease.protocol_version >= "2026-07-28":
@@ -363,6 +430,7 @@ class MCPCalls:
             kind="mcp",
             origin=f"mcp-call:{receipt_id}",
             parser="mcp-response-v1",
+            root_id=context.root_id,
         )
         result = {
             "status": "succeeded" if response["status"] == "success" else "failed",

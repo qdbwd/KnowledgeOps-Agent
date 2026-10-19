@@ -15,12 +15,8 @@ from knowledgeops_agent.vendor.deerflow.deferred_tools import (
 )
 
 
-def build_discovery(context, external, *, search_enabled: bool) -> list:
-    """只对新容量合同的 MCP 延迟；旧快照维持旧可见性，不改历史待执行调用。"""
-    if not external or not context.gateway.capacity.deferred_mcp_tools or not search_enabled:
-        return []
-    catalog = DeferredToolCatalog(tuple(external))
-
+def discovery_tool(catalog: DeferredToolCatalog):
+    """装配与管理详情共用声明；构造工具不会查询或连接服务。"""
     @tool
     def tool_search(query: str, runtime: ToolRuntime[Any]) -> Command:
         """在本任务已授权的外部 MCP 工具目录中查询并加载完整参数定义。
@@ -45,5 +41,12 @@ def build_discovery(context, external, *, search_enabled: bool) -> list:
             "messages": [ToolMessage(content=content, name="tool_search", tool_call_id=runtime.tool_call_id)],
         })
 
-    return [DeferredToolFilterMiddleware(catalog, context.run_id,
-                                        tool_search if search_enabled else None)]
+    return tool_search
+
+
+def build_discovery(context, external, *, search_enabled: bool) -> list:
+    """只对新容量合同的 MCP 延迟；旧快照维持旧可见性，不改历史待执行调用。"""
+    if not external or not context.gateway.capacity.deferred_mcp_tools or not search_enabled:
+        return []
+    catalog = DeferredToolCatalog(tuple(external))
+    return [DeferredToolFilterMiddleware(catalog, context.run_id, discovery_tool(catalog))]

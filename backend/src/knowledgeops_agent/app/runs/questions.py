@@ -58,7 +58,7 @@ def invalidate_inputs(session, *, root_id: str | None = None, run_id: str | None
         select(Run.id).where(Run.root_id == root_id)
     )
     for row in session.scalars(select(MCPCall).where(
-        call_scope, MCPCall.status.in_(["pending", "approved", "waiting_input"]),
+        call_scope, MCPCall.status.in_(["pending", "reviewing", "approved", "waiting_input"]),
     )):
         row.status = "denied"
         row.decision = {**(row.decision or {}), "actor": "application", "approve": False,
@@ -91,9 +91,9 @@ def queue_after_answers(jobs, root_id: str) -> dict | None:
             if session.scalar(select(RunQuestion.id).where(
                 RunQuestion.run_id == run.id, RunQuestion.status == "pending",
             ).limit(1)) or session.scalar(select(ExecutionAction.id).where(
-                ExecutionAction.run_id == run.id, ExecutionAction.status == "pending",
+                ExecutionAction.run_id == run.id, ExecutionAction.status.in_(["pending", "reviewing"]),
             ).limit(1)) or session.scalar(select(MCPCall.id).where(
-                MCPCall.run_id == run.id, MCPCall.status == "pending",
+                MCPCall.run_id == run.id, MCPCall.status.in_(["pending", "reviewing"]),
             ).limit(1)):
                 continue
             run.generation += 1

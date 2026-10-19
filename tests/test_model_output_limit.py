@@ -15,6 +15,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from test_api_worker import services as _services
 from test_runtime import runtime_services as _runtime_services
 from test_runtime import setup_run
+from test_subagent_runtime import role
 
 services = _services
 runtime_services = _runtime_services
@@ -152,6 +153,7 @@ def test_capped_child_returns_failure_instead_of_successful_report(runtime_servi
 
     module, context, root = setup_run(runtime_services)
     context.gateway.client = CappedProvider()
+    role(context)
     module.build_agent(context, checkpointer=InMemorySaver())
     definition = context.resources["subagents"][0]
     result = drive_delegation(context,
@@ -239,6 +241,7 @@ def test_completed_old_child_checkpoint_cannot_return_truncated_report(
 
     module, context, root = setup_run(runtime_services)
     saver = InMemorySaver()
+    role(context)
     module.build_agent(context, checkpointer=saver)
     definition = context.resources["subagents"][0]
     child = context.jobs.start_child(
