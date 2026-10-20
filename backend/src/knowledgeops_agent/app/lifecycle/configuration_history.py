@@ -9,12 +9,13 @@ from knowledgeops_agent.harness.tools.configuration import lock_configuration
 from knowledgeops_agent.persistence import models as db
 
 TABLES: dict[str, tuple[
-    type[db.SubagentDefinitionRevision | db.ToolPolicyRevision | db.ToolGroupRevision],
-    type[db.SubagentDefinition | db.ToolPolicy | db.ToolGroup], str,
+    type[db.SubagentDefinitionRevision | db.ToolPolicyRevision | db.ToolGroupRevision | db.MCPConnectionRevision],
+    type[db.SubagentDefinition | db.ToolPolicy | db.ToolGroup | db.MCPConnection], str,
 ]] = {
     "subagent": (db.SubagentDefinitionRevision, db.SubagentDefinition, "definition_id"),
     "tool_policy": (db.ToolPolicyRevision, db.ToolPolicy, "policy_id"),
     "tool_group": (db.ToolGroupRevision, db.ToolGroup, "group_id"),
+    "mcp": (db.MCPConnectionRevision, db.MCPConnection, "connection_id"),
 }
 KINDS = tuple(TABLES)
 
@@ -55,6 +56,12 @@ def configuration_history_batch(session, kind: str, *, now, retention_days=30,
         referenced = select(db.RunResourceSnapshot.root_id).where(
             db.RunResourceSnapshot.content["tool_policy"].contains(binding),
         ).correlate(revision).exists()
+    elif kind == "mcp":
+        referenced = or_(select(db.RunResourceSnapshot.root_id).where(
+            db.RunResourceSnapshot.content['mcp'].contains(func.jsonb_build_array(binding)),
+        ).correlate(revision).exists(), select(db.MCPCall.id).where(
+            db.MCPCall.connection_id == identity, db.MCPCall.connection_revision == revision.revision,
+        ).correlate(revision).exists())
     # 组在保存策略/角色时已展开，不存在依靠历史组成员重新计算的运行绑定。
     query = select(identity.label("id"), revision.revision, revision.created_at,
                    is_current.label("current"), referenced.label("referenced"))

@@ -15,7 +15,7 @@ type Records = {
   continuation?: Continuation | null;
 };
 
-/** 仅在用户打开诊断后挂载；关闭/切换任务即取消未完成请求并释放大记录。 */
+/** 仅在诊断路由内挂载；离页/切换任务即取消未完成请求并释放大记录。 */
 export function RunDiagnostics({ run, refreshKey }: { run: Run; refreshKey: string }) {
   const [after, setAfter] = useState(0);
   const [retry, setRetry] = useState(0);
@@ -31,7 +31,7 @@ export function RunDiagnostics({ run, refreshKey }: { run: Run; refreshKey: stri
       aria-label="任务诊断"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2>诊断</h2>
+        <h2>诊断记录</h2>
         <a className="button secondary button-secondary" href={`/api/runs/${run.id}/export`}>
           导出诊断记录
         </a>

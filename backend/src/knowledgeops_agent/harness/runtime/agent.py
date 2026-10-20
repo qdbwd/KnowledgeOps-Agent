@@ -266,10 +266,12 @@ def build_agent(context: RunContext, *, checkpointer):
     backend, skill_middleware = build_skill_middleware(
         snapshot_files(skill_rows),
         available=lambda path: resource_service.skill_available(manifest, path),
-        on_read=lambda receipt: context.jobs.append_event(context.run_id, "skill_read", receipt),
+        on_read=lambda receipt: resource_service.record_skill_read(context, manifest, receipt),
         on_materialize=lambda receipt: context.jobs.append_event(
             context.run_id, "skill_materialized", receipt
         ),
+        loaded_skills=resource_service.loaded_skill_names(context.run_id, manifest),
+        restrict_execution_to_loaded=bool(manifest.get("skill_usage_version")),
     )
     if not skill_rows or "middleware:read_file" not in allowed:
         skill_middleware = []

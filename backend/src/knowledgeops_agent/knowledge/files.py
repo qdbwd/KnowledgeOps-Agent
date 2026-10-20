@@ -151,6 +151,8 @@ def refresh_working_files(
                 KnowledgeVersion, KnowledgeVersion.id == KnowledgeDocument.current_version_id
             )
         ):
+            if doc.deleted_at:
+                continue
             if document_ids is not None and doc.id not in document_ids:
                 continue
             key = doc.workspace_path or f"knowledge/documents/{doc.id}.md"
@@ -216,6 +218,11 @@ def synchronize(
     current = worktree(sessions)
     known = published_files(sessions) if baseline is None else baseline
     keys = sorted({path.lstrip("/") for path in paths})
+    with sessions() as session:
+        removed_paths = set(session.scalars(select(KnowledgeDocument.workspace_path).where(
+            KnowledgeDocument.deleted_at.is_not(None), KnowledgeDocument.workspace_path.in_(keys))))
+    if removed_paths:
+        raise ValueError("文章已删除，原工作路径不能重新同步；如需新建请使用新路径。")
     for key in keys:
         target = store.path(key)
         if not target.is_relative_to(store.path("knowledge/documents")) or target.suffix != ".md":

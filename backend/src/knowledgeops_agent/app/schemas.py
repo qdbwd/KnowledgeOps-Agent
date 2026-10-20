@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from knowledgeops_agent.app.runs.service import Budgets
 from knowledgeops_agent.memory.service import MemoryCategory
@@ -16,6 +16,10 @@ class InputModel(BaseModel):
 
 class ConversationInput(InputModel):
     title: str = Field(default="新对话", max_length=300)
+
+
+class ConversationRenameInput(InputModel):
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
 
 
 class GuidanceInput(InputModel):
@@ -105,6 +109,22 @@ class MCPUpdate(InputModel):
 class MCPDecision(InputModel):
     expected_hash: str = Field(min_length=1, max_length=64)
     approve: bool
+
+
+class MCPImportInput(InputModel):
+    value: dict
+    connection_id: str | None = Field(default=None, max_length=36)
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
+class MCPActivationInput(InputModel):
+    permissions: dict[str, Literal['deny', 'read', 'confirm']]
+    enabled: bool = False
+
+
+class MCPCredentialsInput(InputModel):
+    values: dict[str, str] = Field(max_length=64)
+    expected_revision: int | None = Field(default=None, ge=1)
 
 
 class TextInput(InputModel):

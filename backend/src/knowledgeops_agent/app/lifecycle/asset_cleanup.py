@@ -154,15 +154,25 @@ class AssetCleaner:
                 "deleted": 0, "kept": 0})
             return job_view(job)
 
-    def list_jobs(self, *, limit=20):
+    def list_jobs(self, *, limit=20, kind=None):
         with self.sessions() as session:
-            return [public_job(job_view(row)) for row in session.scalars(select(db.CleanupJob).where(
-                db.CleanupJob.target_kind.in_(["source", "delivery", "draft"])).order_by(
+            from sqlalchemy import and_, or_
+
+            query = select(db.CleanupJob).where(or_(
+                db.CleanupJob.target_kind.in_(["source", "delivery", "draft", "knowledge"]),
+                and_(db.CleanupJob.target_kind == "run", db.CleanupJob.summary["user_requested"].as_boolean().is_(True))))
+            if kind:
+                query = query.where(db.CleanupJob.target_kind == kind)
+            else:
+                query = query.where(db.CleanupJob.target_kind.in_(["source", "delivery", "draft"]))
+            return [public_job(job_view(row)) for row in session.scalars(query.order_by(
                 (db.CleanupJob.status == "completed").asc(), db.CleanupJob.updated_at.desc()).limit(limit))]
 
     def get_job(self, identity):
         job = self.jobs.get(identity)
-        if job["target_kind"] not in {"source", "delivery", "draft"}:
+        if job["target_kind"] not in {"source", "delivery", "draft", "knowledge", "run"} or (
+            job["target_kind"] == "run" and not job["summary"].get("user_requested")
+        ):
             raise KeyError("asset deletion job not found")
         return public_job(job)
 
@@ -211,7 +221,7 @@ class AssetCleaner:
             row = session.get(db.ChangeSet, identity)
             owner = session.get(db.Run, row.root_id) if row else None
             kept = int(bool(row and (not owner or owner.lifecycle_state not in {"cleaning", "expired"}
-                or row.retention_intent != "temporary" or session.scalar(
+                or row.retention_intent != "temporary" or row.status == "published" or session.scalar(
                 select(graph.c.node).where(graph.c.node == "draft:" + identity)))))
             if row and not kept:
                 remove_draft(session, row)
@@ -247,7 +257,7 @@ class AssetCleaner:
                 select((literal("delivery:") + db.DeliveredFile.id).label("node")).where(
                     db.DeliveredFile.deleted_at.is_not(None), ~(literal("delivery:") + db.DeliveredFile.id).in_(nodes)),
                 select((literal("draft:") + db.ChangeSet.id).label("node")).where(
-                    db.ChangeSet.retention_intent == "temporary", ~(literal("draft:") + db.ChangeSet.id).in_(nodes),
+                    db.ChangeSet.retention_intent == "temporary", db.ChangeSet.status != "published", ~(literal("draft:") + db.ChangeSet.id).in_(nodes),
                     db.ChangeSet.root_id.in_(select(db.Run.id).where(db.Run.lifecycle_state.in_(["cleaning", "expired"]))),
                 )).subquery()
             query = select(candidates.c.node).order_by(candidates.c.node).limit(limit + 1)

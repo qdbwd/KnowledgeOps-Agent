@@ -33,6 +33,10 @@ def main():
         from fixtures.mcp_input_provider import InputProvider
 
         provider = InputProvider(Path(path) / "protocol.log")
+    elif modes == ['skill']:
+        from fixtures.reliability_provider import SkillResumeProvider
+
+        provider = SkillResumeProvider()
     elif not modes:
         provider = QuestionsProvider()
     elif modes[0] in {"file-before", "file-after", "file-resume"}:

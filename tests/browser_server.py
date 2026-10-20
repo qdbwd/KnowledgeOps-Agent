@@ -5,6 +5,7 @@
 """
 
 import os
+import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import uuid4
@@ -44,8 +45,22 @@ def main():
         prepare_accounting(engine)
         sessions = sessionmaker(engine, expire_on_commit=False)
         with TemporaryDirectory(prefix="knowledgeops-browser-") as storage:
+            from knowledgeops_agent.core.resources import bundled_resource
+            from knowledgeops_agent.harness.skills.management import SkillManagement
             from knowledgeops_agent.persistence.files import FileStore
 
+            # 管理测试只修改隔离副本，不能向项目真实 skills 上传、更新或移除包。
+            skill_root = Path(storage) / "skills"
+            skill_root.mkdir()
+            original_skills = bundled_resource("skill-seeds")
+            for directory in original_skills.iterdir():
+                if not directory.name.startswith(".") and directory.is_dir() and (directory / "SKILL.md").is_file():
+                    shutil.copytree(directory, skill_root / directory.name, symlinks=True)
+            if (original_skills / "availability.json").is_file():
+                shutil.copyfile(original_skills / "availability.json", skill_root / "availability.json")
+            os.environ["SKILLS_DIRECTORY"] = str(skill_root)
+            os.environ["MCP_DIRECTORY"] = str(Path(storage) / "mcp")
+            SkillManagement(sessions, skill_root).adopt_existing()
             sessions.configure(info={"file_store": FileStore(Path(storage) / "workspace")})
             jobs, knowledge = RunService(sessions), KnowledgeService(sessions)
             sources = SourceService(sessions, Path(storage))
@@ -182,6 +197,21 @@ def main():
             async_provider = None
             input_providers = {}
 
+            @app.post('/api/__offline/mcp-preparation/{operation_id}')
+            def execute_mcp_preparation(operation_id: str):
+                # 仅测试入口推进同一生产消费者；真实Redis投递另有独立集成验收。
+                from knowledgeops_agent.app.runs.worker import prepare_mcp
+                from knowledgeops_agent.harness.mcp.management import MCPManagement
+
+                row = MCPManagement(sessions).get(operation_id)
+                return prepare_mcp(operation_id, row['attempts'], services=services)
+
+            @app.post('/api/__offline/mcp-cleanup')
+            def execute_mcp_cleanup():
+                from knowledgeops_agent.harness.mcp.management import MCPManagement
+
+                return MCPManagement(sessions).maintain(expire=False)
+
             @app.post("/api/__offline/memory-classifier/{mode}")
             def configure_memory_classifier(mode: str):
                 # 仅测试服务器可配置替身；生产应用没有此路由，绝不创建供应商客户端。
@@ -226,6 +256,24 @@ def main():
                         return row
                     services.lifecycle.advance(identity)
                 raise ValueError("asset cleanup did not converge")
+
+            @app.post("/api/__offline/knowledge-deletion-seed")
+            def seed_knowledge_deletion_offline():
+                token = str(uuid4())
+
+                def publish(title, body):
+                    draft = knowledge.create_draft("deletion-fixture:" + token,
+                        [{"action": "create", "title": title, "body": body}])
+                    knowledge.publish(draft["id"], idempotency_key=str(uuid4()),
+                        user_approval=True, expected_revision=draft["revision"])
+                    return {**knowledge.get_document(draft["operations"][0]["document_id"]), "changeset_id": draft["id"]}
+
+                free = publish("可删除文章 " + token, "# 无依赖正文\n这是隔离验收数据。")
+                kept = publish("有引用文章 " + token, "# 被引用的完整正文\n此版本应继续可读。")
+                owner = publish("引用文章 " + token,
+                    f"[固定版本](/knowledge/{kept['id']}?version={kept['version_id']})")
+                assets_ready_offline()
+                return {"free": free, "kept": kept, "owner": owner}
 
             @app.post("/api/__offline/asset-seed")
             def seed_asset_offline():

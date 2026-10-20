@@ -14,8 +14,9 @@ from pathlib import PurePosixPath
 from urllib.parse import urlsplit
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 
-from knowledgeops_agent.core.resources import bundled_resource, package_resource, resource_path
+from knowledgeops_agent.core.resources import managed_resource_root, package_resource, resource_path
 from knowledgeops_agent.harness.context.assembly import RETRIEVAL_GUIDANCE, SYSTEM_TEMPLATE
 from knowledgeops_agent.harness.context.capacity import ModelCapacity
 from knowledgeops_agent.harness.models.gateway import ModelGateway
@@ -33,10 +34,12 @@ from knowledgeops_agent.persistence.models import (
     Run,
     RunEvent,
     RunResourceSnapshot,
+    RunSkillUse,
+    SkillPackageState,
 )
 from knowledgeops_agent.sources.search_config import load_web_search_config
 
-SKILLS_PATH = bundled_resource("skills")
+SKILLS_PATH = managed_resource_root("skills")
 FORMAT_VERSION = 2
 
 
@@ -146,17 +149,23 @@ class ResourceService:
                             task_id=learning_task.id, query=root.task[:500], memory=memory
                         ),
                     }
-                # 组编辑同时更新策略与角色；冻结期间取共享配置锁，不读取半套新修订。
-                lock_configuration(session, shared=True)
+                from knowledgeops_agent.harness.skills.management import SkillManagement
+
+                # 首次冻结在同一配置事务恢复未提交的目录替换，不能冻结半套文件。
+                # 只覆盖有界本地文件读取；模型和工具执行不持有这把锁。
+                lock_configuration(session)
+                skill_root = resource_path("SKILLS_DIRECTORY", SKILLS_PATH)
+                SkillManagement(self.sessions, skill_root)._recover_in(session)
                 tool_policy = read_policy(session)
                 skill_catalog_rows, skill_resources = scan_packages(
-                    resource_path("SKILLS_DIRECTORY", SKILLS_PATH),
+                    skill_root,
                     excluded={name for name, enabled in tool_policy.get("skill_enabled", {}).items() if not enabled},
                 )
                 manifest: dict = {
                     "format_version": FORMAT_VERSION,
                     "policy": asdict(policy),
                     "skills": skill_resources,
+                    "skill_usage_version": 1,
                     "prompts": {
                         "assembly_template": SYSTEM_TEMPLATE,
                         "retrieval": RETRIEVAL_GUIDANCE,
@@ -295,10 +304,16 @@ class ResourceService:
                     .join(Run, Run.id == RunEvent.run_id)
                     .where(
                         Run.root_id == context.root_id,
-                        RunEvent.kind.in_(["skill_read", "skill_materialized"]),
+                        RunEvent.kind.in_(
+                            ["skill_read"] if manifest.get("skill_usage_version") else ["skill_read", "skill_materialized"]
+                        ),
                     )
                 )
             }
+            used.update(session.scalars(
+                select(RunSkillUse.resource).join(Run, Run.id == RunSkillUse.run_id)
+                .where(Run.root_id == context.root_id)
+            ))
         for path in used:
             if path and not self.skill_available(manifest, path):
                 raise ResourceUnavailable(
@@ -321,6 +336,29 @@ class ResourceService:
                 provider["adapter"],
             ):
                 raise ResourceUnavailable("发送时的思考配置与当前模型通道不一致，请新建任务")
+
+    def record_skill_read(self, context, manifest: dict, receipt: dict) -> None:
+        """真实 read_file 成功后记录一次依赖；目录读取/文件准备不能调用此入口。"""
+        path = receipt["path"]
+        item = next((row for row in manifest["skills"] if row["resource"] == path), None)
+        if item is None or item["sha256"] != receipt["sha256"]:
+            raise ResourceUnavailable("技能读取回执与冻结版本不一致")
+        with self.sessions.begin() as session:
+            session.execute(insert(RunSkillUse).values(
+                run_id=context.run_id, resource=path, content_hash=item["sha256"],
+            ).on_conflict_do_nothing(index_elements=[RunSkillUse.run_id, RunSkillUse.resource]))
+        context.jobs.append_event(context.run_id, "skill_read", receipt)
+
+    def loaded_skill_names(self, run_id: str, manifest: dict) -> set[str]:
+        """重建 backend 时还原该 Agent 的读取范围，不继承其他子角色使用过的包。"""
+        with self.sessions() as session:
+            paths = set(session.scalars(select(RunSkillUse.resource).where(RunSkillUse.run_id == run_id)))
+            kinds = ["skill_read"] if manifest.get("skill_usage_version") else ["skill_read", "skill_materialized"]
+            paths.update(event.data.get("path") for event in session.scalars(
+                select(RunEvent).where(RunEvent.run_id == run_id, RunEvent.kind.in_(kinds))
+            ))
+        allowed = {row["resource"] for row in manifest["skills"]}
+        return {PurePosixPath(path).relative_to("/skills").parts[0] for path in paths if path in allowed}
 
     def revoked(self, kind: str, resource: str, sha256: str) -> bool:
         with self.sessions() as session:
@@ -346,6 +384,9 @@ class ResourceService:
 
         with self.sessions() as session:
             current = read_policy(session)
+            managed = session.get(SkillPackageState, relative.parts[0])
+            if managed is not None and managed.removed:
+                return False
         name = relative.parts[0]
         frozen = manifest.get("tool_policy", {})
         if not current.get("skill_enabled", {}).get(name, True) or frozen.get(
@@ -359,15 +400,18 @@ class ResourceService:
         except (SkillPackageError, OSError):
             # 已读过的技能会由 validate 明确停止；普通任务不因全局配置坏而崩溃。
             return False
-        local = root.joinpath(*relative.parts)
+        directory = root / relative.parts[0]
+        local_entry = directory / "SKILL.md"
         entry_path = f"/skills/{relative.parts[0]}/SKILL.md"
         entry = next((row for row in manifest["skills"] if row["resource"] == entry_path), None)
         return bool(
             entry
-            and local.is_file()
-            and not local.is_symlink()
-            and local.resolve().is_relative_to(root.resolve())
-            and (root / relative.parts[0] / "SKILL.md").is_file()
+            and (managed is not None or (
+                local_entry.is_file()
+                and not local_entry.is_symlink()
+                and not directory.is_symlink()
+                and local_entry.resolve().is_relative_to(root.resolve())
+            ))
             and not self.revoked("skill", entry_path, entry["sha256"])
             and not self.revoked("skill", path, item["sha256"])
         )

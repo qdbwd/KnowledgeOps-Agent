@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 
 from knowledgeops_agent.app.dependencies import svc
 from knowledgeops_agent.harness.mcp.registry import MCPRegistry
-from knowledgeops_agent.harness.skills.presentation import present_skill
 from knowledgeops_agent.harness.tools.catalog import catalog_view
 from knowledgeops_agent.harness.tools.groups import (
     GroupDelete,
@@ -61,52 +60,6 @@ def update_tool_group(group_id: str, body: GroupUpdate, request: Request):
 @router.delete('/api/tools/groups/{group_id}')
 def delete_tool_group(group_id: str, body: GroupDelete, request: Request):
     return ToolGroupService(svc(request).sessions).update(group_id, deleted=True, **body.model_dump())
-
-
-@router.get("/api/skills")
-def skills(request: Request):
-    from knowledgeops_agent.harness.runtime.resources import ResourceUnavailable, skill_catalog
-
-    try:
-        policy = ToolPolicyService(svc(request).sessions).get()
-        return [
-            {
-                **present_skill(item),
-                "available": item["enabled"],
-                "enabled": item["enabled"]
-                and policy.get("skill_enabled", {}).get(item["name"], True),
-                "policy_revision": policy["revision"],
-            }
-            for item in skill_catalog()
-        ]
-    except (ResourceUnavailable, OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=503, detail="技能配置不可用，请检查部署目录和文件格式"
-        ) from exc
-
-
-def _skill_details(name: str, resource: str | None = None):
-    from knowledgeops_agent.core.resources import resource_path
-    from knowledgeops_agent.harness.runtime.resources import SKILLS_PATH
-    from knowledgeops_agent.harness.skills.details import package_detail
-
-    try:
-        return package_detail(resource_path("SKILLS_DIRECTORY", SKILLS_PATH), name, resource=resource)
-    except (OSError, ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=503, detail="技能包暂时无法读取，请检查目录及资源格式") from exc
-
-
-@router.get("/api/skills/{name}")
-def skill_details(name: str, request: Request):
-    detail = _skill_details(name)
-    policy = ToolPolicyService(svc(request).sessions).get()
-    return {**present_skill(detail), "available": detail["enabled"],
-            "enabled": detail["enabled"] and policy.get("skill_enabled", {}).get(name, True)}
-
-
-@router.get("/api/skills/{name}/resource")
-def skill_resource(name: str, path: str):
-    return _skill_details(name, path)
 
 
 @router.get("/api/tools/effective")

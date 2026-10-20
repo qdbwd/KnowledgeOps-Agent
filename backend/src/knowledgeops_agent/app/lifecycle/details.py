@@ -5,6 +5,7 @@
 """
 
 import hashlib
+import json
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 
@@ -70,7 +71,34 @@ class RunDetailCleaner:
             root = self.eligibility._root(session, root_id)
             return self._plan(session, root)[0]
 
-    def admit(self, root_id: str, *, deleting_conversation: str | None = None) -> dict:
+    def _removal_plan(self, session, root):
+        if root.lifecycle_state == "active":
+            preview, updates = self._plan(session, root, ignore_age=True)
+        else:
+            blockers, _ = self.eligibility._dependencies(session, root)
+            preview, updates = {"blockers": blockers}, {}
+        group = list(session.scalars(select(db.Run).where(db.Run.root_id == root.id).order_by(db.Run.id)))
+        blockers = list(preview["blockers"])
+        conversation = session.get(db.Conversation, root.conversation_id) if root.conversation_id else None
+        if conversation and conversation.deletion_state != "active":
+            blockers.append("conversation_not_active")
+        state = [(r.id, r.status, r.generation, r.lifecycle_state, str(r.user_deleted_at), str(r.finished_at)) for r in group]
+        fingerprint = hashlib.sha256(json.dumps([state, sorted(blockers), sorted(updates)], sort_keys=True).encode()).hexdigest()
+        return {"version": fingerprint, "eligible": not blockers, "blockers": sorted(set(blockers)),
+            "title": root.task[:300], "counts": {"delete": len(group), "keep": 0},
+            "reasons": [f"将移除这组 {len(group)} 条运行记录，并清理模型请求详情、工具活动、检查点和无依赖的内部临时副本。",
+                "聊天消息及接续信息、已发布文章、仍被引用的内容、独立材料和交付文件保留。",
+                "仅能删除已结束且没有待处理操作的任务；删除后不能从原执行位置恢复。"]}, updates
+
+    def removal_preview(self, root_id):
+        with self.sessions.begin() as session:
+            lock_control(session)
+            return self._removal_plan(session, self.eligibility._root(session, root_id))[0]
+
+    def remove(self, root_id, *, expected_version):
+        return self.admit(root_id, removal_version=expected_version)
+
+    def admit(self, root_id: str, *, deleting_conversation: str | None = None, removal_version: str | None = None) -> dict:
         """与消息/恢复共享控制锁，原子提交协议和封闭状态，之后才允许删除。
 
         这里只保存程序可证明的消息协议；旧记录不能转换时阻止清理。
@@ -87,6 +115,25 @@ class RunDetailCleaner:
             existing = session.scalar(select(db.CleanupJob).where(
                 db.CleanupJob.target_kind == "run", db.CleanupJob.target_id == root.id,
             ))
+            removal, removal_updates = None, {}
+            if removal_version is not None:
+                if root.user_deleted_at and existing:
+                    return job_view(existing)
+                removal, removal_updates = self._removal_plan(session, root)
+                if removal["version"] != removal_version:
+                    raise ValueError("运行状态已变化，请重新核对删除范围。")
+                if not removal["eligible"]:
+                    raise ValueError("运行仍有执行或接续依赖，暂不能删除：" + ", ".join(removal["blockers"]))
+                for row in session.scalars(select(db.Run).where(db.Run.root_id == root.id)):
+                    row.user_deleted_at = self.now()
+                if existing:
+                    existing.summary = {**existing.summary, "title": removal["title"], "user_requested": True}
+                elif root.lifecycle_state == "expired":
+                    job = self.jobs.create(session, "run", root.id)
+                    root.lifecycle_state = "cleaning"
+                    self.jobs.advance_in(job, phase="retained_data", summary={"title": removal["title"],
+                        "user_requested": True, "run_count": removal["counts"]["delete"]})
+                    return job_view(job)
             # 聊天引用已经解除时，旧详情到期作业也需再走材料阶段。不能重新打开执行。
             if deleting_conversation is not None and root.lifecycle_state == "expired":
                 job = existing or self.jobs.create(session, "run", root.id)
@@ -95,8 +142,8 @@ class RunDetailCleaner:
                 return job_view(job)
             if existing is not None:
                 return job_view(existing)
-            preview, updates = self._plan(session, root, ignore_age=deleting_conversation is not None,
-                                          preserve_protocol=deleting_conversation is None)
+            preview, updates = (removal, removal_updates) if removal is not None else self._plan(
+                session, root, ignore_age=deleting_conversation is not None, preserve_protocol=deleting_conversation is None)
             if not preview["eligible"]:
                 raise ValueError("cleanup is protected: " + ", ".join(preview["blockers"]))
             usage = self.usage_reader(root.id) if self.usage_reader and root.conversation_id and deleting_conversation is None else None
@@ -128,6 +175,8 @@ class RunDetailCleaner:
                 root.details_summary = {**root.details_summary, "context_usage": usage}
             job = self.jobs.create(session, "run", root.id)
             job.phase, job.summary = "seal", {"run_count": len(group)}
+            if removal:
+                job.summary = {**job.summary, "title": removal["title"], "user_requested": True}
             return job_view(job)
 
     def step(self, *, identity: str | None = None) -> dict | None:
@@ -200,6 +249,8 @@ class RunDetailCleaner:
             (db.RunDispatch, db.RunDispatch.run_id.in_(run_ids)),
             (db.RunResourceSnapshot, db.RunResourceSnapshot.root_id == root.id),
             (db.RunEvent, db.RunEvent.run_id.in_(run_ids)),
+            # 追加到末尾，保持已经持久化的旧表序号游标含义不变。
+            (db.RunSkillUse, db.RunSkillUse.run_id.in_(run_ids)),
         ]
         index = int(job.cursor.get("table", 0))
         model, predicate = specifications[index]

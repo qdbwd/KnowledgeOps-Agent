@@ -17,7 +17,7 @@ from knowledgeops_agent.persistence import models as db
 
 _ID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
 _LINK = re.compile(
-    r"(?<![\w/.:])/(?:api/)?(?P<kind>evidence|sources|source-versions|source-segments|deliveries|changes|changesets)/"
+    r"(?<![\w/.:])/(?:api/)?(?P<kind>evidence|sources|source-versions|source-segments|deliveries|changes|changesets|knowledge/reviews|knowledge)/"
     rf"(?P<id>{_ID})(?P<suffix>[^\s\]\)<>`\"']*)"
 )
 _ARTIFACT = re.compile(rf"(?<![\w/.:])/(?:api/)?runs/[^/\s]+/artifacts/({_ID})")
@@ -27,7 +27,10 @@ _LEGACY_READ = re.compile(rf"(?<![A-Za-z0-9_])read_tool_result(?:读取|\s+read)
 _FIELDS = {"evidence_id": "evidence", "source_id": "sources", "source_version_id": "source-versions",
            "segment_id": "source-segments", "source_segment_id": "source-segments",
            "delivery_id": "deliveries", "artifact_id": "material", "original_artifact_id": "material",
-           "summary_artifact_id": "material", "changeset_id": "changesets", "draft_id": "changesets"}
+           "summary_artifact_id": "material", "changeset_id": "changesets", "draft_id": "changesets",
+           "knowledge_version_id": "knowledge-versions", "base_version_id": "knowledge-versions",
+           "restore_version_id": "knowledge-versions", "result_version_id": "knowledge-versions",
+           "document_id": "knowledge"}
 _CATALOGS = {"artifact_ids", "source_ids", "evidence_ids", "allowed_evidence_ids", "validated_evidence_ids",
              "source_catalog", "evidence_catalog", "material_catalog"}
 
@@ -50,9 +53,14 @@ def candidates(value):
                 return  # 不再把已经排除的访问目录当普通文本重新扫描。
         for match in _LINK.finditer(value):
             kind, identity = match["kind"], match["id"].lower()
+            if kind == "knowledge/reviews":
+                kind = "changesets"
             # 指定版本时不跟随来源的最新版本；不带版本的来源链接保留来源各版本。
             fixed = re.search(rf"[?&]version(?:_id)?=({_ID})", match["suffix"])
-            yield ("source-versions", fixed[1].lower()) if kind == "sources" and fixed else (kind, identity)
+            if fixed and kind in {"sources", "knowledge"}:
+                yield ("source-versions" if kind == "sources" else "knowledge-versions", fixed[1].lower())
+            else:
+                yield kind, identity
         for identity in evidence_ids(value):
             yield "evidence", identity
         for identity in _ARTIFACT.findall(value):
@@ -65,7 +73,9 @@ def candidates(value):
         for key, child in value.items():
             if key in _CATALOGS:
                 continue
-            if key in _FIELDS and isinstance(child, str):
+            if key == "document_id" and isinstance(value.get("version_id"), str):
+                yield "knowledge-versions", value["version_id"]
+            elif key in _FIELDS and isinstance(child, str):
                 yield _FIELDS[key], child
             else:
                 yield from candidates(child)
@@ -108,8 +118,11 @@ def _targets(session, value):
     for kind, identity in candidates(value):
         found.setdefault(kind, set()).add(identity)
     versions = set(found.get("source-versions", set()))
+    knowledge = set(found.get("knowledge-versions", set()))
     segments = set(found.get("source-segments", set()))
     if found.get("evidence"):
+        knowledge.update(session.scalars(select(db.Evidence.knowledge_version_id).where(
+            db.Evidence.id.in_(found["evidence"]), db.Evidence.knowledge_version_id.is_not(None))))
         segments.update(session.scalars(select(db.Evidence.source_segment_id).where(
             db.Evidence.id.in_(found["evidence"]), db.Evidence.source_segment_id.is_not(None))))
     if segments:
@@ -120,6 +133,8 @@ def _targets(session, value):
         nodes.update("source:" + identity for identity in session.scalars(
             select(db.Source.id).where(db.Source.id.in_(found["sources"]))))
     for aliases, model, prefix in (
+        (("knowledge",), db.KnowledgeDocument, "knowledge:"),
+        (("knowledge-versions",), db.KnowledgeVersion, "asset:knowledge:"),
         (("deliveries",), db.DeliveredFile, "delivery:"),
         (("changes", "changesets"), db.ChangeSet, "draft:"),
         (("material",), db.RunArtifact, "material:"),
@@ -127,6 +142,9 @@ def _targets(session, value):
         ids = set().union(*(found.get(alias, set()) for alias in aliases))
         if ids:
             nodes.update(prefix + identity for identity in session.scalars(select(model.id).where(model.id.in_(ids))))
+    if knowledge:
+        nodes.update("asset:knowledge:" + identity for identity in session.scalars(
+            select(db.KnowledgeVersion.id).where(db.KnowledgeVersion.id.in_(knowledge))))
     if found.get("material-file"):
         nodes.update("material_file:" + identity for identity in session.scalars(select(db.RunArtifact.id).where(
             db.RunArtifact.content_storage_key.in_(found["material-file"]), db.RunArtifact.expired_at.is_(None))))
@@ -151,6 +169,13 @@ def origin_node(session, kind: str, identity: str) -> str:
 def replace_asset_references(session, kind: str, identity: str, value) -> set[str]:
     """作为既有正文追踪的一部分，与拥有者正文提交/回滚同生效。"""
     lock_control(session)
+    if kind == "draft":
+        # 修改目标不是引用；基础/恢复版本及正文内链接才需要原文。避免创建回执钉住当前版本。
+        def draft_value(item):
+            if isinstance(item, dict):
+                return {key: draft_value(child) for key, child in item.items() if key != "document_id"}
+            return [draft_value(child) for child in item] if isinstance(item, list) else item
+        value = draft_value(value)
     nodes = _targets(session, value)
     session.execute(delete(db.AssetReference).where(
         db.AssetReference.owner_kind == kind, db.AssetReference.owner_id == identity,
@@ -169,6 +194,7 @@ def _node(prefix, value):
 
 def reachable_assets(session, *, excluding_conversation: str | None = None, excluding_source: str | None = None,
                      excluding_delivery: str | None = None, workspace_values: dict | None = None,
+                     excluding_knowledge: str | None = None,
                      excluding_source_owner: tuple[str, str] = ("library", "default"), durable_only: bool = False):
     """从独立资产、存活会话和仍需恢复的运行出发，SQL递归寻找实际可达内容。
 
@@ -201,10 +227,8 @@ def reachable_assets(session, *, excluding_conversation: str | None = None, excl
     roots = [select(_node("source_version:", db.SourceVersion.id)).join(db.Source).where(or_(
         unknown, db.Source.id.in_(used_sources))),
         select(_node("delivery:", db.DeliveredFile.id)).where(db.DeliveredFile.deleted_at.is_(None)),
-        select(_node("asset:knowledge:", db.KnowledgeVersion.id)),
-        select(_node("source_version:", db.SourceSegment.source_version_id)).join(
-            db.Evidence, db.Evidence.source_segment_id == db.SourceSegment.id).join(
-            db.Citation, db.Citation.evidence_id == db.Evidence.id),
+        select(_node("asset:knowledge:", db.KnowledgeVersion.id)).join(db.KnowledgeDocument,
+            db.KnowledgeVersion.document_id == db.KnowledgeDocument.id).where(db.KnowledgeDocument.deleted_at.is_(None)),
         select(_node("message:", db.ChatMessage.id)).where(db.ChatMessage.conversation_id.in_(active_conversations)),
         select(_node("snapshot:", db.ContinuationSnapshot.id)).where(db.ContinuationSnapshot.conversation_id.in_(active_conversations)),
         select(_node("run:", db.Run.id)).where(db.Run.id.in_(live_runs)),
@@ -212,11 +236,13 @@ def reachable_assets(session, *, excluding_conversation: str | None = None, excl
     ]
     if excluding_delivery:
         roots[1] = roots[1].where(db.DeliveredFile.id != excluding_delivery)
+    if excluding_knowledge:
+        roots[2] = roots[2].where(db.KnowledgeDocument.id != excluding_knowledge)
     if durable_only:
-        roots = roots[:4]  # 会话、检查点、运行和访问记录不是用户独立保存的资产。
-    # 临时草稿仍可被独立学习任务使用；已发布回执也必须能继续指向业务身份。
+        roots = roots[:3]  # 会话、检查点、运行和访问记录不是用户独立保存的资产。
+    # 发布回执保留身份，但它本身不能让已删除文章的正文永久存活。
     draft_roots = [
-        db.ChangeSet.retention_intent.in_(["saved", "legacy"]), db.ChangeSet.status == "published",
+        and_(db.ChangeSet.retention_intent.in_(["saved", "legacy"]), db.ChangeSet.status != "published"),
         db.ChangeSet.id.in_(select(db.LearningUnit.draft_id).where(db.LearningUnit.draft_id.is_not(None))),
     ]
     if not durable_only:
@@ -254,6 +280,18 @@ def reachable_assets(session, *, excluding_conversation: str | None = None, excl
     # 不带版本的来源链接跟随实体；新增版本不需要重写历史拥有者的引用记录。
     prefix = "durable_" if durable_only else ""
     edges = union(select(db.AssetReference.origin_node.label("origin"), db.AssetReference.target_node.label("target")),
+        select(_node("knowledge:", db.KnowledgeDocument.id), _node("asset:knowledge:", db.KnowledgeDocument.current_version_id))
+            .where(db.KnowledgeDocument.current_version_id.is_not(None)),
+        select(_node("asset:knowledge:", db.Citation.version_id), _node("asset:knowledge:", db.Evidence.knowledge_version_id))
+            .join(db.Evidence, db.Evidence.id == db.Citation.evidence_id).where(db.Evidence.knowledge_version_id.is_not(None)),
+        select(_node("asset:knowledge:", db.Citation.version_id), _node("source_version:", db.SourceSegment.source_version_id))
+            .join(db.Evidence, db.Evidence.id == db.Citation.evidence_id)
+            .join(db.SourceSegment, db.SourceSegment.id == db.Evidence.source_segment_id),
+        select(_node("asset:knowledge:", db.KnowledgeRelation.version_id), _node("knowledge:", db.KnowledgeRelation.target_id)),
+        select(_node("asset:learning-unit:", db.LearningUnit.id), _node("asset:knowledge:", db.LearningUnit.result_version_id))
+            .where(db.LearningUnit.result_version_id.is_not(None)),
+        select(_node("run:", db.Evidence.root_id), _node("asset:knowledge:", db.Evidence.knowledge_version_id))
+            .where(db.Evidence.knowledge_version_id.is_not(None)),
         select(_node("source:", db.SourceVersion.source_id), _node("source_version:", db.SourceVersion.id)),
         select(_node("material:", db.RunArtifact.id), _node("source_version:", db.RunArtifact.promoted_version_id))
             .where(db.RunArtifact.promoted_version_id.is_not(None)),

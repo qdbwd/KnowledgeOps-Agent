@@ -56,49 +56,48 @@ test('preferences persist edits, revocation and revision history through reload'
   await expect(field).toBeDisabled();
 });
 
-test('new MCP discovery does not grant automatic permission', async ({
-  page,
-}) => {
+test('new MCP discovery does not grant automatic permission', async ({ page }) => {
   test.setTimeout(60000);
   await page.goto('/mcp');
-  await page.getByLabel('服务名称', { exact: true }).fill('浏览器协议夹具');
-  await page.getByLabel('非秘密配置 JSON', { exact: true }).fill(
+  await page.getByRole('button', { name: '导入 MCP 配置', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '导入 MCP 配置' });
+  await dialog.getByLabel('配置 JSON', { exact: true }).fill(
     JSON.stringify({
+      name: '浏览器协议夹具',
       transport: 'stdio',
       command: '/workspace/.venv/bin/python',
       args: ['/workspace/tests/fixtures/mcp_probe.py'],
     }),
   );
-  await page.getByRole('button', { name: '添加连接', exact: true }).click();
+  await dialog.getByRole('button', { name: '检查配置' }).click();
+  await dialog.getByRole('button', { name: '确认导入候选' }).click();
   await expect(page.getByRole('heading', { name: '浏览器协议夹具' })).toBeVisible();
   // 其他用例可以已经登记自己的连接；只管理本例新建的那一份。
-  const card = page.locator('section.card').filter({
-    has: page.getByRole('heading', { name: '浏览器协议夹具', exact: true }),
-  });
+  const card = page.getByRole('region', { name: '候选：浏览器协议夹具', exact: true });
   await card.getByRole('button', { name: '测试连接并发现工具' }).click();
-  await expect(card.getByLabel('调用许可')).toHaveValue('deny', { timeout: 45000 });
-  await card.getByLabel('调用许可').selectOption('read');
-  await card.getByRole('button', { name: '保存工具许可' }).click();
-  await expect(card.getByText(/修订 3/)).toBeVisible();
-  await card.getByRole('button', { name: '启用连接', exact: true }).click();
-  await expect(card.getByRole('button', { name: '停用连接', exact: true })).toBeVisible();
+  await expect(card.getByLabel(/调用许可/)).toHaveValue('deny', { timeout: 45000 });
+  await card.getByLabel(/调用许可/).selectOption('read');
+  await card.getByRole('checkbox', { name: '应用后启用连接' }).check();
+  await card.getByRole('button', { name: '应用此候选配置' }).click();
+  const active = page.getByRole('region', { name: '连接：浏览器协议夹具', exact: true });
+  await expect(active.getByRole('button', { name: '停用连接', exact: true })).toBeVisible();
   await page.reload();
-  await expect(card.getByLabel('调用许可')).toHaveValue('read');
+  await expect(active.getByLabel('调用许可')).toHaveValue('read');
   const exported = await page.request.get(
-    (await card.getByRole('link', { name: '导出非秘密配置' }).getAttribute('href'))!,
+    (await active.getByRole('link', { name: '导出非秘密配置' }).getAttribute('href'))!,
   );
   const body = await exported.json();
   expect(body.config.command).toBe('/workspace/.venv/bin/python');
   expect(body.permissions).toBeUndefined();
-  await card.getByRole('button', { name: '停用连接', exact: true }).click();
-  await expect(card.getByRole('button', { name: '启用连接', exact: true })).toBeVisible();
+  await active.getByRole('button', { name: '停用连接', exact: true }).click();
+  await expect(active.getByRole('button', { name: '启用连接', exact: true })).toBeVisible();
 });
 
 test('long run history can reach the final event and export every page', async ({ page }) => {
   const runs = await (await page.request.get('/api/runs')).json();
   const run = runs.find((item: { task: string }) => item.task === '整理共享预算规则，先预览');
   await page.goto(`/runs/${run.id}`);
-  await page.getByRole('button', { name: '诊断', exact: true }).click();
+  await page.getByRole('link', { name: '诊断', exact: true }).click();
   await expect(page.getByText('事件 1–200 / 1004')).toBeVisible();
   for (let after = 200; after <= 1000; after += 200) {
     await page.getByRole('button', { name: '下一页事件' }).click();
@@ -258,7 +257,7 @@ test('preserved context is visible and can be paged without losing the run link'
     await expect.poll(() => page.locator('a.list-card').count()).toBeGreaterThan(before);
   }
   await target.click();
-  await page.getByRole('button', { name: '诊断', exact: true }).click();
+  await page.getByRole('link', { name: '诊断', exact: true }).click();
   await page.getByRole('link', { name: /context_original/ }).click();
   await expect(page.locator('.source-text')).toContainText('分页原文证据');
   await page.getByRole('button', { name: '下一段' }).click();

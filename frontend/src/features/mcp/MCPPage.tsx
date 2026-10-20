@@ -3,6 +3,13 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { messageOf, send, useResource } from '../../shared/api/api';
 import { Empty, ErrorBox, Loading, PageTitle } from '../../shared/ui/components';
+import {
+  MCPCleanup,
+  MCPCredentialsDialog,
+  MCPImportDialog,
+  MCPPreparations,
+  MCPRemoveDialog,
+} from './MCPManagementPanels';
 
 type Permission = 'deny' | 'read' | 'confirm';
 type MCPTool = {
@@ -35,8 +42,9 @@ export type Receipt = {
 
 /** 表单持有显示修订号；服务器拒绝旧页面覆盖新配置。连接测试与许可分开。 */
 function ConnectionCard({ row, changed }: { row: Connection; changed: () => void }) {
-  const [name, setName] = useState(row.name);
-  const [config, setConfig] = useState(JSON.stringify(row.config, null, 2));
+  const [editing, setEditing] = useState(false);
+  const [credentials, setCredentials] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [permissions, setPermissions] = useState<Record<string, Permission>>(
     Object.fromEntries(row.tools.map((tool) => [tool.name, tool.permission])),
   );
@@ -59,7 +67,10 @@ function ConnectionCard({ row, changed }: { row: Connection; changed: () => void
     }
   }
   return (
-    <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
+    <section
+      aria-label={`连接：${row.name}`}
+      className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5"
+    >
       <div className="row flex items-center gap-3 wrap flex-wrap">
         <h2>{row.name}</h2>
         <span>
@@ -90,41 +101,50 @@ function ConnectionCard({ row, changed }: { row: Connection; changed: () => void
         启用后仍须为工具选择许可。停用会撤回当前任务的旧绑定，再次启用从新任务生效。
       </p>
       <details className="mt-5">
-        <summary>编辑连接配置</summary>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            try {
-              const parsed = JSON.parse(config);
-              void act({ expected_revision: row.revision, name, config: parsed });
-            } catch {
-              setError('连接配置必须为有效 JSON');
-            }
-          }}
-        >
-          <label>
-            服务名称
-            <input value={name} onChange={(event) => setName(event.target.value)} required />
-          </label>
-          <label>
-            连接配置
-            <textarea rows={9} value={config} onChange={(event) => setConfig(event.target.value)} />
-          </label>
-          <p className="muted text-muted">
-            密钥只填写环境变量引用。stdio须为容器内已安装入口；更改连接后需要重新发现与审查工具。
-            依赖连续会话的服务可加 "protocol_mode":"legacy"；默认 "auto"
-            自动协商，连接复用不保证服务端保留页面或任务状态。
-          </p>
-          <Button disabled={busy}>保存配置</Button>
-        </form>
+        <summary>配置与管理</summary>
+        <div className="my-4 flex flex-wrap gap-2">
+          <Button disabled={busy} onClick={() => setEditing(true)}>
+            准备更新候选
+          </Button>
+          <Button
+            className="secondary button-secondary"
+            disabled={busy}
+            onClick={() => setCredentials(true)}
+          >
+            环境与凭据
+          </Button>
+        </div>
+        <p className="text-sm text-muted">
+          更新先生成候选，测试与审查后才替换当前连接。已有任务的旧绑定在替换后撤回。
+        </p>
         <Button
           className="secondary button-secondary"
           disabled={busy}
-          onClick={() => act({ expected_revision: row.revision, deleted: true })}
+          onClick={() => setRemoving(true)}
         >
           删除连接配置
         </Button>
       </details>
+      {removing && (
+        <MCPRemoveDialog connection={row} onClose={() => setRemoving(false)} onRemoved={changed} />
+      )}
+      {editing && (
+        <MCPImportDialog
+          connection={row}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            changed();
+          }}
+        />
+      )}
+      {credentials && (
+        <MCPCredentialsDialog
+          path={`/api/mcp/connections/${row.id}/credentials`}
+          revision={row.revision}
+          onClose={() => setCredentials(false)}
+        />
+      )}
       {!row.tools.length ? (
         <p>尚未发现工具。</p>
       ) : (
@@ -184,14 +204,12 @@ function ConnectionCard({ row, changed }: { row: Connection; changed: () => void
 export function MCPPage() {
   const [version, setVersion] = useState(0);
   const result = useResource<Connection[]>('/api/mcp/connections', version);
-  const [name, setName] = useState('');
-  const [config, setConfig] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [importing, setImporting] = useState(false);
   const changed = () => setVersion((value) => value + 1);
   return (
     <>
       <PageTitle eyebrow="CONNECTIONS" title="MCP 工具服务">
+        <Button onClick={() => setImporting(true)}>导入 MCP 配置</Button>
         <Button className="secondary button-secondary" onClick={changed}>
           刷新
         </Button>
@@ -202,81 +220,27 @@ export function MCPPage() {
         "protocol_mode":"legacy"。
         默认自动协商；空闲回收或应用重启后会建立新连接，服务端状态是否保留由对应服务决定。
       </p>
-      <ErrorBox message={error || result.error} />
+      <ErrorBox message={result.error} />
       {result.loading && <Loading />}
       {result.data?.length === 0 && (
         <Empty title="尚未添加 MCP 服务">
           添加或导入配置后，先测试连接、发现工具，再选择许可。
         </Empty>
       )}
-      <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
-        <h2>添加或导入连接</h2>
-        <form
-          onSubmit={async (event) => {
-            event.preventDefault();
-            setError('');
-            setBusy(true);
-            try {
-              const parsed = JSON.parse(config);
-              const imported = parsed.config
-                ? { name: name || parsed.name, config: parsed.config }
-                : { name, config: parsed };
-              await send('/api/mcp/connections', imported);
-              setName('');
-              setConfig('');
-              changed();
-            } catch (error) {
-              setError(messageOf(error));
-            } finally {
-              setBusy(false);
-            }
+      {importing && (
+        <MCPImportDialog
+          onClose={() => setImporting(false)}
+          onSaved={() => {
+            setImporting(false);
+            changed();
           }}
-        >
-          <label>
-            服务名称
-            <input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="导入时可沿用配置中的名称"
-            />
-          </label>
-          <label>
-            非秘密配置 JSON
-            <textarea
-              rows={7}
-              value={config}
-              onChange={(event) => setConfig(event.target.value)}
-              required
-              placeholder={
-                '{"transport":"http","url":"http://服务地址/mcp","header_refs":{"Authorization":"MCP_TOKEN"}}'
-              }
-            />
-          </label>
-          <label>
-            或选择导出的配置文件
-            <input
-              type="file"
-              accept=".json,application/json"
-              onChange={async (event) => {
-                const file = event.target.files?.[0];
-                if (!file) return;
-                if (file.size > 100000) {
-                  setError('配置文件不能超过 100 KB');
-                  return;
-                }
-                setConfig(await file.text());
-              }}
-            />
-          </label>
-          <p className="muted text-muted">
-            实际密钥放在项目环境配置中，页面只存变量名。导入配置默认停用，不继承旧许可。
-          </p>
-          <Button disabled={busy}>{busy ? '正在保存…' : '添加连接'}</Button>
-        </form>
-      </section>
+        />
+      )}
+      <MCPPreparations version={version} changed={changed} />
       {result.data?.map((row) => (
         <ConnectionCard key={`${row.id}:${row.revision}`} row={row} changed={changed} />
       ))}
+      <MCPCleanup version={version} />
     </>
   );
 }
@@ -339,12 +303,16 @@ export function MCPApprovals({
               连接修订 {row.connection_revision} · {row.status}
             </p>
             <pre>{JSON.stringify(row.request.arguments, null, 2)}</pre>
-            {row.decision?.review?.result && <p role="status" className="my-2 text-sm">
-              审查说明：{row.decision.review.result.reason}
-            </p>}
-            {row.status === 'pending' && row.decision?.review?.result?.verdict === 'deny' && <p className="my-2 text-sm">
-              审查未批准，尚未调用服务。你可以保持拒绝，或核对后仅允许这一次；连接及工具的固定禁止仍然有效。
-            </p>}
+            {row.decision?.review?.result && (
+              <p role="status" className="my-2 text-sm">
+                审查说明：{row.decision.review.result.reason}
+              </p>
+            )}
+            {row.status === 'pending' && row.decision?.review?.result?.verdict === 'deny' && (
+              <p className="my-2 text-sm">
+                审查未批准，尚未调用服务。你可以保持拒绝，或核对后仅允许这一次；连接及工具的固定禁止仍然有效。
+              </p>
+            )}
             {row.status === 'pending' && (
               <div className="row flex items-center gap-3">
                 <Button disabled={Boolean(busy)} onClick={() => decide(row, true)}>

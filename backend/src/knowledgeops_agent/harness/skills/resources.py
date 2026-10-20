@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -50,6 +50,8 @@ class FrozenSkillBackend(BackendProtocol):
         available: Callable[[str], bool] | None = None,
         on_read: Callable[[dict], None] | None = None,
         on_materialize: Callable[[dict], None] | None = None,
+        loaded_skills: Iterable[str] = (),
+        restrict_execution_to_loaded: bool = True,
     ) -> None:
         copied = {
             _resource_path(path): content.encode("utf-8") if isinstance(content, str) else content
@@ -61,6 +63,8 @@ class FrozenSkillBackend(BackendProtocol):
         self.available = available or (lambda _: True)
         self.on_read = on_read
         self.on_materialize = on_materialize
+        self.loaded_skills = set(loaded_skills)
+        self.restrict_execution_to_loaded = restrict_execution_to_loaded
         self.content_hash = hashlib.sha256(
             json.dumps(
                 {path: hashlib.sha256(raw).hexdigest() for path, raw in copied.items()},
@@ -112,6 +116,7 @@ class FrozenSkillBackend(BackendProtocol):
         )
         if self.on_read:
             self.on_read(self.read_receipts[-1])
+        self.loaded_skills.add(PurePosixPath(file_path).relative_to("/skills").parts[0])
         data: FileData = {"content": "\n".join(lines[offset:end]), "encoding": "utf-8"}
         if not lines:
             return ReadResult(file_data=data)
@@ -155,6 +160,9 @@ class FrozenSkillBackend(BackendProtocol):
                 relative = PurePosixPath(path).relative_to("/skills")
                 if not relative.parts or len(relative.parts) < 2:
                     raise ValueError("invalid skill package path")
+                # 元数据扫描不等于实际使用；普通 Shell 不投影整份技能目录。
+                if self.restrict_execution_to_loaded and relative.parts[0] not in self.loaded_skills:
+                    continue
                 entry = f"/skills/{relative.parts[0]}/SKILL.md"
                 if entry not in entries:
                     entries[entry] = self.available(entry)
@@ -184,14 +192,18 @@ class FrozenSkillBackend(BackendProtocol):
         return [FileUploadResponse(path=path, error="permission_denied") for path, _ in files]
 
 
-def build_skill_middleware(files: dict, *, available=None, on_read=None, on_materialize=None):
+def build_skill_middleware(
+    files: dict, *, available=None, on_read=None, on_materialize=None,
+    loaded_skills=(), restrict_execution_to_loaded=True,
+):
     """返回backend和两个真实上游中间件；不接入上游自动文件写入/脚本执行。
 
     长结果卸载由本项目产物服务承担，避免上游文件系统中间件自行写入
     不同存储。只启用read_file，以读取冻结技能和附属文本。
     """
     backend = FrozenSkillBackend(
-        files, available=available, on_read=on_read, on_materialize=on_materialize
+        files, available=available, on_read=on_read, on_materialize=on_materialize,
+        loaded_skills=loaded_skills, restrict_execution_to_loaded=restrict_execution_to_loaded,
     )
     filesystem = FilesystemMiddleware(
         backend=backend,
@@ -199,6 +211,8 @@ def build_skill_middleware(files: dict, *, available=None, on_read=None, on_mate
         system_prompt=(
             "使用read_file按需读取/skills/内的技能、脚本源码与参考文本。技能资源只读。"
             "读取脚本不等于执行；只有本次另外提供了execute工具时才能运行脚本。"
+            "配套文件的相对路径以该技能目录为基准。先读取技能，再运行其脚本；"
+            "命令中的脚本路径使用 $SKILLS_DIR/<技能名>/...，不要使用文件工具的虚拟路径。"
         ),
         tool_token_limit_before_evict=None,
         human_message_token_limit_before_evict=None,

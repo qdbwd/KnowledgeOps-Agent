@@ -170,10 +170,17 @@ class ToolPolicyService:
             # 技能开关与工具策略共用版本/历史；部署兼容性是上限，UI不能越过它。
             skill_switches = data.pop("skill_enabled", {})
             if skill_switches:
-                from knowledgeops_agent.harness.runtime.resources import skill_catalog
+                from knowledgeops_agent.core.resources import resource_path
+                from knowledgeops_agent.harness.runtime.resources import SKILLS_PATH, skill_catalog
+                from knowledgeops_agent.harness.skills.management import SkillManagement
+                from knowledgeops_agent.persistence.models import SkillPackageState
 
+                SkillManagement(self.sessions, resource_path("SKILLS_DIRECTORY", SKILLS_PATH))._recover_in(session)
                 catalog = {item["name"]: item for item in skill_catalog()}
                 for name, enabled in skill_switches.items():
+                    managed = session.get(SkillPackageState, name)
+                    if managed is not None and managed.removed:
+                        raise ValueError("技能已移除，请先重新导入")
                     if name not in catalog:
                         raise ValueError("技能不存在，请刷新目录")
                     if enabled and not catalog[name]["enabled"]:

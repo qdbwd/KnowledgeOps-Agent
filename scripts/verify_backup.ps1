@@ -6,7 +6,7 @@
 [CmdletBinding()]
 param(
     [switch]$KeepDatabases,
-    [ValidateSet('all', 'legacy', 'current')][string]$Scenario = 'all'
+    [ValidateSet('all', 'legacy', 'current', 'extensions')][string]$Scenario = 'all'
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
@@ -55,14 +55,24 @@ try {
         New-Database "${database}_accounting"
         $seed = if ($case -eq 'legacy') { 'seed-legacy' } else { 'seed' }
         Run-Fixture $seed $database $workspace
+        if ($case -eq 'extensions') {
+            docker exec -w /workspace -e MODEL_CALLS_ENABLED=false $dev .venv/bin/python scripts/dev.py --run .venv/bin/python scripts/extension_fixture.py seed --database $database --root "/workspace/artifacts/verification/backup-$identity/extensions"
+        }
         $previewInDev = "/workspace/artifacts/verification/backup-$identity/preview.json"
         Run-Fixture 'inspect-html' $database $workspace @('--output', $previewInDev)
         $preview = Get-Content -Raw -LiteralPath "artifacts/verification/backup-$identity/preview.json" | ConvertFrom-Json
         if ($preview.items.Count -ne 1 -or -not $preview.items[0].eligible) { throw 'Expected exactly one valid legacy HTML fixture.' }
-        & $backupTool -Mode create -Runtime development -Database $database -WorkspacePath $workspace -BackupFolder $backup
+        & $backupTool -Mode create -Runtime development -Database $database -WorkspacePath $workspace -BackupFolder $backup -IncludeMcpData:($case -eq 'extensions')
         $restored = Restore-And-Read $backup
         $body = @($restored.bodies | Where-Object version_id -eq $preview.items[0].version_id)
         if ($body.Count -ne 1 -or $body[0].sha256 -ne $preview.items[0].body_hash) { throw 'Legacy body changed during restore/migration.' }
+        if ($case -eq 'extensions') {
+            $restoredRoot = "/workspace/artifacts/verification/restores/$($restored.database)/.restored-extensions"
+            docker exec -w /workspace -e MODEL_CALLS_ENABLED=false $dev .venv/bin/python scripts/dev.py --run .venv/bin/python scripts/extension_fixture.py rebuild --database $restored.database --root $restoredRoot --output "/workspace/artifacts/backups/$identity/extensions-rebuild.json"
+            $extensionResult = Get-Content -Raw -LiteralPath (Join-Path $backup 'extensions-rebuild.json') | ConvertFrom-Json
+            if (-not $extensionResult.skill_bytes_identical -or -not $extensionResult.project_secrets_excluded -or $extensionResult.connections.Count -ne 2) { throw 'Extensions did not complete portable restore validation.' }
+            $reports.Add(@{scenario='extensions-rebuilt'; backup=$backup; result=$extensionResult})
+        }
         if ($case -eq 'current') {
             if (@($restored.increment_configuration.PSObject.Properties).Count -lt 8 -or @($restored.increment_configuration.PSObject.Properties | Where-Object { $_.Value -ne $true }).Count) {
                 throw 'New category/group/role/policy/mode or frozen configuration was not restored exactly.'

@@ -112,6 +112,9 @@ class KnowledgeService:
         return sorted(ids)
 
     def _base(self, session, operation: DocumentChange) -> KnowledgeVersion | None:
+        doc = session.get(KnowledgeDocument, operation.document_id) if operation.document_id else None
+        if doc and doc.deleted_at:
+            raise ValueError("文章已删除，不能通过旧草稿修改或恢复。")
         if operation.action == "create":
             return None
         base = session.get(KnowledgeVersion, operation.base_version_id)
@@ -406,6 +409,7 @@ class KnowledgeService:
             "root_id": draft.root_id,
             "retention_intent": draft.retention_intent,
             "status": draft.status,
+            "content_removed": draft.status == "published" and not draft.operations,
             "revision": draft.revision,
             "operation_format": draft.operation_format,
             "operations": draft.operations,
@@ -466,7 +470,7 @@ class KnowledgeService:
                 Run.conversation_id == conversation_id
             )
         if status:
-            query = query.where(ChangeSet.status == status)
+            query = query.where(ChangeSet.status.in_(["draft", "approved"]) if status == "pending" else ChangeSet.status == status)
         with self.sessions() as session:
             rows, next_cursor = page_rows(session, query, ChangeSet, cursor=cursor, limit=limit)
             return {
@@ -769,6 +773,8 @@ class KnowledgeService:
             }
             for item in changes:
                 doc = locked.get(item.document_id)
+                if doc and doc.deleted_at:
+                    raise ValueError("文章已删除，不能通过旧草稿修改或恢复。")
                 if item.action == "create":
                     if doc is not None:
                         raise ValueError("document already exists")
@@ -958,10 +964,12 @@ class KnowledgeService:
             doc = session.get(KnowledgeDocument, document_id)
             if doc is None:
                 raise KeyError("document not found")
-            version = session.get(KnowledgeVersion, version_id or doc.current_version_id)
+            identity = version_id or doc.current_version_id
+            version = session.get(KnowledgeVersion, identity) if identity else None
             if version is None or version.document_id != doc.id:
                 raise KeyError("document version not found")
             result = self._version_view(version)
+            result["deleted_at"] = doc.deleted_at.isoformat() if doc.deleted_at else None
             result["citation_ids"] = list(
                 session.scalars(
                     select(Citation.evidence_id).where(Citation.version_id == version.id)
@@ -982,6 +990,7 @@ class KnowledgeService:
         query = (
             select(KnowledgeVersion)
             .join(KnowledgeDocument, KnowledgeDocument.current_version_id == KnowledgeVersion.id)
+            .where(KnowledgeDocument.deleted_at.is_(None))
             .order_by(KnowledgeDocument.created_at, KnowledgeDocument.id)
         )
         if not include_archived:
@@ -1015,7 +1024,8 @@ class KnowledgeService:
             doc = session.get(KnowledgeDocument, document_id)
             if doc is None:
                 raise KeyError("document not found")
-            version = session.get(KnowledgeVersion, version_id or doc.current_version_id)
+            identity = version_id or doc.current_version_id
+            version = session.get(KnowledgeVersion, identity) if identity else None
             if version is None or version.document_id != doc.id:
                 raise KeyError("document version not found")
             if not 0 <= start < len(version.body) or not 1 <= length <= 12000:
@@ -1075,7 +1085,7 @@ class KnowledgeService:
             for doc in documents:
                 version = session.get(KnowledgeVersion, doc.current_version_id)
                 session.execute(delete(SearchEntry).where(SearchEntry.document_id == doc.id))
-                if version and not version.archived:
+                if version and not version.archived and not doc.deleted_at:
                     self._add_index(session, version)
                     count += 1
             return count
@@ -1116,6 +1126,7 @@ class KnowledgeService:
             .where(
                 match,
                 KnowledgeDocument.current_version_id == chunk.version_id,
+                KnowledgeDocument.deleted_at.is_(None),
                 KnowledgeVersion.archived.is_(False),
             )
             .subquery()

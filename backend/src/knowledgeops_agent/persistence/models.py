@@ -137,6 +137,7 @@ class KnowledgeDocument(Base):
     __tablename__ = "knowledge_documents"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     workspace_path: Mapped[str | None] = mapped_column(Text, unique=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # use_alter 明确循环外键的建表顺序；新建文档可在同一事务先插入空指针再设置。
     current_version_id: Mapped[str | None] = mapped_column(
         ForeignKey("knowledge_versions.id", use_alter=True, name="fk_current_knowledge_version")
@@ -483,6 +484,7 @@ class Run(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # 独立于执行 status；过期不伪造任务成功，也不能再次恢复已清理的位置。
     lifecycle_state: Mapped[str] = mapped_column(String(20), default="active", server_default="active")
+    user_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     retention_adopted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     retention_eligible_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     details_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
@@ -785,6 +787,49 @@ class RunResourceSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class RunSkillUse(Base):
+    """实际文件读取的最小事实；与可到期清理的事件分开，随运行详情回收。"""
+
+    __tablename__ = "run_skill_uses"
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True)
+    resource: Mapped[str] = mapped_column(Text, primary_key=True)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SkillPackageState(Base):
+    """当前包身份及移除标记；正文在项目目录，历史任务自持完整冻结字节。"""
+
+    __tablename__ = "skill_packages"
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    removed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ExtensionOperation(Base):
+    """扩展管理操作事实；不保存包文件或明文密钥，后台租约不等于执行许可。"""
+
+    __tablename__ = "extension_operations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    kind: Mapped[str] = mapped_column(String(30), index=True)
+    target: Mapped[str] = mapped_column(String(128), default="")
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    expected_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parameters: Mapped[dict] = mapped_column(JSONB, default=dict)
+    result: Mapped[dict] = mapped_column(JSONB, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+
 class ResourceRevocation(Base):
     """撤回特定版本不篡改历史快照；每次相关调用检查，而非只在装配时判断。"""
 
@@ -897,6 +942,21 @@ class PreferenceExtraction(Base):
     extractor_version: Mapped[str] = mapped_column(String(40), primary_key=True)
     result: Mapped[dict] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MCPInstallation(Base):
+    """应用拥有的本地安装身份；程序/锁文件在项目内，删除只依据登记及使用锁。"""
+
+    __tablename__ = "mcp_installations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    connection_id: Mapped[str] = mapped_column(String(36), index=True)
+    operation_id: Mapped[str] = mapped_column(ForeignKey("extension_operations.id"), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="preparing", index=True)
+    request: Mapped[dict] = mapped_column(JSONB)
+    manifest: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class MCPConnection(Base):

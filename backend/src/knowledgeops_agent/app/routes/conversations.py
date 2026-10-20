@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from knowledgeops_agent.app.dependencies import reasoning_service, svc
 from knowledgeops_agent.app.schemas import (
     ConversationInput,
+    ConversationRenameInput,
     MessageInput,
 )
 
@@ -81,6 +82,11 @@ def create_conversation(body: ConversationInput, request: Request):
 @router.get("/api/conversations/{conversation_id}/messages")
 def messages(conversation_id: str, request: Request):
     return svc(request).jobs.messages(conversation_id)
+
+
+@router.patch("/api/conversations/{conversation_id}")
+def rename_conversation(conversation_id: str, body: ConversationRenameInput, request: Request):
+    return svc(request).jobs.rename_conversation(conversation_id, body.title)
 
 
 @router.get("/api/conversations/{conversation_id}/context-usage")

@@ -11,9 +11,11 @@ import os
 import re
 import shutil
 from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
+from pathlib import Path, PurePosixPath
 from typing import Literal
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from fastmcp.client import Client
 from fastmcp.client.transports import StdioTransport, StreamableHttpTransport
@@ -28,16 +30,21 @@ class MCPConnectionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     transport: Literal["stdio", "http"]
     command: str | None = None
+    installation_id: str | None = None
     args: list[str] = Field(default_factory=list)
+    cwd: str | None = None
     url: str | None = None
     environment_refs: dict[str, str] = Field(default_factory=dict)
     header_refs: dict[str, str] = Field(default_factory=dict)
+    header_prefixes: dict[str, Literal["Bearer ", "Basic "]] = Field(default_factory=dict)
     timeout_seconds: float = Field(default=30, gt=0, le=120)
     # SDK 4 默认协商新版逐请求协议；依赖持久会话的服务可明确选择握手协议。
     protocol_mode: Literal["auto", "legacy"] = "auto"
 
     @model_validator(mode="after")
     def validate_transport(self):
+        if self.installation_id and (self.transport != "stdio" or str(UUID(self.installation_id)) != self.installation_id):
+            raise ValueError("managed installations require a stdio UUID identity")
         if self.transport == "http":
             url = urlsplit(self.url or "")
             if (
@@ -49,10 +56,15 @@ class MCPConnectionConfig(BaseModel):
                 or url.fragment
             ):
                 raise ValueError("MCP URL must be HTTP(S) without embedded credentials")
-            if self.command or self.args or self.environment_refs:
+            if self.command or self.args or self.environment_refs or self.cwd:
                 raise ValueError("HTTP configuration cannot launch a local process")
-        elif not self.command or self.url or self.header_refs:
+        elif not self.command or self.url or self.header_refs or self.header_prefixes:
             raise ValueError("stdio requires an installed command and separate arguments")
+        if self.cwd and (not PurePosixPath(self.cwd).is_absolute() or "\\" in self.cwd
+                         or "\x00" in self.cwd or "${" in self.cwd or ".." in PurePosixPath(self.cwd).parts):
+            raise ValueError("MCP cwd must be an absolute container directory")
+        if set(self.header_prefixes) - self.header_refs.keys():
+            raise ValueError("header prefixes require a corresponding environment reference")
         for ref in [*self.environment_refs.values(), *self.header_refs.values()]:
             if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", ref):
                 raise ValueError("secret references must be environment variable names")
@@ -96,6 +108,21 @@ async def connected_adapter(
     stdio按argv执行现有程序，禁止把配置拼成shell命令。HTTP凭据通过
     header引用注入；错误脱敏、许可、取消和业务回执由上层调用服务处理。
     """
+    from knowledgeops_agent.harness.mcp.installations import MCPInstallStorage
+
+    storage = MCPInstallStorage()
+    if not config.installation_id:
+        storage.reject_external_references(config.model_dump())
+    # 退出协议上下文并回收子进程之后才释放目录使用锁。
+    with storage.use(config.installation_id) if config.installation_id else nullcontext() as manifest:
+        if manifest and config.installation_id and str(storage.release(config.installation_id) / manifest['entrypoint']) != config.command:
+            raise ValueError("managed MCP command does not match its prepared installation")
+        async with _connected_adapter(config, secrets=secrets) as adapter:
+            yield adapter
+
+
+@asynccontextmanager
+async def _connected_adapter(config: MCPConnectionConfig, *, secrets: Mapping[str, str]) -> AsyncIterator[MCPAdapter]:
     transport: StdioTransport | StreamableHttpTransport
     if config.transport == "stdio":
         executable = shutil.which(config.command or "")
@@ -104,13 +131,17 @@ async def connected_adapter(
         transport = StdioTransport(
             command=executable,
             args=config.args,
+            cwd=config.cwd,
             env=child_environment(resolve_secret_refs(config.environment_refs, secrets)),
             keep_alive=False,
+            # 第三方服务的stderr可能输出凭据；应用诊断只保留受控错误类别/协议回执。
+            log_file=Path(os.devnull),
         )
     else:
         transport = StreamableHttpTransport(
             url=config.url or "",
-            headers=resolve_secret_refs(config.header_refs, secrets),
+            headers={name: config.header_prefixes.get(name, "") + value
+                     for name, value in resolve_secret_refs(config.header_refs, secrets).items()},
         )
     client = Client(
         transport,

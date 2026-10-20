@@ -52,11 +52,12 @@ def export_markdown(sessions, *, include_archived: bool = False) -> bytes:
             )
         }
         documents: dict[str, tuple[KnowledgeVersion, str, bool]] = {}
+        deleted = set(session.scalars(select(KnowledgeDocument.id).where(KnowledgeDocument.deleted_at.is_not(None))))
         evidence_ids: set[str] = set()
         written_documents: set[str] = set()
         written_evidence: set[str] = set()
         for version in current.values():
-            if include_archived or not version.archived:
+            if version.document_id not in deleted and (include_archived or not version.archived):
                 documents[version.id] = (version, f"documents/{version.document_id}.md", False)
 
         def document_path(document_id: str, version_id: str | None = None) -> str:

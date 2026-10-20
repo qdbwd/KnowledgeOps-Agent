@@ -10,9 +10,6 @@ PRESENTATION = {
     "github-deep-research": ("GitHub 项目研究", "阅读项目代码与演进资料，形成有依据的分析。"),
     "guided-learning": ("引导学习", "围绕当前问题解释概念、联系实践并逐步深入。"),
     "knowledge-maintenance": ("知识维护", "整理、修订和关联已有知识正文。"),
-    "skill-creator": ("技能编写", "把任务方法整理成可复用的技能说明与资源。"),
-    "skill-reviewer": ("技能审阅", "检查技能包的内容、结构与使用条件。"),
-    "systematic-literature-review": ("系统文献综述", "检索、筛选和归纳研究文献及证据。"),
 }
 
 

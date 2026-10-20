@@ -289,9 +289,9 @@ test('skill full text and source resources are lazy, switches persist, and tool 
   await picker.getByRole('searchbox').fill('image-generation');
   await expect(
     picker.getByRole('checkbox', { name: 'image-generation', exact: true }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${evidenceDir}/skill-disabled-mobile.png`, fullPage: false });
+  await page.screenshot({ path: `${evidenceDir}/skill-removed-mobile.png`, fullPage: false });
   await picker.getByRole('searchbox').fill('code-documentation');
   await picker.getByRole('checkbox', { name: '代码文档', exact: true }).check();
   await picker.getByRole('button', { name: '完成', exact: true }).click();

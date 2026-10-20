@@ -382,7 +382,9 @@ class MCPCalls:
                         if continuation else None,
                     )
                     if isinstance(result, InputRequiredResult):
-                        return result
+                        return InputRequiredResult.model_validate(redact(
+                            result.model_dump(mode="json"), binding["config"], additional=lease.secret_values,
+                        ))
                     # 持久产物保存协议原文，不调用 SDK 私有转换函数；外层仍返回标准 ToolMessage。
                     response_body = {
                         "content": [block.model_dump(mode="json", exclude_none=True) for block in result.content],
@@ -401,6 +403,7 @@ class MCPCalls:
                     redact(
                         response_body,
                         binding["config"],
+                        additional=lease.secret_values,
                     )
                 )
 

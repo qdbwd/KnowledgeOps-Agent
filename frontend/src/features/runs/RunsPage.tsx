@@ -1,5 +1,5 @@
 import { Button } from '../../shared/ui/Button';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { Activity, ArrowLeft, RotateCcw } from 'lucide-react';
 import { messageOf, send, terminal, usePagedResource, useResource } from '../../shared/api/api';
@@ -11,7 +11,10 @@ import { ExecutionApprovals } from '../permissions/ExecutionApprovals';
 import { RunQuestions } from './RunQuestions';
 import { RunChildren } from './RunChildren';
 import { TaskActivity } from './TaskActivity';
-import { RunDiagnostics } from './RunDiagnostics';
+import { useRunDetails } from './useRunDetails';
+import { RunOutcome } from './RunOutcome';
+import { DeleteRunButton, RemovedRun } from './DeleteRun';
+import { AssetDeletionHistory } from '../sources/AssetDeletion';
 
 export function RunsPage() {
   const { version } = useWorkspace();
@@ -19,7 +22,7 @@ export function RunsPage() {
   return (
     <>
       <PageTitle eyebrow="REVIEW & TRACE" title="运行记录">
-        <Link className="button secondary button-secondary" to="/changes">
+        <Link className="button secondary button-secondary" to="/knowledge/reviews">
           查看知识变更 →
         </Link>
       </PageTitle>
@@ -30,14 +33,15 @@ export function RunsPage() {
       ) : result.data?.length ? (
         <div className="list-cards grid gap-3">
           {result.data.map((run) => (
-            <Link
+            <article
               className="list-card flex items-center gap-[17px] rounded-[9px] border border-line bg-white px-[23px] py-4.5 text-[#5c7057] hover:border-[#aec2a5] hover:no-underline max-md:flex-wrap max-md:gap-3 max-md:p-4 [&>div]:min-w-0 [&>div]:flex-1 [&_h3]:mt-0 [&_h3]:mb-[5px] [&_h3]:text-[#344c37] [&_h3]:[overflow-wrap:anywhere] max-md:[&_h3]:text-[13px] [&_p]:m-0 [&_p]:text-[11px] [&_p]:text-[#85917e] [&_p]:[overflow-wrap:anywhere] [&>span:last-child]:text-[11px] [&>span:last-child]:whitespace-nowrap max-md:[&>span:last-child]:hidden"
-              to={`/runs/${run.id}`}
               key={run.id}
             >
               <Activity size={20} />
               <div>
-                <h3>{run.task.slice(0, 90)}</h3>
+                <h3>
+                  <Link to={`/runs/${run.id}`}>{run.task.slice(0, 90)}</Link>
+                </h3>
                 <p>
                   {new Date(run.created_at).toLocaleString()} ·{' '}
                   {run.kind === 'material'
@@ -52,8 +56,9 @@ export function RunsPage() {
                 </p>
               </div>
               <Badge status={run.status} />
-              <span>查看 →</span>
-            </Link>
+              <DeleteRunButton run={run} />
+              <Link to={`/runs/${run.id}`}>查看 →</Link>
+            </article>
           ))}
         </div>
       ) : (
@@ -68,6 +73,7 @@ export function RunsPage() {
           {result.loading ? '正在加载…' : '加载更多运行'}
         </Button>
       )}
+      <AssetDeletionHistory kind="run" />
     </>
   );
 }
@@ -138,37 +144,21 @@ function ResumeControls({ run, onChanged }: { run: Run; onChanged: () => void })
 
 export function RunPage() {
   const { runId } = useParams();
-  const { version, refresh } = useWorkspace();
-  const [tick, setTick] = useState(0);
-  const [diagnosticRun, setDiagnosticRun] = useState<string | null>(null);
-  const diagnosticsOpen = diagnosticRun === runId;
-  const key = `${version}:${tick}`;
-  const result = useResource<Run>(`/api/runs/${runId}`, key);
-  // 状态进入终态后刷新摘要；诊断组件只在用户打开后请求完整记录。
-  const detailsKey = `${version}:${result.data?.status ?? ''}:${result.data?.last_event ?? ''}:${result.data?.details_available ?? ''}`;
+  const { result, refresh, key, detailsKey } = useRunDetails(runId);
   const [error, setError] = useState('');
-  const status = result.data?.status;
-  useEffect(() => {
-    if (
-      !status ||
-      terminal(status) ||
-      status === 'paused' ||
-      result.data?.details_available === false
-    )
-      return;
-    const timer = setInterval(() => setTick((n) => n + 1), 2000);
-    return () => clearInterval(timer);
-  }, [status, runId, result.data?.details_available]);
   if (result.loading && result.data?.id !== runId) return <Loading />;
   if (!result.data) return <ErrorBox message={result.error} />;
   const run = result.data;
+  if (run.user_deleted_at) return <RemovedRun run={run} />;
   if (run.details_available === false)
     return (
       <>
         <Link className="back-link mb-[15px] inline-flex items-center gap-1.5 text-xs" to="/runs">
           ← 全部运行
         </Link>
-        <PageTitle eyebrow="RUN" title="运行结果摘要" />
+        <PageTitle eyebrow="RUN" title="运行结果摘要">
+          <DeleteRunButton run={run} leave />
+        </PageTitle>
         <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
           <h2>{run.task}</h2>
           <Badge status={run.status} />
@@ -183,7 +173,7 @@ export function RunPage() {
           {run.outcome.answer && <Markdown text={run.outcome.answer} />}
           {run.conversation_id && <Link to={`/chat/${run.conversation_id}`}>回到对话 →</Link>}
         </section>
-        <TaskActivity key={run.id} run={run} refreshKey={detailsKey} />
+        <TaskActivity key={`activity:${run.id}`} run={run} refreshKey={detailsKey} />
       </>
     );
   return (
@@ -194,24 +184,20 @@ export function RunPage() {
       </Link>
       <PageTitle eyebrow="TASK" title="任务详情">
         <div className="row flex items-center gap-3">
+          <DeleteRunButton run={run} leave />
           <Button className="secondary button-secondary" onClick={refresh}>
             刷新
           </Button>
-          <Button
-            className="secondary button-secondary"
-            aria-expanded={diagnosticsOpen}
-            aria-controls="run-diagnostics"
-            onClick={() => setDiagnosticRun(diagnosticsOpen ? null : run.id)}
-          >
-            {diagnosticsOpen ? '关闭诊断' : '诊断'}
-          </Button>
+          <Link className="button secondary button-secondary" to={`/runs/${run.id}/diagnostics`}>
+            诊断
+          </Link>
         </div>
       </PageTitle>
       <ErrorBox message={error || result.error} />
       <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
         <div className="row flex items-center gap-3 wrap flex-wrap">
           <Badge status={run.status} />
-          {run.outcome.kind && <Badge status={run.outcome.kind} />}
+          <RunOutcome run={run} refreshKey={detailsKey} />
           {run.conversation_id && <Link to={`/chat/${run.conversation_id}`}>回到对话 →</Link>}
           {run.outcome.source_id && (
             <Link to={`/sources/${run.outcome.source_id}`}>查看来源材料 →</Link>
@@ -291,8 +277,7 @@ export function RunPage() {
           <Markdown text={run.outcome.answer} />
         </section>
       )}
-      <TaskActivity key={run.id} run={run} refreshKey={detailsKey} />
-      {diagnosticsOpen && <RunDiagnostics key={run.id} run={run} refreshKey={detailsKey} />}
+      <TaskActivity key={`activity:${run.id}`} run={run} refreshKey={detailsKey} />
     </>
   );
 }

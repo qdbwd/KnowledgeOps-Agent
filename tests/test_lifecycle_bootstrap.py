@@ -26,9 +26,13 @@ def test_bootstrap_migrates_both_databases_and_stops_on_accounting_failure(tmp_p
         capture_output=True, text=True, timeout=10,
     )
     calls = log.read_text().splitlines()
-    assert calls[:2] == ["alembic|upgrade head|false", "python|scripts/migrate_accounting.py --lifecycle|false"]
+    assert calls[:3] == [
+        "alembic|upgrade head|false",
+        "python|scripts/initialize_skills.py|false",
+        "python|scripts/migrate_accounting.py --lifecycle|false",
+    ]
     if accounting_fails:
-        assert result.returncode == 19 and len(calls) == 2
+        assert result.returncode == 19 and len(calls) == 3
     else:
         assert result.returncode == 0, result.stderr
-        assert calls[2].startswith("python|scripts/migrate_workspace.py ")
+        assert calls[3].startswith("python|scripts/migrate_workspace.py ")

@@ -9,6 +9,7 @@ param(
     [string]$BackupFolder,
     [ValidateSet('deployment', 'development')][string]$Runtime = 'deployment',
     [string]$WorkspacePath,
+    [switch]$IncludeMcpData,
     [ValidatePattern('^knowledgeops(?:_backupfixture_[a-f0-9]{12})?$')][string]$Database = 'knowledgeops',
     [ValidatePattern('^knowledgeops-agent-backupfixture-[a-f0-9]{12}$')][string]$SourceVolume,
     [ValidatePattern('^knowledgeops_restore_[a-f0-9]{12}$')][string]$RestoreDatabase,
@@ -66,6 +67,21 @@ try {
             $format = 2
             $fileNames = @('business.dump', 'accounting.dump', 'workspace.tar.gz')
         }
+        # 旧来源卷备份保留格式1；完整工作区增加可移植扩展归档，不打包环境/缓存/密钥。
+        if ($format -eq 2) {
+            $extensionArgs = @('scripts/backup_extensions.py', '--database', $Database)
+            if ($IncludeMcpData) { $extensionArgs += '--include-data' }
+            if ($Runtime -eq 'development') {
+                $extensionArgs += @('--output', "$backupInDev/extensions.tar.gz")
+                if ($WorkspacePath) { $extensionArgs += @('--fixture-root', ($WorkspacePath -replace '/workspace$', '/extensions')) }
+                docker exec -w /workspace -e MODEL_CALLS_ENABLED=false $dev .venv/bin/python scripts/dev.py --run .venv/bin/python @extensionArgs
+            } else {
+                $extensionArgs += @('--output', '/backup/extensions.tar.gz')
+                docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" api python @extensionArgs
+            }
+            $format = 3
+            $fileNames += 'extensions.tar.gz'
+        }
         $hashes = @{}
         foreach ($name in $fileNames) {
             $hashes[$name] = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $BackupFolder $name)).Hash.ToLowerInvariant()
@@ -74,14 +90,17 @@ try {
             format = $format; created_at = [DateTime]::UtcNow.ToString('o'); source_database = $Database
             source_accounting_database = $accountingSource
             files = $hashes
+            extensions_policy = 'Complete skills and MCP locks; no dependency environments, caches or project secrets. Restored MCP connections require explicit preparation, testing and authorization.'
+            mcp_data_included = [bool]$IncludeMcpData
             accounting_policy = 'Restore only into a fresh isolated database; never overwrite active task budgets or model replay receipts.'
             consistency = 'Stop api/worker and local file editors before backup. PG pointers and the complete workspace form one backup set; immutable files may include harmless orphans.'
         } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $BackupFolder 'manifest.json') -Encoding utf8
         Write-Output "Backup: $BackupFolder"
     } else {
         $manifest = Get-Content -Raw -LiteralPath (Join-Path $BackupFolder 'manifest.json') | ConvertFrom-Json
-        if ($manifest.format -notin @(1, 2)) { throw 'Unsupported backup format.' }
-        $fileNames = if ($manifest.format -eq 2) { @('business.dump', 'accounting.dump', 'workspace.tar.gz') } else { @('business.dump', 'accounting.dump', 'sources.tar.gz') }
+        if ($manifest.format -notin @(1, 2, 3)) { throw 'Unsupported backup format.' }
+        $fileNames = if ($manifest.format -ge 2) { @('business.dump', 'accounting.dump', 'workspace.tar.gz') } else { @('business.dump', 'accounting.dump', 'sources.tar.gz') }
+        if ($manifest.format -eq 3) { $fileNames += 'extensions.tar.gz' }
         foreach ($name in $fileNames) {
             $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $BackupFolder $name)).Hash.ToLowerInvariant()
             if ($actual -ne $manifest.files.$name) { throw "Backup checksum mismatch: $name" }
@@ -105,11 +124,11 @@ try {
             $restoreRoot = "/workspace/artifacts/verification/restores/$RestoreDatabase"
             $arguments = @('scripts/backup_fixture.py', 'verify', '--database', $RestoreDatabase, '--accounting-database', $accountingTarget,
                 '--source-root', "$restoreRoot/uploads/originals", '--backup-manifest', "$backupInDev/manifest.json", '--output', "$backupInDev/restore-verification.json")
-            if ($manifest.format -eq 2) {
+            if ($manifest.format -ge 2) {
                 $arguments += @('--workspace-root', $restoreRoot, '--workspace-archive', "$backupInDev/workspace.tar.gz")
             } else { $arguments += @('--archive', "$backupInDev/sources.tar.gz") }
             docker exec -w /workspace -e MODEL_CALLS_ENABLED=false $dev .venv/bin/python scripts/dev.py --run .venv/bin/python @arguments
-        } elseif ($manifest.format -eq 2) {
+        } elseif ($manifest.format -ge 2) {
             docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" -v "${RestoreVolume}:/restore-workspace" api python scripts/backup_fixture.py verify --database $RestoreDatabase --accounting-database $accountingTarget --source-root /restore-workspace/uploads/originals --workspace-root /restore-workspace --workspace-archive "/backup/workspace.tar.gz" --backup-manifest "/backup/manifest.json" --output "/backup/restore-verification.json"
         } else {
             docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" -v "${RestoreVolume}:/restore-sources" api python scripts/backup_fixture.py verify --database $RestoreDatabase --accounting-database $accountingTarget --source-root /restore-sources --archive "/backup/sources.tar.gz" --backup-manifest "/backup/manifest.json" --output "/backup/restore-verification.json"

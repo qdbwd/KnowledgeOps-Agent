@@ -175,6 +175,8 @@ def test_unexpected_exit_stops_other_services_and_reports_failure(tmp_path, fail
 
 def test_old_schema_is_rejected_before_services_start(business_sessions, monkeypatch, capsys):
     """真实旧版本号留在隔离PG，入口须拒绝启动且不自动升级或改业务数据。"""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
     from sqlalchemy import text
 
     from scripts import dev
@@ -193,7 +195,8 @@ def test_old_schema_is_rejected_before_services_start(business_sessions, monkeyp
     monkeypatch.setattr(dev, "run_services", lambda *_args, **_kwargs: pytest.fail("old schema started services"))
     assert dev.main([]) == 1
     output = capsys.readouterr().err
-    assert "0030" in output and "0038" in output and "alembic upgrade head" in output
+    head = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini"))).get_current_head()
+    assert "0030" in output and head in output and "alembic upgrade head" in output
     with engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0030"
 

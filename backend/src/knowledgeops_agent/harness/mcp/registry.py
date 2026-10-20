@@ -9,12 +9,16 @@ from __future__ import annotations
 import asyncio
 import builtins
 import json
-import os
 from pathlib import PurePosixPath
 
 from sqlalchemy import select
 
 from knowledgeops_agent.app.runs.control import lock_control
+from knowledgeops_agent.harness.mcp.secrets import (
+    MCPSecretStore,
+    config_references,
+    connection_secrets,
+)
 from knowledgeops_agent.harness.mcp.transport import MCPConnectionConfig, connected_tools
 from knowledgeops_agent.harness.runtime.resources import content_hash
 from knowledgeops_agent.persistence.models import MCPConnection, MCPConnectionRevision
@@ -45,28 +49,18 @@ def configuration(value: dict) -> dict:
     # 缺省保持旧配置 JSON 身份，避免仅保存旧配置就误判为连接变更而撤回许可。
     if config.protocol_mode == "auto":
         result.pop("protocol_mode")
+    if config.cwd is None:
+        result.pop("cwd")
+    if config.installation_id is None:
+        result.pop("installation_id")
+    if not config.header_prefixes:
+        result.pop("header_prefixes")
     return result
 
 
-def redact(value, config: dict):
+def redact(value, config: dict, *, additional=()):
     """按此连接的引用值递归脱敏；不把实际值保存为另一份配置或版本。"""
-    secrets = [
-        os.environ.get(name, "")
-        for name in [
-            *config.get("environment_refs", {}).values(),
-            *config.get("header_refs", {}).values(),
-        ]
-    ]
-    if isinstance(value, str):
-        for secret in secrets:
-            if secret:
-                value = value.replace(secret, "[REDACTED]")
-        return value
-    if isinstance(value, dict):
-        return {key: redact(item, config) for key, item in value.items()}
-    if isinstance(value, list):
-        return [redact(item, config) for item in value]
-    return value
+    return MCPSecretStore().redact(value, config_references(config), additional=additional)
 
 
 def descriptor(tool) -> dict:
@@ -215,6 +209,12 @@ class MCPRegistry:
                     revoke = True
             row.tools = list(by_name.values())
             if enabled is not None:
+                if enabled and not deleted and row.config.get('installation_id'):
+                    from knowledgeops_agent.persistence.models import MCPInstallation
+
+                    installation = session.get(MCPInstallation, row.config['installation_id'])
+                    if not installation or installation.status != 'prepared':
+                        raise ValueError('MCP安装尚未就绪，请先准备恢复候选并重新测试授权')
                 row.enabled = enabled
             if deleted:
                 row.deleted, row.enabled = True, False
@@ -222,6 +222,9 @@ class MCPRegistry:
                 row.authorization_epoch += 1
             row.revision += 1
             self._save(session, row)
+            if deleted or config is not None:
+                from knowledgeops_agent.harness.mcp.lifecycle import schedule
+                schedule(session, row.id, name=row.name)
             return connection_view(row)
 
     def discover(self, identifier: str, *, expected_revision: int) -> dict:
@@ -230,9 +233,11 @@ class MCPRegistry:
         if row["revision"] != expected_revision:
             raise ValueError("MCP配置修订已变化，请刷新")
 
+        secrets = connection_secrets(row["config"])
+
         async def collect():
             async with connected_tools(
-                MCPConnectionConfig.model_validate(row["config"]), secrets=os.environ
+                MCPConnectionConfig.model_validate(row["config"]), secrets=secrets
             ) as tools:
                 return [descriptor(tool) for tool in tools]
 
@@ -246,7 +251,7 @@ class MCPRegistry:
             ) from None
         if len(catalog) > 200 or len(json.dumps(catalog)) > 2_000_000:
             raise ValueError("MCP工具目录过大；请在服务端缩小暴露范围")
-        if redact(catalog, row["config"]) != catalog:
+        if redact(catalog, row["config"], additional=secrets.values()) != catalog:
             raise ValueError("MCP工具目录含凭据，已拒绝保存")
         return self.update(identifier, expected_revision=expected_revision, discovered=catalog)
 

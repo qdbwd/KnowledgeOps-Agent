@@ -67,9 +67,10 @@ def test_invalid_imported_skill_has_actionable_configuration_error(tmp_path, mon
 
 
 def test_builtin_and_imported_skills_have_valid_tool_and_path_adaptations(monkeypatch):
+    from knowledgeops_agent.core.resources import bundled_resource
     from knowledgeops_agent.harness.skills.packages import is_skill_entry
 
-    monkeypatch.delenv("SKILLS_DIRECTORY", raising=False)
+    monkeypatch.setenv("SKILLS_DIRECTORY", str(bundled_resource("skill-seeds")))
     rows = load_skills()
     assert {row["name"] for row in rows if is_skill_entry(row)} == {
         "guided-learning", "knowledge-maintenance", "evidence-check",

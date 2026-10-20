@@ -142,7 +142,9 @@ function CollaborationPanel({ taskId }: { taskId: string }) {
               {unit.stop_reason}
             </p>
           )}
-          {unit.draft_id && <Link to={`/changes/${unit.draft_id}`}>查看草稿或保存结果</Link>}
+          {unit.draft_id && (
+            <Link to={`/knowledge/reviews/${unit.draft_id}`}>查看草稿或保存结果</Link>
+          )}
           {(reports.data ?? [])
             .filter((report) => report.unit_id === unit.id)
             .map((report) => (
@@ -426,7 +428,9 @@ function TaskEditor({ task, changed }: { task: LearningTask; changed: () => void
               移除此单元
             </Button>
             {unit.stop_reason && <p>{unit.stop_reason}</p>}
-            {unit.draft_id && <Link to={`/changes/${unit.draft_id}`}>查看草稿或保存结果</Link>}
+            {unit.draft_id && (
+              <Link to={`/knowledge/reviews/${unit.draft_id}`}>查看草稿或保存结果</Link>
+            )}
           </section>
         ))}
         <div className="row flex items-center gap-3 wrap flex-wrap">

@@ -70,3 +70,28 @@ class FileApprovalProvider(FileProvider):
             "name": "write_file", "id": "browser-file-approval", "index": 0,
             "args": json.dumps({"file_path": "/work/approval-note.md", "content": "# 文件审批示例\n批准后才写入。"}),
         }])
+
+
+class SkillResumeProvider(FileProvider):
+    """固定提出读取、补问、执行三步，实际快照/审批/脚本均由产品路径处理。"""
+
+    def stream(self, messages, **kwargs):
+        self.requests += 1
+        observations = [message for message in messages if isinstance(message, ToolMessage)]
+        if observations:
+            assert observations[-1].status != 'error', observations[-1].content
+        calls = {message.tool_call_id for message in observations}
+        if 'restored-script' in calls:
+            assert 'original-resource' in str(observations[-1].content)
+            yield AIMessageChunk('已使用原版本脚本生成文件。')
+            return
+        if 'skill-pause' in calls:
+            name, identity, arguments = 'execute', 'restored-script', {
+                'command': 'python "$SKILLS_DIR/restore-skill/scripts/run.py"', 'timeout': 5}
+        elif 'skill-read' in calls:
+            name, identity, arguments = 'ask_clarification', 'skill-pause', {'question': '是否继续生成文件？'}
+        else:
+            name, identity, arguments = 'read_file', 'skill-read', {'file_path': '/skills/restore-skill/SKILL.md'}
+        yield AIMessageChunk('', tool_call_chunks=[{
+            'name': name, 'id': identity, 'args': json.dumps(arguments), 'index': 0,
+        }])

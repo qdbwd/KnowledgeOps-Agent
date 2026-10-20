@@ -12,7 +12,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -24,6 +23,7 @@ from uuid import uuid4
 
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 
+from knowledgeops_agent.harness.mcp.secrets import connection_secrets
 from knowledgeops_agent.harness.mcp.transport import (
     MCPConnectionConfig,
     child_environment,
@@ -40,6 +40,8 @@ class SessionLease:
     session_id: str
     reused: bool
     protocol_version: str | None
+    # 仅在当前调用内脱敏，覆盖调用期间密钥轮换；不写绑定、事件或检查点。
+    secret_values: tuple[str, ...] = field(default=(), repr=False)
 
 
 @dataclass
@@ -117,7 +119,7 @@ class MCPSessionManager:
 
     def _identity(self, binding: dict) -> tuple[MCPConnectionConfig, dict[str, str], str]:
         config = MCPConnectionConfig.model_validate(binding["config"])
-        secrets = dict(os.environ if self.secrets is None else self.secrets)
+        secrets = connection_secrets(binding["config"]) if self.secrets is None else dict(self.secrets)
         identity = {
             "config": config.model_dump(),
             "epoch": binding["authorization_epoch"],
@@ -274,6 +276,7 @@ class MCPSessionManager:
                     entry.session_id,
                     reused,
                     getattr(adapter.client, "protocol_version", None),
+                    tuple(secrets.values()),
                 )
         except BaseException:
             if acquired:

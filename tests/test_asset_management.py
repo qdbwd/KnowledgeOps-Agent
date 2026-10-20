@@ -169,7 +169,8 @@ def test_active_conversation_attachment_cannot_be_detached_before_pending_execut
         cleaner.admit("source", source["id"], conversation_id=chat["id"], expected_version=preview["version"])
 
 
-def test_temporary_drafts_are_collected_only_after_last_real_dependency(assets):
+@pytest.mark.parametrize("review_path", ["changes", "knowledge/reviews"])
+def test_temporary_drafts_are_collected_only_after_last_real_dependency(assets, review_path):
     cleaner, sources, _ = assets
     with cleaner.sessions.begin() as session:
         run_id = db.new_id()
@@ -183,7 +184,7 @@ def test_temporary_drafts_are_collected_only_after_last_real_dependency(assets):
         session.flush()
         ids = [row.id for row in drafts]
         unknown_id = unknown.id
-    reference = sources.import_text("真实引用草稿", f"[待使用草稿](/changes/{ids[0]})")
+    reference = sources.import_text("真实引用草稿", f"[待使用草稿](/{review_path}/{ids[0]})")
     cleaner.reconcile(limit=20)
     # 作业接受后出现的新保存意图必须再次检查，不沿旧计划删除。
     with cleaner.sessions.begin() as session:

@@ -9,7 +9,7 @@ from knowledgeops_agent.app.dependencies import svc
 from knowledgeops_agent.app.lifecycle.asset_cleanup import public_job
 
 router = APIRouter()
-AssetKind = Literal["source", "delivery"]
+AssetKind = Literal["source", "delivery", "knowledge", "run"]
 
 
 class AssetDeletionInput(BaseModel):
@@ -19,6 +19,13 @@ class AssetDeletionInput(BaseModel):
 
 def accept_deletion(request, kind, identity, body, conversation_id=None):
     try:
+        if kind in {"knowledge", "run"}:
+            if conversation_id:
+                raise ValueError("此删除操作不接受会话材料作用域")
+            lifecycle = svc(request).lifecycle
+            cleaner = lifecycle.knowledge if kind == "knowledge" else lifecycle.details
+            action = cleaner.admit if kind == "knowledge" else cleaner.remove
+            return public_job(action(identity, expected_version=body.expected_version))
         return public_job(svc(request).lifecycle.assets.admit(kind, identity,
             expected_version=body.expected_version, conversation_id=conversation_id))
     except ValueError as error:
@@ -27,6 +34,10 @@ def accept_deletion(request, kind, identity, body, conversation_id=None):
 
 @router.get("/api/assets/{kind}/{identity}/deletion-preview")
 def asset_deletion_preview(kind: AssetKind, identity: str, request: Request, conversation_id: str | None = None):
+    if kind == "knowledge":
+        return svc(request).lifecycle.knowledge.preview(identity)
+    if kind == "run":
+        return svc(request).lifecycle.details.removal_preview(identity)
     return svc(request).lifecycle.assets.preview(kind, identity, conversation_id=conversation_id)
 
 
@@ -37,8 +48,8 @@ def asset_deletion(kind: AssetKind, identity: str, body: AssetDeletionInput, req
 
 
 @router.get("/api/asset-deletions")
-def asset_deletions(request: Request, limit: int = Query(default=20, ge=1, le=100)):
-    return svc(request).lifecycle.assets.list_jobs(limit=limit)
+def asset_deletions(request: Request, limit: int = Query(default=20, ge=1, le=100), kind: AssetKind | None = None):
+    return svc(request).lifecycle.assets.list_jobs(limit=limit, kind=kind)
 
 
 @router.get("/api/asset-deletions/{identity}")

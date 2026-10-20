@@ -16,6 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from knowledgeops_agent.persistence.models import Run, RunDispatch, utcnow
 
 TASK_NAME = "knowledgeops.execute_run"
+MCP_PREPARE_TASK = "knowledgeops.prepare_mcp"
 
 
 def _execute_run(run_id: str, generation: int):
@@ -25,8 +26,15 @@ def _execute_run(run_id: str, generation: int):
     return execute_run(run_id, generation)
 
 
+def _prepare_mcp(operation_id: str, generation: int):
+    from knowledgeops_agent.app.runs.worker import prepare_mcp
+
+    return prepare_mcp(operation_id, generation)
+
+
 def create_queue(
-    broker_url: str, *, handler: Callable | None = None, queue_name: str = "knowledgeops.agent"
+    broker_url: str, *, handler: Callable | None = None, queue_name: str = "knowledgeops.agent",
+    mcp_handler: Callable | None = None,
 ) -> Celery:
     """构造生产者/worker 共用配置；创建实例本身不连接 broker 或调用模型。"""
     app = Celery("knowledgeops", broker=broker_url)
@@ -57,6 +65,7 @@ def create_queue(
     )
     # shared=False 避免多个测试/独立应用实例相互继承不同的任务实现。
     app.task(name=TASK_NAME, shared=False, ignore_result=True)(handler or _execute_run)
+    app.task(name=MCP_PREPARE_TASK, shared=False, ignore_result=True)(mcp_handler or _prepare_mcp)
     return app
 
 

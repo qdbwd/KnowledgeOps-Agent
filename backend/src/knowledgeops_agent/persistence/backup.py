@@ -14,8 +14,11 @@ def verified_manifest(folder: Path) -> dict:
     folder = folder.resolve()
     manifest_path = folder / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-    archive = {1: "sources.tar.gz", 2: "workspace.tar.gz"}.get(manifest.get("format"))
-    if archive is None or set(manifest.get("files", {})) != {"business.dump", "accounting.dump", archive}:
+    archive = {1: "sources.tar.gz", 2: "workspace.tar.gz", 3: "workspace.tar.gz"}.get(manifest.get("format"))
+    expected = {"business.dump", "accounting.dump", archive}
+    if manifest.get('format') == 3:
+        expected.add('extensions.tar.gz')
+    if archive is None or set(manifest.get("files", {})) != expected:
         raise ValueError("unsupported or incomplete backup manifest")
     for name, digest in manifest["files"].items():
         path = folder / name

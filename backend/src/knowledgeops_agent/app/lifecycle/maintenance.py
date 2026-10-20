@@ -24,9 +24,10 @@ SCAN_STATE = "lifecycle-scan-v1"
 
 class LifecycleMaintenance:
     def __init__(self, details, *, enabled=True, scan_interval_seconds=86400, job_retention_days=30, run_service=None,
-                 temporary_roots=None, temporary_grace_seconds=86400):
+                 temporary_roots=None, temporary_grace_seconds=86400, skill_manager=None, mcp_manager=None):
         from knowledgeops_agent.app.lifecycle.asset_cleanup import AssetCleaner
         from knowledgeops_agent.app.lifecycle.conversations import ConversationCleaner
+        from knowledgeops_agent.app.lifecycle.knowledge import KnowledgeCleaner
         from knowledgeops_agent.app.lifecycle.legacy_html import LegacyHtmlCleaner
         from knowledgeops_agent.app.runs.service import RunService
 
@@ -34,8 +35,11 @@ class LifecycleMaintenance:
         self.conversations = ConversationCleaner(details, run_service or RunService(details.sessions))
         self.sessions, self.now, self.jobs = details.sessions, details.now, details.jobs
         self.assets = AssetCleaner(self.sessions, self.jobs, batch_size=details.batch_size, eligibility=details.eligibility)
+        self.knowledge = KnowledgeCleaner(self.sessions, self.jobs, batch_size=details.batch_size)
         self.legacy_html = LegacyHtmlCleaner(self.sessions, self.jobs)
         self.enabled, self.interval, self.job_retention = enabled, scan_interval_seconds, job_retention_days
+        self.skill_manager = skill_manager
+        self.mcp_manager = mcp_manager
         store = self.sessions.kw.get("info", {}).get("file_store")
         self.temporary_roots = list(dict.fromkeys(temporary_roots if temporary_roots is not None else [store.root] if store else []))
         self.temporary_grace = temporary_grace_seconds
@@ -45,7 +49,10 @@ class LifecycleMaintenance:
     @classmethod
     def from_services(cls, services):
         from knowledgeops_agent.app.runs.worker import open_checkpointer
+        from knowledgeops_agent.core.resources import managed_resource_root, resource_path
         from knowledgeops_agent.harness.context.usage import context_usage
+        from knowledgeops_agent.harness.mcp.management import MCPManagement
+        from knowledgeops_agent.harness.skills.management import SkillManagement
 
         settings = services.settings
 
@@ -63,7 +70,9 @@ class LifecycleMaintenance:
                    scan_interval_seconds=settings.lifecycle_scan_interval_seconds,
                    job_retention_days=settings.lifecycle_job_retention_days, run_service=services.jobs,
                    temporary_roots=[path for path in (settings.workspace_root, services.sources.storage_root) if path],
-                   temporary_grace_seconds=settings.lifecycle_temporary_grace_seconds)
+                   temporary_grace_seconds=settings.lifecycle_temporary_grace_seconds,
+                   skill_manager=SkillManagement(services.sessions, resource_path("SKILLS_DIRECTORY", managed_resource_root("skills"))),
+                   mcp_manager=MCPManagement(services.sessions))
 
     def tick(self) -> dict:
         """每次最多推进一个删除步骤和一个扫描批次；关闭自动扫描不遗弃已接受的作业。"""
@@ -72,11 +81,22 @@ class LifecycleMaintenance:
         if self.enabled:
             result["scan"] = self.scan_step()
             result["jobs_expired"] = self.jobs.prune_completed(retention_days=self.job_retention, limit=self.details.batch_size)
+        if self.skill_manager is not None:
+            try:
+                result["skills"] = self.skill_manager.maintain(expire=self.enabled, retention_days=self.job_retention)
+            except Exception as error:
+                # 独立重试：扩展目录故障不遗弃已经接受的会话/资产清理。
+                result["skills"] = {"error": type(error).__name__}
+        if self.mcp_manager is not None:
+            try:
+                result['mcp'] = self.mcp_manager.maintain(expire=self.enabled, retention_days=self.job_retention)
+            except Exception as error:
+                result['mcp'] = {'error': type(error).__name__}
         return result
 
     def advance(self, identity: str | None = None):
         with self.sessions() as session:
-            query = select(db.CleanupJob).where(db.CleanupJob.target_kind.in_(["run", "conversation", "source", "delivery", "draft", "html_original"]), db.CleanupJob.status != "completed",
+            query = select(db.CleanupJob).where(db.CleanupJob.target_kind.in_(["run", "conversation", "source", "delivery", "draft", "html_original", "knowledge"]), db.CleanupJob.status != "completed",
                 db.CleanupJob.next_attempt_at <= self.now(),
                 or_(db.CleanupJob.claim_until.is_(None), db.CleanupJob.claim_until <= self.now()))
             if identity:
@@ -87,6 +107,8 @@ class LifecycleMaintenance:
             identity, phase = row.id, row.phase
         if phase in self.assets.PHASES:
             return self.assets.step(identity=identity)
+        if phase in self.knowledge.PHASES:
+            return self.knowledge.step(identity=identity)
         if phase in self.legacy_html.PHASES:
             return self.legacy_html.step(identity=identity)
         if phase in self.conversations.PHASES:
@@ -158,6 +180,11 @@ class LifecycleMaintenance:
             elif phase == "assets":
                 extra = self.assets.reconcile(after=cursor.get("after"), limit=self.details.batch_size)
                 cursor = {"phase": "assets", "after": extra["next_cursor"]} if (
+                    extra.get("waiting_for_references") or extra["next_cursor"]
+                ) else {"phase": "knowledge"}
+            elif phase == "knowledge":
+                extra = self.knowledge.reconcile(after=cursor.get("after"), limit=self.details.batch_size)
+                cursor = {"phase": "knowledge", "after": extra["next_cursor"]} if (
                     extra.get("waiting_for_references") or extra["next_cursor"]
                 ) else {"phase": "content"}
             elif phase == "content":

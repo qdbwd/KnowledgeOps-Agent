@@ -56,6 +56,20 @@ def drain(cleaner, identity):
     pytest.fail("detail stages did not converge")
 
 
+def test_regular_maintenance_reclaims_expired_skill_uploads(detail_case, tmp_path):
+    from knowledgeops_agent.app.lifecycle.maintenance import LifecycleMaintenance
+    from knowledgeops_agent.harness.skills.management import SkillManagement
+
+    cleaner = detail_case[0]
+    manager = SkillManagement(cleaner.sessions, tmp_path / "skills")
+    staged = manager.stage([("SKILL.md", b"---\nname: example\ndescription: example\n---\nbody")])
+    with cleaner.sessions.begin() as session:
+        session.get(db.ExtensionOperation, staged["id"]).expires_at -= timedelta(days=2)
+    maintenance = LifecycleMaintenance(cleaner, skill_manager=manager)
+    assert maintenance.tick()["skills"]["expired"] == 1
+    assert not manager.storage.operation_path("staging", staged["id"]).exists()
+
+
 def test_details_are_removed_but_chat_protocol_survives_and_job_is_not_prematurely_done(detail_case, ledger):
     cleaner, runs, run, chat, _, _, plain, bridge, cache = detail_case
     with cleaner.sessions.begin() as session:
@@ -63,6 +77,7 @@ def test_details_are_removed_but_chat_protocol_survives_and_job_is_not_premature
         message = session.scalar(select(db.ChatMessage).where(db.ChatMessage.role == "assistant"))
         message.protocol_payload = None
         message_id = message.id
+        session.add(db.RunSkillUse(run_id=run["id"], resource="/skills/example/SKILL.md", content_hash="a" * 64))
     preview = cleaner.preview(run["id"])
     assert preview["eligible"] and preview["protocol_backfill_count"] == 1
     with cleaner.sessions() as session:
@@ -84,6 +99,7 @@ def test_details_are_removed_but_chat_protocol_survives_and_job_is_not_premature
         protocol = session.get(db.ChatMessage, message_id).protocol_payload
         assert protocol["message"]["data"]["additional_kwargs"]["reasoning_content"] == "协议原文"
         assert list(session.scalars(select(db.RunEvent))) == []
+        assert list(session.scalars(select(db.RunSkillUse))) == []
     with pytest.raises(ModelCallFailed, match="expired"):
         ledger.reserve(run["id"], run["id"], "agent", [])
     assert runs.enqueue(chat["id"], "继续", request_key="after-cleanup")["status"] == "queued"

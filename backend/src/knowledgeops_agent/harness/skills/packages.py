@@ -18,6 +18,7 @@ MAX_FILE_BYTES = 1024 * 1024
 MAX_BUNDLE_BYTES = 8 * 1024 * 1024
 MAX_BUNDLE_FILES = 2048
 IGNORED_DIRECTORIES = {"__pycache__", "node_modules"}
+UNSUPPORTED_BEHAVIOR_FIELDS = {"allowed-tools", "hooks", "mcp", "mcp_servers", "disable-model-invocation"}
 
 
 class SkillPackageError(ValueError):
@@ -31,7 +32,7 @@ def is_skill_entry(row: dict) -> bool:
 
 
 def disabled_skills(root: Path) -> dict[str, str]:
-    """保留暂不兼容的原包，用明确原因控制发现；没有配置的新增包默认启用。"""
+    """读取部署禁用原因；该配置不要求保留不兼容包，未配置的新增包默认启用。"""
     path = root / "availability.json"
     if not path.exists():
         return {}
@@ -89,9 +90,10 @@ def _entry(root: Path, directory: Path, disabled: dict) -> dict:
     digest = hashlib.sha256(raw).hexdigest()
     reason = disabled.get(directory.name)
     status = "disabled" if reason else "available"
-    if "allowed-tools" in meta:
+    unsupported = sorted(UNSUPPORTED_BEHAVIOR_FIELDS & meta.keys())
+    if unsupported:
         status = "incompatible"
-        reason = "当前尚未实现 Skill allowed-tools 强制约束；此包暂不可用，不能忽略声明执行。"
+        reason = f"当前尚未实现 Skill {', '.join(unsupported)} 的运行约束；此包暂不可用，不能忽略声明执行。"
     return {
         "name": meta["name"], "description": meta["description"],
         "version": str(meta.get("metadata", {}).get("version") or digest[:12]),
@@ -151,6 +153,8 @@ def scan_packages(root: Path, *, excluded: set[str] | None = None) -> tuple[list
     try:
         if not root.is_dir():
             raise SkillPackageError("项目技能目录缺失")
+        if any((root / ".management/journal").glob("*.json")):
+            raise SkillPackageError("技能包替换需要恢复，暂不加载目录")
         disabled = disabled_skills(root)
         directories = sorted(root.iterdir())
     except (SkillPackageError, OSError) as error:

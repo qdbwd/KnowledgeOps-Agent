@@ -188,6 +188,7 @@ class RunService:
             "budgets": run.budgets,
             "status": run.status,
             "lifecycle_state": run.lifecycle_state,
+            "user_deleted_at": run.user_deleted_at.isoformat() if run.user_deleted_at else None,
             "details_available": run.lifecycle_state == "active",
             "details_expires_at": run.details_expires_at.isoformat() if run.details_expires_at else None,
             "details_summary": run.details_summary,
@@ -224,9 +225,31 @@ class RunService:
                     "selected_learning_task_id": row.selected_learning_task_id,
                 }
                 for row in session.scalars(
-                    select(Conversation).where(Conversation.deletion_state == "active").order_by(Conversation.created_at.desc(), Conversation.id)
+                    select(Conversation).where(
+                        Conversation.deletion_state == "active",
+                        # 材料需要归属ID；导入回执不等于用户已开始聊天。
+                        select(ChatMessage.id).where(
+                            ChatMessage.conversation_id == Conversation.id,
+                            ChatMessage.role == "user",
+                        ).exists(),
+                    ).order_by(Conversation.created_at.desc(), Conversation.id)
                 )
             ]
+
+    def rename_conversation(self, conversation_id: str, title: str) -> dict:
+        """与提交/删除共用锁顺序，只改显示标题，不触碰消息和运行事实。"""
+        from knowledgeops_agent.app.runs.control import lock_control
+
+        title = title.strip()
+        if not title or len(title) > 300:
+            raise ValueError("会话名称需为1至300个字符")
+        with self.sessions.begin() as session:
+            lock_control(session)
+            row = session.scalar(select(Conversation).where(Conversation.id == conversation_id).with_for_update())
+            if row is None or row.deletion_state != "active":
+                raise KeyError("conversation not found")
+            row.title = title
+            return {"id": row.id, "title": row.title}
 
     def messages(self, conversation_id: str) -> list[dict]:
         with self.sessions() as session:
@@ -391,6 +414,8 @@ class RunService:
                 if selected_task is None or selected_task.conversation_id != conversation_id:
                     raise ValueError("学习任务不属于当前会话")
             run_id = new_id()
+            if conversation.user_sequence == 0 and conversation.title in {"新对话", "材料讨论"}:
+                conversation.title = task.strip()[:30] or "新对话"
             conversation.user_sequence += 1
             run = Run(
                 id=run_id,
@@ -682,7 +707,7 @@ class RunService:
         limit: int = 20,
     ) -> dict:
         """运行列表提供独立的root/状态过滤；当前活动任务不能从最近N条猜测。"""
-        query = visible_runs(select(Run))
+        query = visible_runs(select(Run)).where(Run.user_deleted_at.is_(None))
         if conversation_id:
             query = query.where(Run.conversation_id == conversation_id)
         if root_id:

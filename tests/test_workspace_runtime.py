@@ -148,9 +148,15 @@ def test_graph_executes_frozen_skill_script_and_records_resource_use(
 
         def stream(self, messages, **kwargs):
             observations = [m for m in messages if isinstance(m, ToolMessage)]
-            if observations:
+            if observations and observations[-1].name == "execute":
                 assert "frozen-script-output" in str(observations[-1].content)
                 yield AIMessageChunk("脚本运行完成。")
+                return
+            if not observations:
+                yield AIMessageChunk("", tool_call_chunks=[{
+                    "name": "read_file", "id": "read-skill", "index": 0,
+                    "args": json.dumps({"file_path": "/skills/script-example/SKILL.md"}),
+                }])
                 return
             yield AIMessageChunk(
                 "",

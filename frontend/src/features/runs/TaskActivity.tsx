@@ -67,10 +67,14 @@ export function TaskActivity({ run, refreshKey }: { run: Run; refreshKey: string
               <h3>知识草稿与变更</h3>
               {result.data.drafts.map((draft) => (
                 <p key={draft.id}>
-                  <Link to={`/changes/${draft.id}`}>{draft.title || '查看知识变更'} →</Link>
+                  <Link to={`/knowledge/reviews/${draft.id}`}>
+                    {draft.title || '查看知识变更'} →
+                  </Link>
                 </p>
               ))}
-              {result.data.drafts_truncated && <Link to="/changes">查看全部知识变更 →</Link>}
+              {result.data.drafts_truncated && (
+                <Link to="/knowledge/reviews">查看全部知识变更 →</Link>
+              )}
             </>
           )}
           {run.details_available !== false && (

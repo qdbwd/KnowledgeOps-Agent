@@ -51,7 +51,10 @@ def asset_plan(session, conversation_id):
         (sources, db.SourceVersion, "source_version:", "versions"),
         (drafts, db.ChangeSet, "draft:", "drafts"),
     ):
-        columns = [model.id, _node(prefix, model.id).in_(nodes).label("kept")]
+        kept = _node(prefix, model.id).in_(nodes)
+        if model is db.ChangeSet:
+            kept = kept | (db.ChangeSet.status == "published")
+        columns = [model.id, kept.label("kept")]
         columns += [db.SourceVersion.content_hash] if model is db.SourceVersion else [db.ChangeSet.revision, db.ChangeSet.retention_intent]
         for row in session.execute(query.with_only_columns(*columns).order_by(model.id)).yield_per(100):
             result[category + ("_keep" if row.kept else "_delete")] += 1
@@ -62,6 +65,8 @@ def asset_plan(session, conversation_id):
 
 def remove_draft(session, draft):
     """实际拥有者图已经证明无依赖后，删除临时草稿及其派生边和修订。"""
+    if draft.status == "published":
+        raise ValueError("published identity must retain its idempotency receipt")
     session.execute(delete(db.ChangeSetRevision).where(db.ChangeSetRevision.changeset_id == draft.id))
     session.execute(delete(db.AssetReference).where(or_(db.AssetReference.origin_node == "draft:" + draft.id,
         db.AssetReference.target_node == "draft:" + draft.id)))
@@ -126,7 +131,7 @@ def collect_conversation_assets(session, conversation_id, *, limit):
                              workspace_values=scan_workspace_references(session.info.get("file_store")))
     nodes = select(graph.c.node)
     drafts = list(session.scalars(conversation_drafts(conversation_id).where(
-        db.ChangeSet.retention_intent == "temporary", ~_node("draft:", db.ChangeSet.id).in_(nodes),
+        db.ChangeSet.retention_intent == "temporary", db.ChangeSet.status != "published", ~_node("draft:", db.ChangeSet.id).in_(nodes),
     ).order_by(db.ChangeSet.id).limit(limit)))
     for draft in drafts:
         remove_draft(session, draft)

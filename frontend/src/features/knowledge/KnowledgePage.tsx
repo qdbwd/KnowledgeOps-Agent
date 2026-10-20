@@ -1,7 +1,7 @@
 import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Download, Search, Pencil, ArrowLeft, BookOpen } from 'lucide-react';
+import { Download, Search, Pencil, ArrowLeft, BookOpen, Trash2 } from 'lucide-react';
 import { messageOf, send, useResource } from '../../shared/api/api';
 import {
   Empty,
@@ -13,12 +13,15 @@ import {
 } from '../../shared/ui/components';
 import type { ChangeSet, Knowledge } from '../../shared/types/types';
 import { useWorkspace } from '../../shared/state/workspace';
+import { KnowledgeTabs } from './KnowledgeTabs';
+import { AssetDeletionDialog, AssetDeletionHistory } from '../sources/AssetDeletion';
 
 export function KnowledgePage() {
   const { version } = useWorkspace();
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
   const [archived, setArchived] = useState(false);
+  const [deleting, setDeleting] = useState<Knowledge | null>(null);
   const result = useResource<Knowledge[]>(
     `/api/knowledge?query=${encodeURIComponent(search)}&include_archived=${archived}`,
     version,
@@ -31,6 +34,7 @@ export function KnowledgePage() {
           导出 Markdown
         </a>
       </PageTitle>
+      <KnowledgeTabs />
       <div className="row flex items-center gap-3 between justify-between toolbar mb-6 flex-wrap">
         <form
           className="search flex min-w-[230px] max-w-[620px] flex-1 items-center gap-[9px] rounded-lg border border-line bg-white py-[3px] pr-[9px] pl-[15px] text-[#8fa08f] [&>input]:border-0 [&>input]:bg-transparent [&>input]:pl-0 [&>input]:text-[13px] [&>button]:whitespace-nowrap"
@@ -69,9 +73,8 @@ export function KnowledgePage() {
       ) : result.data?.length ? (
         <div className="article-grid grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-4.5">
           {result.data.map((item) => (
-            <Link
+            <article
               className="article-card flex flex-col rounded-[10px] border border-line bg-white p-5.5 text-[#2c4333] hover:border-[#a6bba1] hover:no-underline [&>h2]:mt-4.5 [&>h2]:mb-2.5 [&>h2]:text-[17px] [&>p]:flex-1 [&>p]:text-xs [&>p]:leading-[1.8] [&>p]:text-[#81907e] [&>p]:[overflow-wrap:anywhere]"
-              to={`/knowledge/${item.id || item.document_id}`}
               key={item.id || item.document_id}
             >
               <div className="row flex items-center gap-3 between justify-between">
@@ -80,7 +83,9 @@ export function KnowledgePage() {
                   {item.archived ? '已归档' : `v${item.version ?? '·'}`}
                 </span>
               </div>
-              <h2>{item.title}</h2>
+              <h2>
+                <Link to={`/knowledge/${item.id || item.document_id}`}>{item.title}</Link>
+              </h2>
               <p>{item.summary || item.snippet || item.body?.slice(0, 120)}</p>
               <div className="tags flex flex-wrap gap-[7px] [&>span]:rounded-sm [&>span]:bg-[#f1f4ec] [&>span]:px-2 [&>span]:py-[3px] [&>span]:text-[10px] [&>span]:text-[#798971]">
                 {item.category && <span>{item.category}</span>}
@@ -88,7 +93,15 @@ export function KnowledgePage() {
                   <span key={tag}>#{tag}</span>
                 ))}
               </div>
-            </Link>
+              <Button
+                className="button-quiet mt-3 self-end text-danger"
+                aria-label={`删除文章：${item.title}`}
+                onClick={() => setDeleting(item)}
+              >
+                <Trash2 size={15} />
+                删除
+              </Button>
+            </article>
           ))}
         </div>
       ) : (
@@ -99,6 +112,15 @@ export function KnowledgePage() {
             <Link to="/">通过对话整理第一篇文章 →</Link>
           )}
         </Empty>
+      )}
+      <AssetDeletionHistory kind="knowledge" />
+      {deleting && (
+        <AssetDeletionDialog
+          kind="knowledge"
+          identity={deleting.id || deleting.document_id!}
+          title={deleting.title}
+          onClose={() => setDeleting(null)}
+        />
       )}
     </>
   );
@@ -118,6 +140,7 @@ export function ArticlePage() {
   const [editing, setEditing] = useState(false);
   const [actionError, setActionError] = useState('');
   const [actionBusy, setActionBusy] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   if (article.loading) return <Loading />;
   if (article.error || !article.data) return <ErrorBox message={article.error || '文章不存在'} />;
   const item = article.data;
@@ -134,7 +157,7 @@ export function ArticlePage() {
         restore_version_id: action === 'restore' ? item.version_id : null,
       });
       refresh();
-      navigate(`/changes/${draft.id}`);
+      navigate(`/knowledge/reviews/${draft.id}`);
     } catch (error) {
       setActionError(messageOf(error));
     } finally {
@@ -167,31 +190,60 @@ export function ArticlePage() {
               </option>
             ))}
           </select>
-          <Button className="secondary button-secondary" onClick={() => setEditing(!editing)}>
+          <Button
+            disabled={Boolean(item.deleted_at)}
+            className="secondary button-secondary"
+            onClick={() => setEditing(!editing)}
+          >
             <Pencil size={15} />
             编辑
           </Button>
-          {latest && !latest.archived && item.version_id === latest.version_id && (
-            <Button
-              className="secondary button-secondary"
-              disabled={actionBusy}
-              onClick={() => prepareAction('archive')}
-            >
-              归档文章
-            </Button>
-          )}
-          {latest && (latest.archived || item.version_id !== latest.version_id) && (
-            <Button
-              className="secondary button-secondary"
-              disabled={actionBusy}
-              onClick={() => prepareAction('restore')}
-            >
-              恢复为此版本
+          {!item.deleted_at &&
+            latest &&
+            !latest.archived &&
+            item.version_id === latest.version_id && (
+              <Button
+                className="secondary button-secondary"
+                disabled={actionBusy}
+                onClick={() => prepareAction('archive')}
+              >
+                归档文章
+              </Button>
+            )}
+          {!item.deleted_at &&
+            latest &&
+            (latest.archived || item.version_id !== latest.version_id) && (
+              <Button
+                className="secondary button-secondary"
+                disabled={actionBusy}
+                onClick={() => prepareAction('restore')}
+              >
+                恢复为此版本
+              </Button>
+            )}
+          {!item.deleted_at && (
+            <Button className="button-quiet text-danger" onClick={() => setDeleting(true)}>
+              <Trash2 size={15} />
+              删除文章
             </Button>
           )}
         </div>
       </PageTitle>
       <ErrorBox message={actionError} />
+      {item.deleted_at && (
+        <p className="rounded-lg border border-line p-4 text-sm text-muted">
+          这篇文章已从知识库移除。此版本因仍被引用而保留，仅供查看。
+        </p>
+      )}
+      {deleting && (
+        <AssetDeletionDialog
+          kind="knowledge"
+          identity={item.id}
+          title={item.title}
+          onClose={() => setDeleting(false)}
+          onDeleted={() => navigate('/knowledge')}
+        />
+      )}
       {selected && selected !== history.data?.[0]?.version_id && (
         <p className="notice border-l-[3px] border-[#c0a76b] bg-[#f5f0e0] px-4 py-3 text-[13px] [overflow-wrap:anywhere]">
           正在查看历史版本。编辑保存时仍会检查当前版本，防止覆盖新内容。

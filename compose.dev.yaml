@@ -5,6 +5,8 @@ x-development: &development
   build: {context: ., target: toolchain}
   volumes:
     - .:/workspace
+    - ${SKILLS_HOST_DIRECTORY:-./skills}:/workspace/skills
+    - ./mcp:/workspace/mcp
     - uv-cache:/root/.cache/uv
     - node-modules:/workspace/frontend/node_modules
     - browser-cache:/root/.cache/ms-playwright

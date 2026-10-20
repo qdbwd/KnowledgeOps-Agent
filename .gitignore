@@ -40,6 +40,10 @@ artifacts/
 # Local engineering documents and evaluation materials are not published.
 /docs/
 /evaluation/
+# Mutable extensions stay in the project, while initial templates are tracked in skill-seeds/.
+/skills/*/
+/skills/availability.json
+/mcp/
 # Root run artifacts only; app/runs and features/runs are application source.
 /runs/
 node_modules/

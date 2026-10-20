@@ -14,13 +14,15 @@ x-backend: &backend
     # 内部路径属于挂载/备份合同；用户通过 AGENT_WORKSPACE_HOST 配置宿主位置。
     WORKSPACE_ROOT: /data/agent-workspace
     SOURCE_STORAGE_ROOT: /data/agent-workspace/uploads/originals
+    SKILLS_DIRECTORY: /workspace/skills
     CELERY_BROKER_URL: redis://redis:6379/0
     RUNTIME_REDIS_URL: ${RUNTIME_REDIS_URL-redis://redis:6379/1}
     MODEL_CALLS_ENABLED: ${MODEL_CALLS_ENABLED:-false}
   volumes:
     - ${AGENT_WORKSPACE_HOST:-./data/agent-workspace}:/data/agent-workspace
     - ${CONFIG_HOST_DIRECTORY:-./config}:/workspace/config:ro
-    - ${SKILLS_HOST_DIRECTORY:-./skills}:/workspace/skills:ro
+    - ${SKILLS_HOST_DIRECTORY:-./skills}:/workspace/skills
+    - ./mcp:/workspace/mcp
   init: true
   stop_grace_period: 30s
 
@@ -35,7 +37,8 @@ services:
       - source-data:/data/sources:ro
       - ${AGENT_WORKSPACE_HOST:-./data/agent-workspace}:/data/agent-workspace
       - ${CONFIG_HOST_DIRECTORY:-./config}:/workspace/config:ro
-      - ${SKILLS_HOST_DIRECTORY:-./skills}:/workspace/skills:ro
+      - ${SKILLS_HOST_DIRECTORY:-./skills}:/workspace/skills
+      - ./mcp:/workspace/mcp
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}

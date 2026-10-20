@@ -43,3 +43,38 @@ def test_mcp_api_refuses_inline_execution_and_embedded_credentials(client):
         assert result.status_code in {409, 422}
         assert "user:secret" not in result.text
         assert "hidden-credential" not in result.text
+
+
+def test_legacy_api_cannot_alias_managed_files(client, tmp_path, monkeypatch):
+    monkeypatch.setenv('MCP_DIRECTORY', str(tmp_path / 'mcp'))
+    path = str(tmp_path / 'mcp' / 'releases' / 'another-installation' / 'server.py')
+    for config in [
+        {'command': path}, {'command': 'python', 'args': [path]},
+        {'command': 'python', 'cwd': str(tmp_path / 'mcp' / 'data' / 'another-service')},
+    ]:
+        result = client.post('/api/mcp/connections', json={'name': 'borrowed', 'config': config})
+        assert result.status_code == 409
+        assert '受管目录' in result.json()['detail']
+
+
+def test_import_prepare_credentials_and_cancel_are_separate_http_steps(client, services, tmp_path, monkeypatch):
+    monkeypatch.setenv('MCP_DIRECTORY', str(tmp_path / 'mcp'))
+    config = {'mcpServers': {'clock': {'command': 'uvx', 'args': ['mcp-server-time'], 'env': {'KEY': 'never-echo-this'}}}}
+    preview = client.post('/api/mcp/import-preview', json={'value': config})
+    assert preview.status_code == 200 and 'never-echo-this' not in preview.text
+    assert not (tmp_path / 'mcp').exists()
+    imported = client.post('/api/mcp/import', json={'value': config})
+    assert imported.status_code == 201 and 'never-echo-this' not in imported.text
+    item = imported.json()[0]
+    url = '/api/mcp/operations/' + item['id']
+    assert item['status'] == 'imported'
+    assert client.get('/api/mcp/connections').json() == []
+    credentials = client.get(url + '/credentials')
+    assert credentials.json()[0]['source'] == 'project'
+    reference = credentials.json()[0]['reference']
+    assert client.put(url + '/credentials', json={'values': {reference: 'rotated-secret'}}).status_code == 200
+    invalid = client.put(url + '/credentials', json={'values': {reference: {'bad': 'secret-validation'}}})
+    assert invalid.status_code == 422 and 'secret-validation' not in invalid.text
+    assert client.post(url + '/prepare').json()['status'] == 'queued'
+    assert client.post(url + '/cancel').json()['status'] == 'cancelled'
+    assert len(services.gateway.ledger.records()) == 0

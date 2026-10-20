@@ -373,7 +373,7 @@ def verify_increment_configuration(services, runs) -> dict[str, bool]:
             "frozen_role": content_hash(old_role) == expected["frozen_role_hash"] and old_role["revision"] == 1,
             "frozen_policy": content_hash(snapshot["tool_policy"]) == expected["frozen_policy_hash"]
                 and snapshot["tool_policy"]["revision"] == expected["frozen_policy_revision"]
-                and policy.get()["revision"] == expected["frozen_policy_revision"] + 1
+                and policy.get()["revision"] == expected.get('current_policy_revision', expected["frozen_policy_revision"] + 1)
                 and allowed == {"builtin:read_source"},
             "execution_mode": ExecutionSettings(services.sessions).get(run.conversation_id)["permission_mode"]
                 == "auto_review",
@@ -434,6 +434,13 @@ def verify(
             config = Config("alembic.ini")
             config.attributes["connection"] = connection
             command.upgrade(config, "head")
+        extension_restore = None
+        if manifest and manifest['format'] == 3:
+            from knowledgeops_agent.persistence.extensions import restore_extensions
+
+            extension_restore = restore_extensions(services.sessions,
+                archive=backup_manifest.parent / 'extensions.tar.gz',
+                target=restore_root / '.restored-extensions')
         tables = {}
         with services.sessions() as session:
             for name, table in Base.metadata.tables.items():
@@ -492,7 +499,11 @@ def verify(
                 for row in runs
             )
         interrupted = services.jobs.recover_on_startup()
-        after_states = {row.id: services.jobs.get_run(row.id) for row in runs}
+        # 恢复核对包含已删除会话的最小运行身份；普通页面接口有意拒绝这些身份。
+        # 直接读取恢复副本中的控制事实，不能为通过校验而重新开放已删除会话。
+        with services.sessions() as session:
+            after_states = {row.id: {"status": row.status, "generation": row.generation}
+                            for row in session.scalars(select(Run))}
         stopped = {"running", "queued", "waiting_children", "waiting_input"}
         no_resume = all(
             after_states[identity]["generation"] == prior["generation"]
@@ -537,12 +548,15 @@ def verify(
         }
         if increment_configuration:
             checks["increment_configuration_restored"] = all(increment_configuration.values())
+        if extension_restore is not None:
+            checks['extensions_restored_without_execution'] = not extension_restore['dependencies_installed']
         result = {
             "database": services.engine.url.database,
             "source_database": manifest["source_database"] if manifest else None,
             "backup_manifest_sha256": manifest["manifest_sha256"] if manifest else None,
             "checks": checks,
             "increment_configuration": increment_configuration,
+            "extensions": extension_restore,
             "tables": tables,
             "files": file_checks,
             "bodies": body_checks,

@@ -377,6 +377,18 @@ def execute_run(
     return finished
 
 
+def prepare_mcp(operation_id: str, generation: int, *, services: Services | None = None):
+    """复用本worker依赖及租约；安装拥有独立持久身份，不走模型或对话预算。"""
+    from knowledgeops_agent.harness.mcp.management import MCPManagement
+
+    services = services or _services
+    if services is None:
+        raise RuntimeError("start the worker entry point before preparing MCP dependencies")
+    if _lease_connection is not None:
+        _lease_connection.check()
+    return MCPManagement(services.sessions, live_check=_lease_connection.check if _lease_connection else None).execute(operation_id, generation)
+
+
 def main() -> None:
     """先取得独占租约并中断遗留运行，再启动一个根任务消费者。"""
     global _services, _lease_connection
@@ -389,7 +401,7 @@ def main() -> None:
             logger.warning("worker startup: %s unfinished runs await explicit resume", count)
             # 顶层 -m 薄入口调用本模块 main；显式注册这里已初始化依赖的函数，
             # 避免入口包装或另一种导入路径意外取得独立的 worker 实例。
-            app = create_queue(_services.settings.celery_broker_url, handler=execute_run)
+            app = create_queue(_services.settings.celery_broker_url, handler=execute_run, mcp_handler=prepare_mcp)
             stop_watchdog = Event()
 
             def watch_lease():

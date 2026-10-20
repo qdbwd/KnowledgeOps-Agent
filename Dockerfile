@@ -22,7 +22,7 @@ COPY pyproject.toml uv.lock /workspace/
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-install-project --no-dev
 COPY README.md /workspace/
 COPY backend/src /workspace/backend/src
-COPY skills /workspace/skills
+COPY skill-seeds /workspace/skill-seeds
 COPY config /workspace/config
 COPY scripts /workspace/scripts
 COPY alembic.ini /workspace/

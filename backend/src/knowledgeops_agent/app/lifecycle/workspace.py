@@ -11,7 +11,7 @@ from knowledgeops_agent.app.lifecycle.references import replace_references
 from knowledgeops_agent.persistence.models import ArtifactRetentionReference, AssetReference
 
 _LINK = re.compile(rb"artifacts/[0-9a-f-]{36}/[0-9a-f]{64}\.txt")
-_ASSET_LINK = re.compile(rb"/(?:api/)?(?:evidence|sources|source-versions|source-segments|deliveries|changes|changesets)/[^\s\]\)<>`\"']+|/(?:api/)?runs/[^/\s]+/artifacts/[^\s\]\)<>`\"']+")
+_ASSET_LINK = re.compile(rb"/(?:api/)?(?:evidence|sources|source-versions|source-segments|deliveries|changes|changesets|knowledge)/[^\s\]\)<>`\"']+|/(?:api/)?runs/[^/\s]+/artifacts/[^\s\]\)<>`\"']+")
 # 这些不可变正文/原件由DB资产引用负责，运行内部材料由引用图负责。
 _MANAGED = {"artifacts", "uploads", "profiles", "learning", "deliveries", ".home", ".knowledgeops-temporary", ".knowledgeops-content", "knowledge/versions", "knowledge/current"}
 

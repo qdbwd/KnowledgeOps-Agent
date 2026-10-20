@@ -40,6 +40,7 @@ dependencies = [
     "tree-sitter-bash>=0.25,<0.26",
     "anyio>=4.5,<5",
     "jsonschema>=4.23,<5",
+    "packaging>=24,<27",
 ]
 
 [dependency-groups]
@@ -56,7 +57,7 @@ dev = [
 packages = ["backend/src/knowledgeops_agent"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"skills" = "knowledgeops_agent/skills"
+"skill-seeds" = "knowledgeops_agent/skill-seeds"
 "config" = "knowledgeops_agent/config"
 
 [tool.pytest.ini_options]

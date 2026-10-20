@@ -254,6 +254,7 @@ function ToolsManagement() {
         管理可用工具与任务方法，为主 Agent 和子 Agent 设置清晰的能力范围。
       </p>
       <nav className="mb-5 flex flex-wrap gap-4" aria-label="能力管理入口">
+        <Link to="/skills">管理技能包</Link>
         <Link to="/mcp">管理MCP连接</Link>
         <Link to="/tools/groups">管理工具组</Link>
         <Link to="/subagents">管理子Agent</Link>

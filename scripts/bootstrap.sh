@@ -8,5 +8,6 @@ if [ "${1:-production}" = "development" ]; then
 fi
 export MODEL_CALLS_ENABLED=false
 alembic upgrade head
+python scripts/initialize_skills.py
 python scripts/migrate_accounting.py --lifecycle
 python scripts/migrate_workspace.py --legacy-source-root /data/sources --enable-new-tools

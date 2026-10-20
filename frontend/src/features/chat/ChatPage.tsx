@@ -30,6 +30,8 @@ import { ConversationLearning } from '../learning/LearningPage';
 import { RunPauseControl } from '../runs/RunPauseControl';
 import { RunQuestions } from '../runs/RunQuestions';
 import { RunChildren } from '../runs/RunChildren';
+import { DeleteConversationDialog } from './DeleteConversationDialog';
+import { RunOutcome } from '../runs/RunOutcome';
 
 type ConversationSettings = { permission_mode: string; reasoning_effort: string; revision: number };
 
@@ -283,6 +285,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   // 网络失败重试使用同一个 key；只有成功提交或输入变化后才换 key。
+  const [deleting, setDeleting] = useState(false);
   const requestKey = useRef({ content: '', id: '' });
   const onChanged = useCallback(() => refresh(), [refresh]);
   const materialConversation = useRef<string | null>(null);
@@ -295,7 +298,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
       if (!id) {
         id = (
           await send<Conversation>('/api/conversations', {
-            title: content.trim().slice(0, 30) || '材料讨论',
+            title: '新对话',
           })
         ).id;
         materialConversation.current = id;
@@ -401,9 +404,9 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
   const pending =
     drafts.data?.filter((draft) => ['draft', 'approved'].includes(draft.status)) ?? [];
   return (
-    <div className="chat-page mx-auto flex min-h-0 w-full max-w-[1080px] flex-1 flex-col">
+    <div className="chat-page flex min-h-0 w-full flex-1 flex-col">
       <div
-        className="chat-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges]"
+        className="chat-scroll scrollbar-subtle min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges]"
         ref={scrollArea}
         onScroll={() => {
           const area = scrollArea.current;
@@ -413,19 +416,22 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
           setAwayFromBottom(away);
         }}
       >
-        <div className="chat-content px-3 pb-6 max-md:px-0.5" ref={historyArea}>
+        <div
+          className="chat-content mx-auto w-full max-w-[1168px] px-11 pt-[35px] pb-6 max-lg:px-7 max-lg:pt-7 max-md:px-4 max-md:pt-3"
+          ref={historyArea}
+        >
           <PageTitle
             eyebrow="THINK · RESEARCH · REMEMBER"
             title={conversationId ? '继续这段思考' : '把探索变成可积累的知识'}
           >
             {conversationId ? (
               <div className="row flex items-center gap-3 wrap flex-wrap">
-                <Link
+                <Button
                   className="button secondary button-secondary small text-xs"
-                  to={`/chat/${conversationId}/deletion`}
+                  onClick={() => setDeleting(true)}
                 >
                   删除会话
-                </Link>
+                </Button>
               </div>
             ) : (
               <span className="workspace-label rounded-[5px] border border-line px-2.5 py-[5px] text-[11px] whitespace-nowrap text-[#7b887f] max-lg:hidden">
@@ -433,6 +439,16 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
               </span>
             )}
           </PageTitle>
+          {deleting && conversationId && (
+            <DeleteConversationDialog
+              conversationId={conversationId}
+              onClose={() => setDeleting(false)}
+              onDeleted={() => {
+                setDeleting(false);
+                navigate('/', { replace: true });
+              }}
+            />
+          )}
           {conversationId && <ConversationLearning conversationId={conversationId} />}
           <div className="conversation mx-auto w-full max-w-[840px] flex-1">
             {!conversationId && (
@@ -596,7 +612,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             {!active && runs.data?.[0] && (
               <div className="run-summary mt-2.5 mb-5 flex flex-wrap items-center gap-[9px] text-xs [&>p]:m-0 [&>p]:w-full [&>p]:text-[#8c594b]">
                 <Badge status={runs.data[0].status} />
-                {runs.data[0].outcome.kind && <Badge status={runs.data[0].outcome.kind} />}
+                <RunOutcome run={runs.data[0]} refreshKey={version} />
                 <Link to={`/runs/${runs.data[0].id}`}>任务详情 →</Link>
                 {runs.data[0].stop_reason && <p>{runs.data[0].stop_reason}</p>}
               </div>
@@ -604,7 +620,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             {pending.map((draft) => (
               <Link
                 className="draft-link my-3.5 flex items-center gap-[15px] rounded-lg border border-[#d8e1d0] bg-[#f8faf1] px-5 py-4.5 text-[#52673f] [&>span:nth-child(2)]:flex-1 [&_strong]:block [&_small]:mt-1 [&_small]:block [&_small]:text-[11px] [&_small]:text-[#879375] [&>span:last-child]:text-xs"
-                to={`/changes/${draft.id}`}
+                to={`/knowledge/reviews/${draft.id}`}
                 key={draft.id}
               >
                 <FileText size={20} />
@@ -636,7 +652,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
           </div>
         </div>
       </div>
-      <div className="composer-dock relative mx-auto w-full max-w-[840px] shrink-0 pt-3">
+      <div className="composer-dock relative mx-auto w-full max-w-[928px] shrink-0 px-11 pt-3 max-lg:max-w-[896px] max-lg:px-7 max-md:px-2.5">
         {awayFromBottom && (
           <Button
             type="button"

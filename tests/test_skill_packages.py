@@ -52,6 +52,7 @@ def test_scripts_assets_and_templates_are_frozen_and_execute_without_new_tool(tm
     )
     (skill / "assets/data.bin").write_bytes(b"\xff\x00\x81")
     frozen = FrozenSkillBackend(snapshot_files(load_skills()))
+    assert frozen.read("/skills/example/SKILL.md").error is None
     script.write_text("raise RuntimeError('new deployment must not run')")
     store = WorkspaceBackend(tmp_path / "workspace", skills=frozen)
     result = store.execute('python "$SKILLS_DIR/example/scripts/run.py"; printf "%s" "$SKILLS_DIR"')

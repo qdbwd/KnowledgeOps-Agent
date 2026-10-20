@@ -7,7 +7,7 @@ from knowledgeops_agent.app.lifecycle.references import replace_references
 from knowledgeops_agent.app.runs.control import lock_control
 from knowledgeops_agent.persistence import models as db
 
-CATALOG_STATE = "asset-references-v4"
+CATALOG_STATE = "asset-references-v5"
 
 # 身份格式与在线保存路径一致；额外资产沿明确所属类型命名，避免互相覆盖。
 SOURCES = (

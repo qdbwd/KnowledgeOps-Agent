@@ -88,6 +88,7 @@ def test_resource_snapshot_has_no_live_clients_or_secrets_and_detects_corruption
         "format_version",
         "policy",
         "skills",
+        "skill_usage_version",
         "prompts",
         "model",
         "preferences",

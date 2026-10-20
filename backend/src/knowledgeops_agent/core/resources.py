@@ -33,3 +33,8 @@ def resource_path(variable: str, default: Path) -> Path:
     """返回部署声明的路径；无覆盖时保留包内默认值，方便离线测试和安装分发。"""
     configured = os.environ.get(variable, "").strip()
     return Path(configured).expanduser().resolve() if configured else default
+
+
+def managed_resource_root(name: str) -> Path:
+    """可变目录缺失时保持缺失，不能回退到镜像模板而复活用户已移除的包。"""
+    return (source_project_root() or Path("/workspace")) / name

@@ -30,6 +30,7 @@ export type Run = {
   details_available?: boolean;
   details_expires_at?: string | null;
   lifecycle_state?: string;
+  user_deleted_at?: string | null;
   resumable?: boolean;
   input: {
     publication_mode: 'ask' | 'preview' | 'direct';
@@ -77,6 +78,7 @@ export type Guidance = {
   result: { reason?: string; authorization_error?: string };
 };
 export type Knowledge = {
+  deleted_at?: string | null;
   id: string;
   document_id: string;
   version_id: string;
@@ -104,6 +106,7 @@ export type Change = {
   relations?: { target_id: string; label: string }[];
 };
 export type ChangeSet = {
+  content_removed?: boolean;
   id: string;
   root_id: string;
   status: string;

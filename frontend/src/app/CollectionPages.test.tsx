@@ -110,6 +110,7 @@ it('loads older runs with a cursor and retains already displayed entries', async
     'fetch',
     vi.fn(async (url: string) => {
       seen.push(url);
+      if (url.startsWith('/api/asset-deletions')) return Response.json([]);
       const old = url.includes('cursor=older');
       return Response.json({
         items: [

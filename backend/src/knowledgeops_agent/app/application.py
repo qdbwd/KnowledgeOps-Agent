@@ -12,10 +12,13 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 from knowledgeops_agent.app.dependencies import svc
+from knowledgeops_agent.app.mcp_operations import MCPPreparationPublisher
 from knowledgeops_agent.app.routes.assets import router as assets_router
 from knowledgeops_agent.app.routes.changesets import router as changesets_router
 from knowledgeops_agent.app.routes.conversations import router as conversations_router
@@ -25,6 +28,7 @@ from knowledgeops_agent.app.routes.learning import learning_router
 from knowledgeops_agent.app.routes.mcp import router as mcp_router
 from knowledgeops_agent.app.routes.memory import router as memory_router
 from knowledgeops_agent.app.routes.runs import router as runs_router
+from knowledgeops_agent.app.routes.skills import router as skills_router
 from knowledgeops_agent.app.routes.sources import router as sources_router
 from knowledgeops_agent.app.routes.subagents import router as subagents_router
 from knowledgeops_agent.app.routes.system import router as system_router
@@ -57,18 +61,24 @@ def create_app(*, services: Services | None = None, publish_jobs: bool = True) -
         stop = asyncio.Event()
 
         async def publish_loop():
-            publisher = OutboxPublisher(
-                dependencies.sessions, create_queue(dependencies.settings.celery_broker_url)
-            )
+            queue = create_queue(dependencies.settings.celery_broker_url)
+            publisher = OutboxPublisher(dependencies.sessions, queue)
+            mcp_publisher = MCPPreparationPublisher(dependencies.sessions, queue)
             while not stop.is_set():
                 try:
                     await asyncio.to_thread(publisher.publish_due)
                 except Exception as exc:
                     logger.warning("job publisher unavailable (%s)", type(exc).__name__)
                 try:
+                    await asyncio.to_thread(mcp_publisher.publish_due)
+                except Exception as exc:
+                    logger.warning("MCP preparation publisher unavailable (%s)", type(exc).__name__)
+                try:
                     result = await asyncio.to_thread(dependencies.lifecycle.tick)
                     if (result.get("scan") or {}).get("error"):
                         logger.warning("lifecycle scan needs retry (%s)", result["scan"]["error"])
+                    if (result.get("skills") or {}).get("error"):
+                        logger.warning("skill operation recovery needs retry (%s)", result["skills"]["error"])
                 except Exception as exc:
                     logger.warning("lifecycle maintenance unavailable (%s)", type(exc).__name__)
                 try:
@@ -89,6 +99,13 @@ def create_app(*, services: Services | None = None, publish_jobs: bool = True) -
     app = FastAPI(title="KnowledgeOps", version="0.1.0", lifespan=lifespan)
     app.include_router(learning_router())
     app.include_router(execution_router)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, error: RequestValidationError):
+        # 新MCP导入/密钥表单会短暂携带原值，验证响应不能回显input/context。
+        if request.url.path.startswith('/api/mcp/'):
+            return JSONResponse({'detail': 'MCP请求格式无效，请检查字段和参数类型'}, status_code=422)
+        return await request_validation_exception_handler(request, error)
 
     @app.middleware("http")
     async def same_origin_writes(request: Request, call_next):
@@ -172,6 +189,7 @@ def create_app(*, services: Services | None = None, publish_jobs: bool = True) -
     app.include_router(system_router)
     app.include_router(conversations_router)
     app.include_router(tools_router)
+    app.include_router(skills_router)
     app.include_router(subagents_router)
     app.include_router(mcp_router)
     app.include_router(runs_router)
