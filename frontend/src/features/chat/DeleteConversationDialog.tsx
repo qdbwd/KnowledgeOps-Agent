@@ -6,7 +6,7 @@ import { Button } from '../../shared/ui/Button';
 import { Dialog } from '../../shared/ui/Dialog';
 import { ErrorBox, Loading } from '../../shared/ui/components';
 import { useBackgroundDeletions } from './BackgroundDeletions';
-import { clearComposerDraft } from './composerDraft';
+import { removeConversationDraft } from './drafts/session';
 
 type Preview = {
   title: string;
@@ -36,7 +36,7 @@ function blockerText(reason: string) {
   return '仍有未结束、暂停、待回答或待审批的执行，请先处理。';
 }
 
-/** 保留删除预览和并发校验；接受后立即离开会话，清理由已有持久作业完成。 */
+/** 保留删除预览和并发校验；接受后由入口处理导航，清理由已有持久作业完成。 */
 export function DeleteConversationDialog({
   conversationId,
   onClose,
@@ -77,7 +77,9 @@ export function DeleteConversationDialog({
                   'DELETE',
                 );
                 if (job.status !== 'completed') track(conversationId);
-                clearComposerDraft(conversationId);
+                // 删除已被接受；本地存储故障不能冒充服务端删除失败。
+                // 仍打开的会话会在聚焦/再次读取时核对 404 并清除本地旧输入。
+                await removeConversationDraft(conversationId).catch(() => {});
                 refresh();
                 onDeleted();
               } catch (failure) {
@@ -114,7 +116,7 @@ export function DeleteConversationDialog({
                 继续保留：{preview.assets.versions_keep} 个材料版本、{preview.assets.drafts_keep}{' '}
                 份草稿。它们有独立保存意图、仍被引用，或属于归属待核对的旧数据。
               </p>
-              <Link to={`/sources?conversation_id=${conversationId}`}>
+              <Link to={`/sources?conversation_id=${conversationId}`} onClick={onClose}>
                 查看会话材料并选择独立保存
               </Link>
             </div>

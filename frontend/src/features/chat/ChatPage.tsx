@@ -1,6 +1,6 @@
 import { Button } from '../../shared/ui/Button';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowUp, FileText, Sparkles, Square, Activity, ArrowDown } from 'lucide-react';
 import {
   api,
@@ -14,9 +14,7 @@ import type { CollectionPage } from '../../shared/api/api';
 import { Badge, Empty, ErrorBox, Loading, Markdown, PageTitle } from '../../shared/ui/components';
 import type {
   ChangeSet,
-  Conversation,
   Guidance,
-  Message,
   Run,
   RunEvent,
   Source,
@@ -25,13 +23,16 @@ import { useWorkspace } from '../../shared/state/workspace';
 import { ExecutionApprovals } from '../permissions/ExecutionApprovals';
 import { ContextUsage } from './ContextUsage';
 import { ComposerControls } from './ComposerControls';
-import { clearComposerDraft, readComposerDraft, saveComposerDraft } from './composerDraft';
+import { useComposerDraft } from './useComposerDraft';
+import { ComposerRecovery } from './ComposerRecovery';
+import type { DraftData } from './drafts/store';
 import { ConversationLearning } from '../learning/LearningPage';
 import { RunPauseControl } from '../runs/RunPauseControl';
 import { RunQuestions } from '../runs/RunQuestions';
 import { RunChildren } from '../runs/RunChildren';
 import { DeleteConversationDialog } from './DeleteConversationDialog';
 import { RunOutcome } from '../runs/RunOutcome';
+import { useMessageHistory } from './useMessageHistory';
 
 type ConversationSettings = { permission_mode: string; reasoning_effort: string; revision: number };
 
@@ -156,10 +157,37 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
   const { conversationId } = useParams();
   const navigate = useNavigate();
   const { version, refresh } = useWorkspace();
-  const messages = useResource<Message[]>(
-    conversationId ? `/api/conversations/${conversationId}/messages` : null,
-    version,
-  );
+  const [searchParams, setSearchParams] = useSearchParams();
+  const anchor = searchParams.get('message');
+  const composer = useComposerDraft(conversationId, searchParams.get('draft') ?? undefined);
+  const { state: composerState, session: composerSession } = composer;
+  const { content, selected, mode, knowledgeOnly, delegation, auxiliary, reasoning, permission } = composerState.data;
+  const edit = <K extends keyof DraftData>(key: K, value: DraftData[K]) => composerSession.edit({ [key]: value });
+  const setContent = (value: string) => edit('content', value);
+  const setSelected = (value: string[]) => edit('selected', value);
+  const completed = useRef<string | null>(null);
+  useEffect(() => {
+    const row = composerState.record;
+    const result = composerState.completed;
+    if (result && completed.current !== result.id) {
+      completed.current = result.id;
+      refresh();
+      if (result.intent === 'materials') navigate(`/sources?conversation_id=${encodeURIComponent(result.conversationId)}`);
+      else if (conversationId !== result.conversationId) navigate(`/chat/${result.conversationId}`, { replace: true });
+      return;
+    }
+    if (conversationId || !row || row.deleted) return;
+    if (row.conversationId && !row.pending) {
+      navigate(`/chat/${row.conversationId}`, { replace: true });
+    } else if (row.scope.startsWith('new:') && searchParams.get('draft') !== row.scope.slice(4)) {
+      const next = new URLSearchParams(searchParams);
+      next.set('draft', row.scope.slice(4));
+      setSearchParams(next, { replace: true });
+    }
+  }, [composerState.record, composerState.completed, conversationId, navigate, refresh, searchParams, setSearchParams]);
+  const scrollArea = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
+  const messages = useMessageHistory(conversationId, version, anchor, scrollArea, following);
   const runs = usePagedResource<Run>(
     conversationId ? `/api/runs/page?conversation_id=${conversationId}&roots_only=true` : null,
     version,
@@ -194,11 +222,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
     conversationId ? `/api/changesets/page?conversation_id=${conversationId}` : null,
     version,
   );
-  const [savedDraft] = useState(() => readComposerDraft(conversationId));
-  const [content, setContent] = useState(savedDraft.content ?? '');
-  const scrollArea = useRef<HTMLDivElement>(null);
   const historyArea = useRef<HTMLDivElement>(null);
-  const following = useRef(true);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const toBottom = useCallback(() => {
     const area = scrollArea.current;
@@ -207,10 +231,10 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
     setAwayFromBottom(false);
   }, []);
   useEffect(() => {
-    following.current = true;
-    const frame = requestAnimationFrame(toBottom);
+    following.current = !anchor;
+    const frame = requestAnimationFrame(() => { if (!anchor) toBottom(); });
     return () => cancelAnimationFrame(frame);
-  }, [conversationId, toBottom]);
+  }, [conversationId, anchor, toBottom]);
   useEffect(() => {
     // 流式内容增长时只跟随已在底部的读者，不把正在翻看旧消息的人拉回去。
     const update = () => {
@@ -224,12 +248,6 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
       observer?.disconnect();
     };
   }, [messages.data, toBottom]);
-  const [mode, setMode] = useState<'ask' | 'preview' | 'direct'>(savedDraft.mode ?? 'ask');
-  const [knowledgeOnly, setKnowledgeOnly] = useState(savedDraft.knowledgeOnly ?? false);
-  const [delegation, setDelegation] = useState(savedDraft.delegation ?? true);
-  const [auxiliary, setAuxiliary] = useState(savedDraft.auxiliary ?? false);
-  const [reasoning, setReasoning] = useState('default');
-  const [permission, setPermission] = useState('ask');
   const [settingsVersion, setSettingsVersion] = useState(0);
   const [savedSettings, setSavedSettings] = useState<{
     id: string;
@@ -258,8 +276,8 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
     : permission;
   async function changeSetting(field: 'permission_mode' | 'reasoning_effort', value: string) {
     if (!conversationId) {
-      if (field === 'permission_mode') setPermission(value);
-      else setReasoning(value);
+      if (field === 'permission_mode') edit('permission', value);
+      else edit('reasoning', value);
       return;
     }
     if (!currentSettings || settingBusy) return;
@@ -281,46 +299,20 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
       setSettingsVersion((value) => value + 1);
     }
   }
-  const [selected, setSelected] = useState<string[]>(savedDraft.selected ?? []);
-  const [busy, setBusy] = useState(false);
+  const [operationBusy, setBusy] = useState(false);
+  const busy = operationBusy || composerState.busy;
   const [error, setError] = useState('');
-  // 网络失败重试使用同一个 key；只有成功提交或输入变化后才换 key。
   const [deleting, setDeleting] = useState(false);
-  const requestKey = useRef({ content: '', id: '' });
   const onChanged = useCallback(() => refresh(), [refresh]);
-  const materialConversation = useRef<string | null>(null);
   async function manageMaterials() {
     if (busy || settingBusy) return;
     setBusy(true);
     setError('');
     try {
-      let id = conversationId ?? materialConversation.current;
-      if (!id) {
-        id = (
-          await send<Conversation>('/api/conversations', {
-            title: '新对话',
-          })
-        ).id;
-        materialConversation.current = id;
-      }
-      // 原聊天为空也先建立明确归属；保存设置失败重试复用已创建的会话。
-      if (!conversationId) {
-        const settings = await api<ConversationSettings>(
-          `/api/conversations/${id}/runtime-settings`,
-        );
-        await send(
-          `/api/conversations/${id}/runtime-settings`,
-          {
-            expected_revision: settings.revision,
-            permission_mode: permission,
-            reasoning_effort: reasoning,
-          },
-          'PATCH',
-        );
-      }
-      saveComposerDraft(id, { content, selected, mode, knowledgeOnly, delegation, auxiliary });
-      refresh();
-      navigate(`/sources?conversation_id=${encodeURIComponent(id)}`);
+      if (conversationId) {
+        await composerSession.flush();
+        navigate(`/sources?conversation_id=${encodeURIComponent(conversationId)}`);
+      } else await composerSession.submit('materials');
     } catch (failure) {
       setError(messageOf(failure));
     } finally {
@@ -332,54 +324,17 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
       !content.trim() ||
       busy ||
       settingBusy ||
+      !composerState.ready || !composerState.persisted || composerState.record?.pending ||
+      composerState.record?.deleted || Boolean(composerState.record?.conflicts.length) ||
       (conversationId && (!defaults.data || defaults.loading))
     )
       return;
     setBusy(true);
     setError('');
     try {
-      let id = conversationId;
-      if (!id) {
-        id = (
-          await send<Conversation>('/api/conversations', { title: content.trim().slice(0, 30) })
-        ).id;
-        await send(
-          `/api/conversations/${id}/runtime-settings`,
-          { expected_revision: 0, permission_mode: permission, reasoning_effort: reasoning },
-          'PATCH',
-        );
-        navigate(`/chat/${id}`, { replace: true });
-      }
-      const fingerprint = JSON.stringify([
-        id,
-        content,
-        mode,
-        knowledgeOnly,
-        delegation,
-        auxiliary,
-        chosenReasoning,
-        selected,
-      ]);
-      if (requestKey.current.content !== fingerprint)
-        requestKey.current = { content: fingerprint, id: crypto.randomUUID() };
-      await send(`/api/conversations/${id}/messages`, {
-        content,
-        request_key: requestKey.current.id,
-        publication_mode: mode,
-        knowledge_only: knowledgeOnly,
-        delegation,
-        auxiliary,
-        reasoning_effort: chosenReasoning,
-        source_ids: selected,
-      });
-      // 服务已确认接受；下一次相同文字也是新意图。异常分支保留原 key，
-      // 以便网络断开后重试不会在服务端生成重复任务。
-      requestKey.current = { content: '', id: '' };
+      composerSession.edit({ reasoning: chosenReasoning, permission: chosenPermission });
       following.current = true;
-      setContent('');
-      setSelected([]);
-      clearComposerDraft(id);
-      refresh();
+      await composerSession.submit();
     } catch (error) {
       setError(messageOf(error));
     } finally {
@@ -459,7 +414,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
                 <h2>从一个问题，或一份材料开始。</h2>
                 <p>一起研究、整理和维护知识。每一次结论，都可以回到它的来源。</p>
                 <div className="suggestions flex flex-wrap justify-center gap-3 [&>a]:flex [&>a]:items-center [&>a]:gap-3 [&>a]:rounded-lg [&>a]:border [&>a]:border-[#dce4d6] [&>a]:bg-[#fafbf7] [&>a]:px-[15px] [&>a]:py-3 [&>a]:text-xs [&>a]:font-normal [&>a]:text-[#6d7e6b] [&>button]:flex [&>button]:gap-3 [&>button]:border-[#dce4d6] [&>button]:bg-[#fafbf7] [&>button]:px-[15px] [&>button]:py-3 [&>button]:text-xs [&>button]:font-normal [&>button]:text-[#6d7e6b]">
-                  <Button
+                  <Button disabled={!composerState.ready || composerState.record?.deleted}
                     onClick={() => setContent('帮我梳理知识库中已有的主题，指出值得补充的内容。')}
                   >
                     梳理已有知识 <ArrowUp size={14} />
@@ -482,6 +437,9 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
               }
             />
             {messages.loading && !messages.data && <Loading />}
+            {messages.notice && <p role="status" className="text-center text-xs text-muted">{messages.notice}</p>}
+            {messages.older && <div className="mb-4 text-center"><Button className="button-quiet text-xs" disabled={messages.loading}
+              onClick={() => void messages.loadOlder()}>加载更早的消息</Button></div>}
             {conversationId && messages.data?.length === 0 && (
               <Empty title="这段对话还没有消息">在下方写下问题，或关联材料开始整理。</Empty>
             )}
@@ -489,10 +447,12 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
               <article
                 className={`message mt-[15px] mb-6.5 [&_.markdown]:text-sm ${message.role} ${message.role === 'user' ? 'ml-[12%] rounded-[10px] bg-[#eaf0e6] px-5.5 py-4.5 max-md:ml-[5%]' : 'py-3'}`}
                 key={message.id}
+                data-message-id={message.id}
+                aria-label={anchor === message.id ? '搜索命中的消息' : undefined}
               >
                 <div className="message-label mb-3 flex justify-between text-xs font-semibold text-[#45644a] [&>span]:text-[10px] [&>span]:font-normal [&>span]:text-[#a3aca0]">
-                  {message.role === 'user' ? '你' : 'KnowledgeOps'}
-                  <span>
+                  {message.role !== 'user' && 'KnowledgeOps'}
+                  <span className="ml-auto">
                     {new Date(message.created_at).toLocaleTimeString([], {
                       hour: '2-digit',
                       minute: '2-digit',
@@ -502,6 +462,8 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
                 <Markdown text={message.content} />
               </article>
             ))}
+            {messages.newer && <div className="my-4 text-center"><Button className="button-quiet text-xs" disabled={messages.loading}
+              onClick={() => void messages.loadNewer()}>加载更新的消息</Button></div>}
             {active && <LiveRun key={active.id} initial={active} onChanged={onChanged} />}
             {runs.data
               .filter((run) => ['paused', 'waiting_input'].includes(run.status))
@@ -653,12 +615,13 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
         </div>
       </div>
       <div className="composer-dock relative mx-auto w-full max-w-[928px] shrink-0 px-11 pt-3 max-lg:max-w-[896px] max-lg:px-7 max-md:px-2.5">
-        {awayFromBottom && (
+        <ComposerRecovery state={composerState} session={composerSession} />
+        {(awayFromBottom || messages.newer) && (
           <Button
             type="button"
             className="scroll-to-bottom absolute top-[-39px] left-[calc(50%_-_18px)] z-[4] size-9 rounded-full p-0 shadow-[0_3px_12px_#254b3518] secondary button-secondary"
             aria-label="回到最新消息"
-            onClick={toBottom}
+            onClick={() => { if (messages.newer) void messages.latest(); else toBottom(); }}
           >
             <ArrowDown size={19} />
           </Button>
@@ -678,6 +641,7 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             className="min-h-16 max-h-[min(260px,30dvh)] resize-y border-0 p-0 text-[15px] placeholder:text-[#9aa69a] focus:outline-none"
             placeholder="提出问题，或说明希望如何整理知识…"
             rows={3}
+            disabled={!composerState.ready || composerState.record?.deleted}
             value={content}
             onChange={(e) => setContent(e.target.value)}
             onKeyDown={(event) => {
@@ -703,19 +667,21 @@ export function ChatPage({ model, modelEnabled }: { model?: string; modelEnabled
             changeSetting={(field, value) => void changeSetting(field, value)}
             capabilities={capabilities.data}
             mode={mode}
-            setMode={setMode}
+            setMode={(value) => edit('mode', value)}
             knowledgeOnly={knowledgeOnly}
-            setKnowledgeOnly={setKnowledgeOnly}
+            setKnowledgeOnly={(value) => edit('knowledgeOnly', value)}
             delegation={delegation}
-            setDelegation={setDelegation}
+            setDelegation={(value) => edit('delegation', value)}
             auxiliary={auxiliary}
-            setAuxiliary={setAuxiliary}
+            setAuxiliary={(value) => edit('auxiliary', value)}
             materials={materials.data ?? []}
             selected={selected}
             setSelected={setSelected}
             busy={busy}
             disabled={
-              busy || settingBusy || Boolean(conversationId && defaults.loading) || !content.trim()
+              busy || settingBusy || Boolean(conversationId && defaults.loading) || !content.trim() ||
+              !composerState.ready || !composerState.persisted || Boolean(composerState.record?.pending) ||
+              Boolean(composerState.record?.deleted) || Boolean(composerState.record?.conflicts.length)
             }
             context={
               conversationId ? (

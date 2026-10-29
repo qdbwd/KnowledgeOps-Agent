@@ -11,16 +11,18 @@ import {
   useOutletContext,
   useParams,
 } from 'react-router-dom';
-import { BookOpen, Files, GitPullRequest, MessageSquare, Plus, Sprout } from 'lucide-react';
+import { BookOpen, Files, GitPullRequest, MessageSquare, Plus, Settings, Sprout } from 'lucide-react';
 import { useResource } from '../shared/api/api';
 import { ChatPage } from '../features/chat/ChatPage';
 import { BackgroundDeletions } from '../features/chat/BackgroundDeletions';
 import { ConversationLink } from '../features/chat/ConversationLink';
+import { ConversationsPage } from '../features/chat/ConversationsPage';
 import { ArticlePage, KnowledgePage } from '../features/knowledge/KnowledgePage';
 import { ChangesPage, ChangePage } from '../features/changes/ChangesPage';
 import { SourcesPage, SourcePage, EvidencePage } from '../features/sources/SourcesPage';
 import { WorkspaceFilePage } from '../features/sources/WorkspaceFilePage';
-import { RunsPage, RunPage, RunArtifactPage } from '../features/runs/RunsPage';
+import { RunPage, RunArtifactPage } from '../features/runs/RunsPage';
+import { ActivityRunsPage } from '../features/activity/ActivityRunsPage';
 import { RunDiagnosticsPage } from '../features/runs/RunDiagnosticsPage';
 import { PreferencesPage } from '../features/memory/PreferencesPage';
 import { LearningPage } from '../features/learning/LearningPage';
@@ -29,8 +31,10 @@ import { MCPPage } from '../features/mcp/MCPPage';
 import { SubagentsPage } from '../features/subagents/SubagentsPage';
 import { SubagentEditorPage } from '../features/subagents/SubagentEditorPage';
 import { ToolsPage } from '../features/tools/ToolsPage';
+import { ApplicationActivity, ActivityIndicator } from '../features/activity/ApplicationActivity';
 import { SkillsPage } from '../features/skills/SkillsPage';
 import { ToolGroupsPage } from '../features/tools/ToolGroupsPage';
+import { SystemPage } from '../features/system/SystemPage';
 import { ErrorBox } from '../shared/ui/components';
 import { WorkspaceContext } from '../shared/state/workspace';
 import type { Conversation } from '../shared/types/types';
@@ -42,13 +46,16 @@ function WorkspaceLayout() {
   const [version, setVersion] = useState(0);
   const refresh = useCallback(() => setVersion((value) => value + 1), []);
   const workspace = useMemo(() => ({ version, refresh }), [version, refresh]);
-  const conversations = useResource<Conversation[]>('/api/conversations', version);
+  const conversations = useResource<{ items: Conversation[] }>('/api/conversations/page?limit=12', version);
+  // 目录响应异常时外壳仍要能渲染：缺 items 只表示最近列表为空，不整页崩溃。
+  const recent = conversations.data?.items ?? [];
   const settings = useResource<{ model: string; model_calls_enabled: boolean }>(
     '/api/settings',
     version,
   );
   return (
     <WorkspaceContext.Provider value={workspace}>
+      <ApplicationActivity conversationIds={recent.map((item) => item.id)} version={version}>
       <BackgroundDeletions>
         <div className="app-shell flex min-h-screen max-md:block has-[.chat-page]:h-dvh has-[.chat-page]:overflow-hidden max-md:has-[.chat-page]:flex max-md:has-[.chat-page]:flex-col">
           <aside className="sidebar fixed inset-y-0 left-0 flex w-[244px] shrink-0 flex-col overflow-y-auto bg-sidebar px-4.5 pt-7 pb-5 text-[#d5e1d9] max-lg:w-[214px] max-md:static max-md:w-auto max-md:p-[15px]">
@@ -68,7 +75,7 @@ function WorkspaceLayout() {
             </Link>
             <Link
               className="new-chat mb-[23px] flex items-center justify-center gap-2 rounded-lg border border-[#526d60] p-2.5 text-sm text-[#e3ece1] max-md:mb-3 max-md:inline-flex"
-              to="/"
+              to="/?draft=new"
             >
               <Plus size={17} />
               开始新对话
@@ -96,6 +103,7 @@ function WorkspaceLayout() {
               <NavLink className={navigationStyle} to="/runs">
                 <GitPullRequest size={18} />
                 运行记录
+                <ActivityIndicator />
               </NavLink>
               <NavLink className={navigationStyle} to="/memories">
                 <BookOpen size={18} />
@@ -117,24 +125,30 @@ function WorkspaceLayout() {
                 <Files size={18} />
                 工具服务
               </NavLink>
+              <NavLink className={navigationStyle} to="/system">
+                <Settings size={18} />
+                系统与维护
+              </NavLink>
             </nav>
             <div className="recent mt-[35px] min-h-0 overflow-y-auto px-[7px] max-md:hidden">
               <p className="mx-[7px] mt-0 mb-2.5 text-[11px] tracking-[1px] text-[#86a093]">
                 最近对话
               </p>
-              {conversations.data?.slice(0, 12).map((chat) => (
+              {recent.map((chat) => (
                 <ConversationLink key={chat.id} chat={chat} />
               ))}
-              {conversations.data?.length === 0 && (
+              {recent.length === 0 && (
                 <span className="muted text-muted small text-xs">从右侧开始第一段对话</span>
               )}
+              <Link className="mt-3 block px-[7px] text-xs text-[#bbd2c3]" to="/conversations">查看全部会话与搜索 →</Link>
             </div>
             <details className="mobile-conversations mt-2.5 hidden text-xs max-md:block open:max-h-[220px] open:overflow-auto">
               <summary>最近对话</summary>
-              {conversations.data?.map((chat) => (
+              {recent.map((chat) => (
                 <ConversationLink key={chat.id} chat={chat} />
               ))}
-              {conversations.data?.length === 0 && <p>还没有对话。</p>}
+              {recent.length === 0 && <p>还没有对话。</p>}
+              <Link className="mt-2 block text-[#bbd2c3]" to="/conversations">查看全部会话与搜索 →</Link>
             </details>
           </aside>
           <main className="main ml-[244px] min-w-0 flex-1 px-11 pt-[35px] pb-[42px] max-lg:ml-[214px] max-lg:p-7 max-md:ml-0 max-md:px-4 max-md:py-6 has-[.chat-page]:flex has-[.chat-page]:min-h-0 has-[.chat-page]:flex-col has-[.chat-page]:px-0 has-[.chat-page]:pt-0 has-[.chat-page]:pb-4 max-md:has-[.chat-page]:pb-[max(10px,env(safe-area-inset-bottom))]">
@@ -145,6 +159,7 @@ function WorkspaceLayout() {
           </main>
         </div>
       </BackgroundDeletions>
+      </ApplicationActivity>
     </WorkspaceContext.Provider>
   );
 }
@@ -166,6 +181,7 @@ export default function App() {
       createRoutesFromElements(
         <Route element={<WorkspaceLayout />}>
           <Route path="/" element={<ConfiguredChatPage />} />
+          <Route path="/conversations" element={<ConversationsPage />} />
           <Route path="/chat/:conversationId" element={<ConfiguredChatPage />} />
           <Route path="/chat/:conversationId/deletion" element={<Navigate to="/" replace />} />
           <Route path="/knowledge" element={<KnowledgePage />} />
@@ -179,7 +195,7 @@ export default function App() {
           <Route path="/knowledge/reviews/:changesetId" element={<ChangePage />} />
           <Route path="/changes" element={<Navigate to="/knowledge/reviews" replace />} />
           <Route path="/changes/:changesetId" element={<LegacyReviewRedirect />} />
-          <Route path="/runs" element={<RunsPage />} />
+          <Route path="/runs" element={<ActivityRunsPage />} />
           <Route path="/runs/:runId" element={<RunPage />} />
           <Route path="/runs/:runId/diagnostics" element={<RunDiagnosticsPage />} />
           <Route path="/runs/:runId/artifacts/:artifactId" element={<RunArtifactPage />} />
@@ -195,6 +211,7 @@ export default function App() {
           <Route path="/tools" element={<ToolsPage />} />
           <Route path="/skills" element={<SkillsPage />} />
           <Route path="/tools/groups" element={<ToolGroupsPage />} />
+          <Route path="/system" element={<SystemPage />} />
           <Route
             path="*"
             element={

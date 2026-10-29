@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest';
+import 'fake-indexeddb/auto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { useCallback, useState } from 'react';
@@ -52,15 +53,16 @@ it.each([
         }
         if (url === '/api/runs/root') return Response.json(run);
         if (url.includes('/changesets')) return Response.json({ items: [], next_cursor: null });
-        if (url.endsWith('/messages') && phase === 'completed')
-          return Response.json([
+        if (url === '/api/client-state') return Response.json({ namespace: `collection-${initialStatus}-${nextStatus}`, contract_version: 1 });
+        if (url.includes('/messages/page'))
+          return Response.json({ items: phase === 'completed' ? [
             {
               id: 'reply',
               role: 'assistant',
               content: '后台任务已处理完成',
               created_at: '2026-01-01T00:00:00Z',
             },
-          ]);
+          ] : [], revision: phase === 'completed' ? 2 : 1, total: phase === 'completed' ? 1 : 0, start: 0, older_cursor: null, newer_cursor: null });
         return Response.json([]);
       }),
     );
@@ -121,6 +123,8 @@ it('loads older runs with a cursor and retains already displayed entries', async
             created_at: '2026-01-01T00:00:00Z',
             kind: 'agent',
             parent_id: null,
+            href: `/runs/${old ? 'old' : 'new'}`, answer: '', children: [], child_count: 0,
+            unread: false, attention: false, attention_reasons: [], result_version: 1,
           },
         ],
         next_cursor: old ? null : 'older',

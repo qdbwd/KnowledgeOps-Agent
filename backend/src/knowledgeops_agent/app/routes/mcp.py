@@ -28,6 +28,11 @@ def mcp_cleanup(request: Request):
     return MCPCleaner(MCPManagement(svc(request).sessions)).list()
 
 
+@router.get('/api/mcp/cleanup/{operation_id}')
+def mcp_cleanup_operation(operation_id: str, request: Request):
+    return MCPCleaner(MCPManagement(svc(request).sessions)).get(operation_id)
+
+
 @router.post('/api/mcp/cleanup/{operation_id}/retry', status_code=202)
 def retry_mcp_cleanup(operation_id: str, request: Request):
     MCPCleaner(MCPManagement(svc(request).sessions)).retry(operation_id)

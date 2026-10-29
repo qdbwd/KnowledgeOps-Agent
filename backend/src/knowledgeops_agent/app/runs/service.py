@@ -15,8 +15,15 @@ from typing import TYPE_CHECKING, Literal, cast
 from pydantic import BaseModel, Field
 from sqlalchemy import Table, and_, delete, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import aliased, object_session
+from sqlalchemy.orm import object_session
 
+from knowledgeops_agent.app.conversations import (
+    fingerprint,
+    message_view,
+    ordered_messages,
+    touch_directory,
+    touch_messages,
+)
 from knowledgeops_agent.app.lifecycle.access import (
     DetailsExpired,
     require_conversation,
@@ -137,6 +144,9 @@ class RunService:
     def _event(self, session, run: Run, kind: str, data: dict) -> None:
         # 调用者已持有运行行锁；序号分配和事件插入不可分离。
         require_writable_run(session, run)
+        from knowledgeops_agent.app.activity import record_result
+
+        record_result(session, run, kind, self.now())
         run.event_sequence += 1
         row = RunEvent(
             run_id=run.id,
@@ -209,12 +219,64 @@ class RunService:
             "last_event": run.event_sequence,
         }
 
-    def create_conversation(self, title: str = "新对话") -> dict:
+    def create_conversation(self, title: str = "新对话", *, request_key: str | None = None) -> dict:
+        title = title.strip()[:300] or "新对话"
+        if request_key is not None and not 1 <= len(request_key) <= 200:
+            raise ValueError("invalid conversation creation key")
         with self.sessions.begin() as session:
-            row = Conversation(title=title.strip()[:300] or "新对话", created_at=self.now())
+            from knowledgeops_agent.app.runs.control import lock_control
+
+            lock_control(session)
+            if request_key:
+                prior = session.scalar(select(Conversation).where(Conversation.creation_key == request_key))
+                if prior:
+                    require_conversation(session, prior.id)
+                    if prior.creation_fingerprint != fingerprint(title):
+                        raise ValueError("idempotency key belongs to a different creation request")
+                    return {"id": prior.id, "title": prior.title}
+            row = Conversation(title=title, creation_key=request_key,
+                               creation_fingerprint=fingerprint(title) if request_key else None, created_at=self.now())
             session.add(row)
             session.flush()
             return {"id": row.id, "title": row.title}
+
+    def creation_receipt(self, request_key: str) -> dict:
+        with self.sessions() as session:
+            row = session.scalar(select(Conversation).where(Conversation.creation_key == request_key))
+            if row is None:
+                return {"state": "not_accepted"}
+            return {"state": "accepted" if row.deletion_state == "active" else "deleted", "conversation_id": row.id}
+
+    def lookup_submission(self, conversation_id: str, request_key: str, *, body: dict | None = None) -> dict | None:
+        """只读接受事实。已接单重试不能受后来材料撤回、模型档位或设置变化影响。"""
+        with self.sessions() as session:
+            require_conversation(session, conversation_id)
+            prior = session.scalar(select(Run).where(Run.request_key == request_key))
+            if prior is None:
+                return None
+            if prior.conversation_id != conversation_id:
+                raise ValueError("idempotency key belongs to a different conversation")
+            if body is not None:
+                if prior.submission_fingerprint:
+                    matches = prior.submission_fingerprint == fingerprint([conversation_id, body])
+                else:
+                    # 升级前没有HTTP摘要的记录沿原幂等合同比较，不补造当时的设置。
+                    from knowledgeops_agent.app.lifecycle.idempotency import (
+                        normalized_inputs,
+                        request_fingerprint,
+                    )
+
+                    inputs = {name: body[name] for name in ("publication_mode", "knowledge_only", "delegation", "auxiliary", "source_ids")}
+                    if body.get("learning_task_id") is not None:
+                        inputs["learning_task_id"] = body["learning_task_id"]
+                    old_inputs = normalized_inputs(prior.input_data)
+                    requested = prior.details_summary.get("requested_reasoning", "default") if prior.input_fingerprint else old_inputs["reasoning"]
+                    inputs["reasoning"] = body.get("reasoning_effort") or requested
+                    expected = prior.input_fingerprint or request_fingerprint(conversation_id, prior.task, old_inputs, prior.budgets)
+                    matches = expected == request_fingerprint(conversation_id, body["content"], inputs, body["budgets"])
+                if not matches:
+                    raise ValueError("idempotency key belongs to a different request")
+            return self._view(prior)
 
     def conversations(self) -> list[dict]:
         with self.sessions() as session:
@@ -232,7 +294,7 @@ class RunService:
                             ChatMessage.conversation_id == Conversation.id,
                             ChatMessage.role == "user",
                         ).exists(),
-                    ).order_by(Conversation.created_at.desc(), Conversation.id)
+                    ).order_by(Conversation.activity_at.desc().nullslast(), Conversation.created_at.desc(), Conversation.id.desc())
                 )
             ]
 
@@ -248,42 +310,16 @@ class RunService:
             row = session.scalar(select(Conversation).where(Conversation.id == conversation_id).with_for_update())
             if row is None or row.deletion_state != "active":
                 raise KeyError("conversation not found")
-            row.title = title
+            if row.title != title:
+                row.title = title
+                touch_directory(session)
             return {"id": row.id, "title": row.title}
 
     def messages(self, conversation_id: str) -> list[dict]:
         with self.sessions() as session:
             require_conversation(session, conversation_id)
-            # 自动运行没有真人序号，按领取时的执行顺序排放它的回复。尚未执行
-            # 的真人消息显示在队尾；即时引导属于它实际投递的运行，不伪造执行序号。
-            from knowledgeops_agent.persistence.models import MessageDelivery
-
-            target = aliased(Run)
-            rows = session.scalars(
-                select(ChatMessage)
-                .join(Run, Run.id == ChatMessage.run_id)
-                .outerjoin(MessageDelivery, MessageDelivery.message_id == ChatMessage.id)
-                .outerjoin(target, target.id == MessageDelivery.target_root_id)
-                .where(ChatMessage.conversation_id == conversation_id)
-                .order_by(
-                    func.coalesce(Run.execution_sequence, target.execution_sequence, 2147483647),
-                    ChatMessage.user_sequence,
-                    ChatMessage.role.desc(),
-                    ChatMessage.created_at,
-                    ChatMessage.id,
-                )
-            )
-            return [
-                {
-                    "id": row.id,
-                    "run_id": row.run_id,
-                    "role": row.role,
-                    "content": row.content,
-                    "user_sequence": row.user_sequence,
-                    "created_at": row.created_at.isoformat(),
-                }
-                for row in rows
-            ]
+            query, order = ordered_messages(conversation_id)
+            return [message_view(row) for row in session.scalars(query.order_by(*order))]
 
     def messages_for_run(self, run_id: str) -> list[dict]:
         """为模型和对话快照组织截至本任务的完整轮次。
@@ -339,6 +375,7 @@ class RunService:
         source_ids: list[str] | None = None,
         budgets: dict | None = None,
         learning_task_id: str | None = None,
+        submission_fingerprint: str | None = None,
     ) -> dict:
         """可信用户入口原子保存消息和任务；重复请求必须具有相同内容与选项。"""
         if not task.strip() or len(task) > 100000 or not 1 <= len(request_key) <= 200:
@@ -369,6 +406,10 @@ class RunService:
                 raise KeyError("conversation not found")
             prior = session.scalar(select(Run).where(Run.request_key == request_key))
             if prior:
+                if submission_fingerprint and prior.submission_fingerprint:
+                    if prior.conversation_id != conversation_id or prior.submission_fingerprint != submission_fingerprint:
+                        raise ValueError("idempotency key belongs to a different request")
+                    return self._view(prior)
                 if prior.lifecycle_state != "active" and prior.input_fingerprint:
                     from knowledgeops_agent.app.lifecycle.idempotency import (
                         normalized_inputs,
@@ -425,6 +466,7 @@ class RunService:
                 learning_task_id=selected_task_id,
                 conversation_sequence=conversation.user_sequence,
                 request_key=request_key,
+                submission_fingerprint=submission_fingerprint,
                 task=task,
                 input_data=inputs,
                 budgets=limits,
@@ -449,6 +491,7 @@ class RunService:
             )
             session.add(message)
             session.flush()
+            touch_messages(session, conversation_id, activity_at=message.created_at)
             from knowledgeops_agent.app.lifecycle.references import replace_references
 
             replace_references(session, "message", message.id, task)
@@ -828,6 +871,7 @@ class RunService:
                 if run.execution_sequence is None:
                     conversation.execution_sequence += 1
                     run.execution_sequence = conversation.execution_sequence
+                    touch_messages(session, conversation.id)
                 if not run.continuation_bound:
                     run.continuation_snapshot_id = conversation.latest_snapshot_id
                     run.continuation_bound = True
@@ -1366,6 +1410,7 @@ class RunService:
             answer = run.outcome.get("answer")
             if answer and run.parent_id is None and run.conversation_id:
                 message_id = new_id()
+                answer_at = self.now()
                 session.add(
                     ChatMessage(
                         id=message_id,
@@ -1375,12 +1420,13 @@ class RunService:
                         content=answer,
                         protocol_payload=message_payload(answer, continuation, session=session, run_id=run.id),
                         user_sequence=run.conversation_sequence or 0,
-                        created_at=self.now(),
+                        created_at=answer_at,
                     )
                 )
                 from knowledgeops_agent.app.lifecycle.references import replace_references
 
                 replace_references(session, "message", message_id, answer)
+                touch_messages(session, run.conversation_id, activity_at=answer_at)
             from knowledgeops_agent.learning.coordinator import finished
 
             finished(session, run)

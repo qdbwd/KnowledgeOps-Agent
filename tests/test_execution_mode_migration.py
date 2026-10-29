@@ -44,10 +44,15 @@ def test_upgrade_changes_only_current_legacy_settings_and_preserves_other_values
 
             old_snapshot = {"runtime_settings": {"permission_mode": "auto", "revision": 3}}
             old_runs = Table("runs", MetaData(), autoload_with=connection)
+            # 后续迁移给 conversations 增加过列，历史夹具必须按 0037 的真实表结构写入，
+            # 不能直接用当前 ORM 模型（否则会引用尚不存在的 creation_key 等列）。
+            old_conversations = Table("conversations", MetaData(), autoload_with=connection)
             with Session(bind=connection, join_transaction_mode="create_savepoint") as session:
                 for identity, mode in (("legacy", "auto"), ("human", "ask"), ("review", "auto_review")):
-                    session.add(Conversation(id=identity, title=identity, runtime_revision=3,
-                                             runtime_settings={"permission_mode": mode, "reasoning_effort": "high"}))
+                    session.execute(old_conversations.insert().values(
+                        id=identity, title=identity, runtime_revision=3,
+                        created_at=datetime.now(UTC),
+                        runtime_settings={"permission_mode": mode, "reasoning_effort": "high"}))
                 session.flush()
                 session.execute(old_runs.insert().values(
                     id="old-run", root_id="old-run", checkpoint_id="old-checkpoint",

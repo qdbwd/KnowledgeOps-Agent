@@ -7,6 +7,9 @@ if [ "${1:-production}" = "development" ]; then
     (cd frontend && npm ci)
 fi
 export MODEL_CALLS_ENABLED=false
+if [ "${1:-production}" != "guarded" ]; then
+    exec python -m knowledgeops_agent.persistence.maintenance -- sh scripts/bootstrap.sh guarded
+fi
 alembic upgrade head
 python scripts/initialize_skills.py
 python scripts/migrate_accounting.py --lifecycle

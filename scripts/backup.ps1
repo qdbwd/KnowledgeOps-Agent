@@ -1,4 +1,4 @@
-<#
+﻿<#
 本机 Docker 维护入口。备份业务库、独立费用账本与不可变原件。
 restore 仅允许新建的 knowledgeops_restore_* 空数据库和全新来源卷；不覆盖
 正常业务库、不回滚当前费用账本、不删除卷。业务恢复后仍需启动恢复校验。
@@ -20,13 +20,67 @@ $PSNativeCommandUseErrorActionPreference = $true
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $backupBase = Join-Path $projectRoot 'artifacts/backups'
 $backupId = [guid]::NewGuid().ToString('N').Substring(0, 12)
+$guard = $null
+$createdFolder = $false
+$restoreRecordPath = $null
+$restoreRecord = $null
 if (-not $BackupFolder) { $BackupFolder = Join-Path $backupBase $backupId }
 $BackupFolder = [IO.Path]::GetFullPath($BackupFolder)
 if (-not $BackupFolder.StartsWith($backupBase + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Backup folder must be inside this project artifacts/backups.'
 }
 Push-Location $projectRoot
+
+function Read-GuardReply {
+    param($Process)
+    $pendingLine = $Process.StandardOutput.ReadLineAsync()
+    $deadline = [DateTime]::UtcNow.AddMinutes(15)
+    while (-not $pendingLine.Wait(1000)) {
+        if ([DateTime]::UtcNow -gt $deadline) { throw 'Backup protection command timed out; partial output is not a backup.' }
+    }
+    $line = $pendingLine.GetAwaiter().GetResult()
+    if (-not $line) { throw 'Backup protection process stopped before confirmation.' }
+    $reply = $line | ConvertFrom-Json
+    if (-not $reply.ok) { throw "Backup protection failed ($($reply.code)); inspect operation.json and use a new folder after correcting the cause." }
+    return $reply
+}
+
+function Send-GuardCommand {
+    param($Process, [hashtable]$Message)
+    if ($Process.HasExited) { throw 'Backup protection process is no longer running.' }
+    $Process.StandardInput.WriteLine(($Message | ConvertTo-Json -Compress -Depth 6))
+    $Process.StandardInput.Flush()
+    return Read-GuardReply $Process
+}
+
+function Write-OperationRecord {
+    param([string]$Path, [hashtable]$Record)
+    $Record.updated_at = [DateTime]::UtcNow.ToString('o')
+    $temporary = "$Path.tmp"
+    $Record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporary -Encoding utf8
+    Move-Item -LiteralPath $temporary -Destination $Path -Force
+}
+
 try {
+    if ($Mode -eq 'create') {
+        if (Test-Path -LiteralPath $BackupFolder) { throw 'Use a new backup folder; existing backups are immutable.' }
+        New-Item -ItemType Directory -Path $BackupFolder | Out-Null
+        $createdFolder = $true
+        @{ id = $backupId; kind = 'create'; state = 'starting'; phase = 'preflight'; source_database = $Database
+            started_at = [DateTime]::UtcNow.ToString('o'); updated_at = [DateTime]::UtcNow.ToString('o')
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $BackupFolder 'operation.json') -Encoding utf8
+    } else {
+        if (-not (Test-Path -LiteralPath (Join-Path $BackupFolder 'manifest.json') -PathType Leaf)) {
+            throw 'A completed backup manifest is required; partial folders cannot be restored.'
+        }
+        $operationsFolder = Join-Path $BackupFolder 'operations'
+        New-Item -ItemType Directory -Path $operationsFolder -Force | Out-Null
+        $restoreRecordPath = Join-Path $operationsFolder "$backupId.json"
+        if (Test-Path -LiteralPath $restoreRecordPath) { throw 'Restore operation identity already exists.' }
+        $restoreRecord = @{id=$backupId; kind='restore'; state='working'; phase='preflight';
+                          started_at=[DateTime]::UtcNow.ToString('o')}
+        Write-OperationRecord $restoreRecordPath $restoreRecord
+    }
     $pg = (docker compose ps -q postgres).Trim()
     if (-not $pg) { throw 'Start this project postgres container first.' }
     $backupInDev = '/workspace/' + [IO.Path]::GetRelativePath($projectRoot, $BackupFolder).Replace('\', '/')
@@ -43,58 +97,69 @@ try {
         if ($Runtime -eq 'development' -and $Database -ne 'knowledgeops' -and -not $WorkspacePath) {
             throw 'A fixture backup requires its explicit isolated workspace.'
         }
-        if (Test-Path -LiteralPath $BackupFolder) { throw 'Use a new backup folder; existing backups are immutable.' }
-        New-Item -ItemType Directory -Path $BackupFolder | Out-Null
+        if ($SourceVolume -and $Database -eq 'knowledgeops') { throw 'A normal backup must include the complete workspace, not a fixture source volume.' }
+        $running = @(docker compose -f compose.yaml -f compose.dev.yaml --profile development ps --status running --format '{{.Service}}')
+        if ($running | Where-Object { $_ -in @('api', 'worker', 'init') }) {
+            throw 'Stop this project api, worker and init processes before backup. The script does not stop them automatically.'
+        }
+        # 长连接进程先取得维护互斥，再允许任何数据库/文件导出。stdin关闭即失败。
+        $helperArgs = @('scripts/backup_guard.py', '--database', $Database, '--operation-id', $backupId)
+        if ($IncludeMcpData) { $helperArgs += '--include-data' }
+        if ($Runtime -eq 'development') {
+            $helperArgs += @('--folder', $backupInDev)
+            if ($WorkspacePath) {
+                $helperArgs += @('--workspace', $WorkspacePath, '--fixture-root', ($WorkspacePath -replace '/workspace$', '/extensions'))
+            }
+            $dockerArgs = @('exec', '-i', '-w', '/workspace', '-e', 'MODEL_CALLS_ENABLED=false', $dev,
+                '.venv/bin/python', 'scripts/dev.py', '--run', '.venv/bin/python') + $helperArgs
+        } else {
+            $helperArgs += @('--folder', '/backup')
+            $dockerArgs = @('compose', 'run', '--rm', '--no-deps', '-T', '-e', 'MODEL_CALLS_ENABLED=false', '-v', "${BackupFolder}:/backup")
+            if ($SourceVolume) {
+                $dockerArgs += @('-v', "${SourceVolume}:/backup-sources:ro")
+                $helperArgs += @('--workspace', '/backup-sources', '--legacy-sources')
+            }
+            $dockerArgs += @('api', 'python') + $helperArgs
+        }
+        $start = [System.Diagnostics.ProcessStartInfo]::new('docker')
+        $start.WorkingDirectory = $projectRoot
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+        $start.RedirectStandardInput = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $start.StandardInputEncoding = [Text.UTF8Encoding]::new($false)
+        $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+        foreach ($argument in $dockerArgs) { $start.ArgumentList.Add($argument) }
+        $guard = [System.Diagnostics.Process]::Start($start)
+        $guardErrors = $guard.StandardError.ReadToEndAsync()
+        $ready = Read-GuardReply $guard
+        if ($ready.phase -ne 'ready' -or $ready.protocol -ne 1) { throw 'Unexpected backup protection protocol.' }
+        Write-Output 'Write protection acquired; exporting the business and accounting databases.'
         docker compose exec -T postgres pg_dump -U knowledgeops -d $Database -Fc --file="/tmp/$backupId-business.dump"
         # 测试种子必须使用自己的回执库，不复制正式任务预算来伪装隔离验证。
         $accountingSource = "${Database}_accounting"
         docker compose exec -T postgres pg_dump -U knowledgeops -d $accountingSource -Fc --file="/tmp/$backupId-accounting.dump"
         docker cp "${pg}:/tmp/$backupId-business.dump" (Join-Path $BackupFolder 'business.dump')
         docker cp "${pg}:/tmp/$backupId-accounting.dump" (Join-Path $BackupFolder 'accounting.dump')
-        if ($Runtime -eq 'development') {
-            $sourceWorkspace = if ($WorkspacePath) { $WorkspacePath } else { '/data/agent-workspace' }
-            docker exec $dev tar -C $sourceWorkspace -czf "$backupInDev/workspace.tar.gz" .
-            $format = 2
-            $fileNames = @('business.dump', 'accounting.dump', 'workspace.tar.gz')
-        } elseif ($SourceVolume) {
-            # 测试种子使用单独卷；只读挂载，不能更改原件。
-            docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" -v "${SourceVolume}:/backup-sources:ro" api tar -C /backup-sources -czf /backup/sources.tar.gz .
-            $format = 1
-            $fileNames = @('business.dump', 'accounting.dump', 'sources.tar.gz')
-        } else {
-            # 文件正文已成为事实来源；只备份 PG 或旧 source-data 卷都不完整。
-            docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" api tar -C /data/agent-workspace -czf /backup/workspace.tar.gz .
-            $format = 2
-            $fileNames = @('business.dump', 'accounting.dump', 'workspace.tar.gz')
+        Send-GuardCommand $guard @{command = 'check'} | Out-Null
+        # 完整读取压缩归档，而不是只看目录。这里不连接目标库、不执行SQL。
+        $checked = @{}
+        foreach ($name in @('business.dump', 'accounting.dump')) {
+            $remotePath = "/tmp/$backupId-$name"
+            $before = ((docker exec $pg sha256sum $remotePath) -split '\s+')[0]
+            docker compose exec -T postgres pg_restore --exit-on-error --file=/dev/null $remotePath
+            $after = ((docker exec $pg sha256sum $remotePath) -split '\s+')[0]
+            $localHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $BackupFolder $name)).Hash.ToLowerInvariant()
+            if ($before -ne $after -or $before -ne $localHash) { throw 'Database archive changed while checking or copying.' }
+            $checked[$name] = $localHash
         }
-        # 旧来源卷备份保留格式1；完整工作区增加可移植扩展归档，不打包环境/缓存/密钥。
-        if ($format -eq 2) {
-            $extensionArgs = @('scripts/backup_extensions.py', '--database', $Database)
-            if ($IncludeMcpData) { $extensionArgs += '--include-data' }
-            if ($Runtime -eq 'development') {
-                $extensionArgs += @('--output', "$backupInDev/extensions.tar.gz")
-                if ($WorkspacePath) { $extensionArgs += @('--fixture-root', ($WorkspacePath -replace '/workspace$', '/extensions')) }
-                docker exec -w /workspace -e MODEL_CALLS_ENABLED=false $dev .venv/bin/python scripts/dev.py --run .venv/bin/python @extensionArgs
-            } else {
-                $extensionArgs += @('--output', '/backup/extensions.tar.gz')
-                docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" api python @extensionArgs
-            }
-            $format = 3
-            $fileNames += 'extensions.tar.gz'
-        }
-        $hashes = @{}
-        foreach ($name in $fileNames) {
-            $hashes[$name] = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $BackupFolder $name)).Hash.ToLowerInvariant()
-        }
-        @{
-            format = $format; created_at = [DateTime]::UtcNow.ToString('o'); source_database = $Database
-            source_accounting_database = $accountingSource
-            files = $hashes
-            extensions_policy = 'Complete skills and MCP locks; no dependency environments, caches or project secrets. Restored MCP connections require explicit preparation, testing and authorization.'
-            mcp_data_included = [bool]$IncludeMcpData
-            accounting_policy = 'Restore only into a fresh isolated database; never overwrite active task budgets or model replay receipts.'
-            consistency = 'Stop api/worker and local file editors before backup. PG pointers and the complete workspace form one backup set; immutable files may include harmless orphans.'
-        } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $BackupFolder 'manifest.json') -Encoding utf8
+        Write-Output 'Archiving and checking the complete file set under the same protection.'
+        Send-GuardCommand $guard @{command = 'archive'} | Out-Null
+        Send-GuardCommand $guard @{command = 'publish'; checked_databases = $checked} | Out-Null
+        $guard.StandardInput.Close()
+        if (-not $guard.WaitForExit(10000) -or $guard.ExitCode -ne 0) { throw 'Backup helper did not complete cleanly; inspect operation.json.' }
         Write-Output "Backup: $BackupFolder"
     } else {
         $manifest = Get-Content -Raw -LiteralPath (Join-Path $BackupFolder 'manifest.json') | ConvertFrom-Json
@@ -108,6 +173,10 @@ try {
         if (-not $RestoreDatabase) { $RestoreDatabase = "knowledgeops_restore_$backupId" }
         if ($Runtime -eq 'deployment' -and -not $RestoreVolume) { $RestoreVolume = "knowledgeops-agent-restore-$backupId" }
         $accountingTarget = "${RestoreDatabase}_accounting"
+        $restoreRecord.phase = 'restoring_databases'
+        $restoreRecord.database = $RestoreDatabase
+        $restoreRecord.accounting_database = $accountingTarget
+        Write-OperationRecord $restoreRecordPath $restoreRecord
         # 不使用 IF NOT EXISTS。碰到已有 DB/卷即拒绝，绝不清空后继续。
         if ($Runtime -eq 'deployment') {
             $existing = @(docker volume ls --format '{{.Name}}')
@@ -120,19 +189,75 @@ try {
         docker cp (Join-Path $BackupFolder 'accounting.dump') "${pg}:/tmp/$backupId-restore-accounting.dump"
         docker compose exec -T postgres pg_restore --exit-on-error --no-owner -U knowledgeops -d $RestoreDatabase "/tmp/$backupId-restore-business.dump"
         docker compose exec -T postgres pg_restore --exit-on-error --no-owner -U knowledgeops -d $accountingTarget "/tmp/$backupId-restore-accounting.dump"
+        $restoreRecord.phase = 'verifying_restored_data'
+        $restoreReportName = "restore-verification-$backupId.json"
+        $restoreRecord.report = $restoreReportName
+        Write-OperationRecord $restoreRecordPath $restoreRecord
         if ($Runtime -eq 'development') {
             $restoreRoot = "/workspace/artifacts/verification/restores/$RestoreDatabase"
             $arguments = @('scripts/backup_fixture.py', 'verify', '--database', $RestoreDatabase, '--accounting-database', $accountingTarget,
-                '--source-root', "$restoreRoot/uploads/originals", '--backup-manifest', "$backupInDev/manifest.json", '--output', "$backupInDev/restore-verification.json")
+                '--source-root', "$restoreRoot/uploads/originals", '--backup-manifest', "$backupInDev/manifest.json", '--output', "$backupInDev/$restoreReportName")
             if ($manifest.format -ge 2) {
                 $arguments += @('--workspace-root', $restoreRoot, '--workspace-archive', "$backupInDev/workspace.tar.gz")
             } else { $arguments += @('--archive', "$backupInDev/sources.tar.gz") }
             docker exec -w /workspace -e MODEL_CALLS_ENABLED=false $dev .venv/bin/python scripts/dev.py --run .venv/bin/python @arguments
         } elseif ($manifest.format -ge 2) {
-            docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" -v "${RestoreVolume}:/restore-workspace" api python scripts/backup_fixture.py verify --database $RestoreDatabase --accounting-database $accountingTarget --source-root /restore-workspace/uploads/originals --workspace-root /restore-workspace --workspace-archive "/backup/workspace.tar.gz" --backup-manifest "/backup/manifest.json" --output "/backup/restore-verification.json"
+            docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" -v "${RestoreVolume}:/restore-workspace" api python scripts/backup_fixture.py verify --database $RestoreDatabase --accounting-database $accountingTarget --source-root /restore-workspace/uploads/originals --workspace-root /restore-workspace --workspace-archive "/backup/workspace.tar.gz" --backup-manifest "/backup/manifest.json" --output "/backup/$restoreReportName"
         } else {
-            docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" -v "${RestoreVolume}:/restore-sources" api python scripts/backup_fixture.py verify --database $RestoreDatabase --accounting-database $accountingTarget --source-root /restore-sources --archive "/backup/sources.tar.gz" --backup-manifest "/backup/manifest.json" --output "/backup/restore-verification.json"
+            docker compose run --rm --no-deps -T -e MODEL_CALLS_ENABLED=false -v "${BackupFolder}:/backup" -v "${RestoreVolume}:/restore-sources" api python scripts/backup_fixture.py verify --database $RestoreDatabase --accounting-database $accountingTarget --source-root /restore-sources --archive "/backup/sources.tar.gz" --backup-manifest "/backup/manifest.json" --output "/backup/$restoreReportName"
         }
+        $verifiedPath = Join-Path $BackupFolder $restoreReportName
+        $verified = Get-Content -Raw -LiteralPath $verifiedPath | ConvertFrom-Json
+        $manifestHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $BackupFolder 'manifest.json')).Hash.ToLowerInvariant()
+        if ($verified.backup_manifest_sha256 -ne $manifestHash -or $verified.database -ne $RestoreDatabase -or
+            -not $verified.checks -or @($verified.checks.PSObject.Properties | Where-Object { $_.Value -ne $true }).Count) {
+            throw 'Restore verification did not prove this backup and isolated target.'
+        }
+        # 保留每次恢复报告。兼容旧调用者的固定路径只是最新成功报告，替换前保存原字节。
+        $latest = Join-Path $BackupFolder 'restore-verification.json'
+        if (Test-Path -LiteralPath $latest) {
+            $priorHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $latest).Hash.ToLowerInvariant()
+            $priorCopy = Join-Path $operationsFolder "restore-verification-$priorHash.json"
+            if (-not (Test-Path -LiteralPath $priorCopy)) { Copy-Item -LiteralPath $latest -Destination $priorCopy }
+        }
+        $latestTemporary = Join-Path $BackupFolder "restore-latest-$backupId.tmp"
+        Copy-Item -LiteralPath $verifiedPath -Destination $latestTemporary
+        Move-Item -LiteralPath $latestTemporary -Destination $latest -Force
+        $restoreRecord.state = 'validated'
+        $restoreRecord.phase = 'complete'
+        $restoreRecord.backup_manifest_sha256 = $manifestHash
+        Write-OperationRecord $restoreRecordPath $restoreRecord
         Write-Output "Restored into $RestoreDatabase; active application configuration was not changed."
     }
-} finally { Pop-Location }
+} catch {
+    if ($restoreRecordPath) {
+        $restoreRecord.state = 'failed'
+        $restoreRecord.error_code = 'RestoreCommandFailed'
+        $restoreRecord.message = 'Restore failed. The original backup and isolated partial target are preserved; retry with a new target after checking this phase.'
+        Write-OperationRecord $restoreRecordPath $restoreRecord
+    }
+    if ($createdFolder) {
+        $operationPath = Join-Path $BackupFolder 'operation.json'
+        $record = Get-Content -Raw -LiteralPath $operationPath | ConvertFrom-Json -AsHashtable
+        if ($record.state -notin @('created', 'failed')) {
+            $record.state = 'failed'
+            $record.error_code = 'HostCommandFailed'
+            $record.message = 'The backup command failed. Keep this folder for diagnosis and retry with a new folder.'
+            $record.updated_at = [DateTime]::UtcNow.ToString('o')
+            $temporaryRecord = Join-Path $BackupFolder 'operation.host.tmp'
+            $record | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $temporaryRecord -Encoding utf8
+            Move-Item -LiteralPath $temporaryRecord -Destination $operationPath -Force
+        }
+    }
+    throw
+} finally {
+    if ($guard) {
+        try {
+            if (-not $guard.HasExited) {
+                $guard.StandardInput.Close()
+                if (-not $guard.WaitForExit(10000)) { $guard.Kill($true) }
+            }
+        } finally { $guard.Dispose() }
+    }
+    Pop-Location
+}

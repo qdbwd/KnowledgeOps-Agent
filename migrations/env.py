@@ -10,6 +10,7 @@ from alembic import context
 from sqlalchemy import create_engine
 
 from knowledgeops_agent.core.config import get_settings
+from knowledgeops_agent.persistence.maintenance import maintenance_lease
 from knowledgeops_agent.persistence.models import Base
 
 config = context.config
@@ -44,7 +45,11 @@ if context.is_offline_mode():
 elif config.attributes.get("connection") is not None:
     migrate(config.attributes["connection"])
 else:
-    engine = create_engine(get_settings().database_url)
-    with engine.connect() as connection:
-        migrate(connection)
-    engine.dispose()
+    settings = get_settings()
+    engine = create_engine(settings.database_url)
+    try:
+        with maintenance_lease(engine, workspace=settings.workspace_root):
+            with engine.connect() as connection:
+                migrate(connection)
+    finally:
+        engine.dispose()

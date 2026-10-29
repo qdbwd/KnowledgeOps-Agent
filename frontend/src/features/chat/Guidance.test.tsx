@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest';
+import 'fake-indexeddb/auto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -22,6 +23,7 @@ it('keeps messages queued until the user guides the current root generation', as
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, options?: RequestInit) => {
+      if (url === '/api/client-state') return Response.json({ namespace: 'guidance-unit', contract_version: 1 });
       if (options?.method === 'POST') {
         actions.push({ url, body: JSON.parse(String(options.body)) });
         return Response.json({ id: 'delivery', status: 'pending' });

@@ -16,6 +16,7 @@ from knowledgeops_agent.harness.models.gateway import ModelGateway
 from knowledgeops_agent.harness.models.reasoning import ReasoningService
 from knowledgeops_agent.knowledge.service import KnowledgeService
 from knowledgeops_agent.persistence.files import FileStore
+from knowledgeops_agent.persistence.maintenance import MaintenanceLease
 from knowledgeops_agent.persistence.redis import RedisBlobCache, database_namespace, redis_client
 from knowledgeops_agent.sources.service import SourceService
 
@@ -33,6 +34,7 @@ class Services:
     event_bridge: RedisEventBridge | None = None
     checkpoint_cache: RedisBlobCache | None = None
     reasoning: ReasoningService | None = None
+    maintenance: MaintenanceLease | None = None
 
     def __post_init__(self):
         # 显式注入的应用实例同样使用事务内引用合同，不能只在默认构造函数生效。
@@ -47,20 +49,56 @@ class Services:
 
         return LifecycleMaintenance.from_services(self)
 
+    @cached_property
+    def readiness(self):
+        """分层就绪探测与阻塞原因；只读并短缓存，不领取任务或调用模型。"""
+        from knowledgeops_agent.app.readiness import Readiness
+
+        return Readiness(self)
+
+    @cached_property
+    def backup_records(self):
+        """备份与恢复记录的只读投影；网页不控制 Docker，也不下载 dump。"""
+        from knowledgeops_agent.app.backup_records import BackupRecords
+
+        return BackupRecords()
+
     def close(self) -> None:
         """只释放本进程连接池，不停止容器或删除数据。"""
-        self.jobs.close_mcp_sessions()
-        self.engine.dispose()
-        self.gateway.ledger.engine.dispose()
-        if self.runtime_redis is not None:
-            self.runtime_redis.close()
+        try:
+            self.jobs.close_mcp_sessions()
+            self.engine.dispose()
+            self.gateway.ledger.engine.dispose()
+            if self.runtime_redis is not None:
+                self.runtime_redis.close()
+        finally:
+            if self.maintenance is not None:
+                self.maintenance.close()
+
+    def check_maintenance(self) -> None:
+        if self.maintenance is not None:
+            self.maintenance.check()
 
 
 def create_services(settings: Settings) -> Services:
     """构造 API/worker 一致的业务边界；不创建业务表，部署须先执行迁移。"""
     if not settings.database_url:
         raise ValueError("DATABASE_URL is required")
-    engine = create_engine(settings.database_url, pool_pre_ping=True, pool_size=8)
+    engine = create_engine(settings.database_url, pool_pre_ping=True, pool_size=8,
+                           connect_args={"connect_timeout": 5})
+    # 网关会初始化回执表，FileStore会创建目录，因此保护必须先于依赖构造。
+    maintenance = None
+    try:
+        maintenance = MaintenanceLease(engine, workspace=settings.workspace_root).acquire()
+        return _create_services(settings, engine, maintenance)
+    except BaseException:
+        if maintenance is not None:
+            maintenance.close()
+        engine.dispose()
+        raise
+
+
+def _create_services(settings: Settings, engine: Engine, maintenance: MaintenanceLease) -> Services:
     store = FileStore(settings.workspace_root) if settings.workspace_root else None
     reasoning = ReasoningService(settings)
     sessions = sessionmaker(
@@ -89,7 +127,7 @@ def create_services(settings: Settings) -> Services:
                 max_entries=settings.redis_checkpoint_max_entries,
                 max_value_bytes=settings.redis_checkpoint_max_value_bytes,
             )
-    return Services(
+    services = Services(
         settings=settings,
         engine=engine,
         sessions=sessions,
@@ -110,4 +148,7 @@ def create_services(settings: Settings) -> Services:
         event_bridge=bridge,
         checkpoint_cache=cache,
         reasoning=reasoning,
+        maintenance=maintenance,
     )
+    services.jobs.live_check = services.check_maintenance
+    return services

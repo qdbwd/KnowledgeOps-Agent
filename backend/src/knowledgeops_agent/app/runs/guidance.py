@@ -94,6 +94,9 @@ def request_guidance(jobs, queued_id: str, *, target_id: str, target_generation:
         )
         session.add(delivery)
         session.flush()
+        from knowledgeops_agent.app.conversations import touch_messages
+
+        touch_messages(session, queued.conversation_id)
         # 原任务不再执行，不能保留它自己的direct。目标root的许可先挂起，等待新指令解释。
         session.execute(delete(TaskGrant).where(TaskGrant.root_id.in_([target.id, queued.id])))
         queued.status, queued.cancel_requested = "cancelled", True

@@ -1,12 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public code?: string,
+    public requestId?: string,
+    public action?: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 /** 所有页面共用错误处理；保留后端给出的冲突/权限原因，网络错误另行说明。 */
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, options);
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
     const detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
-    throw new Error(detail ?? `请求失败 (${response.status})`);
+    throw new ApiError(
+      detail ?? `请求失败 (${response.status})`,
+      response.status,
+      body.code,
+      body.request_id,
+      body.action,
+    );
   }
   return response.json() as Promise<T>;
 }
@@ -56,8 +75,16 @@ export function useResource<T>(path: string | null, key: number | string = 0) {
     : { data: null, loading: Boolean(path), error: '' };
 }
 
-export const messageOf = (error: unknown) =>
-  error instanceof Error ? error.message : String(error);
+export const messageOf = (error: unknown) => {
+  // 分类信息只作为补充：原文案仍是主要说明，动作和请求号帮助用户自助处理或报错。
+  if (error instanceof ApiError) {
+    const extra = [error.action, error.requestId ? `请求号 ${error.requestId}` : '']
+      .filter(Boolean)
+      .join(' · ');
+    return extra ? `${error.message}（${extra}）` : error.message;
+  }
+  return error instanceof Error ? error.message : String(error);
+};
 
 export type CollectionPage<T> = { items: T[]; next_cursor: string | null };
 
@@ -67,6 +94,8 @@ export function usePagedResource<T extends { id: string }>(path: string | null, 
   const [next, setNext] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(path));
   const [error, setError] = useState('');
+  const [cursorRefresh, setCursorRefresh] = useState(0);
+  const [notice, setNotice] = useState('');
   const generation = useRef(0);
   const controllers = useRef(new Set<AbortController>());
   useEffect(() => {
@@ -100,7 +129,7 @@ export function usePagedResource<T extends { id: string }>(path: string | null, 
       for (const pending of pendingControllers) pending.abort();
       pendingControllers.clear();
     };
-  }, [path, key, retainOnRefresh]);
+  }, [path, key, retainOnRefresh, cursorRefresh]);
   async function loadMore() {
     if (!path || !next || loading) return;
     const current = generation.current;
@@ -121,14 +150,18 @@ export function usePagedResource<T extends { id: string }>(path: string | null, 
         setNext(page.next_cursor);
       }
     } catch (failure) {
-      if (!controller.signal.aborted && generation.current === current)
-        setError(messageOf(failure));
+      if (!controller.signal.aborted && generation.current === current) {
+        if (failure instanceof ApiError && failure.code === 'cursor_stale') {
+          setNotice('列表有更新，已重新加载。');
+          setCursorRefresh((value) => value + 1);
+        } else setError(messageOf(failure));
+      }
     } finally {
       controllers.current.delete(controller);
       if (generation.current === current && !controller.signal.aborted) setLoading(false);
     }
   }
-  return { data: resource.path === path ? resource.data : [], next, loading, error, loadMore };
+  return { data: resource.path === path ? resource.data : [], next, loading, error, notice, loadMore };
 }
 export const terminal = (status: string) =>
   ['completed', 'failed', 'cancelled', 'interrupted', 'budget_exhausted'].includes(status);

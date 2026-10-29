@@ -110,6 +110,9 @@ class ConversationCleaner:
             if not preview["eligible"]:
                 raise ValueError("会话仍有未完成或待核对的执行：" + ", ".join(preview["blockers"]))
             conversation.deletion_state, conversation.deletion_requested_at = "deleting", self.now()
+            from knowledgeops_agent.app.conversations import touch_directory
+
+            touch_directory(session)
             conversation.selected_learning_task_id, conversation.latest_snapshot_id = None, None
             job = self.jobs.create(session, "conversation", conversation_id)
             job.phase, job.summary = "conversation_detach", {"counts": preview["counts"], "assets": preview["assets"], "preserved": PRESERVED}

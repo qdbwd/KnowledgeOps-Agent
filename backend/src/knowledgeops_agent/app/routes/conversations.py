@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from knowledgeops_agent.app.conversations import ConversationBrowser, fingerprint
 from knowledgeops_agent.app.dependencies import reasoning_service, svc
 from knowledgeops_agent.app.schemas import (
     ConversationInput,
@@ -74,14 +75,44 @@ def conversations(request: Request):
     return svc(request).jobs.conversations()
 
 
+@router.get("/api/conversations/page")
+def conversation_page(request: Request, q: str = Query(default="", max_length=200),
+                      cursor: str | None = Query(default=None, max_length=1024), limit: int = Query(default=20, ge=1, le=100)):
+    return ConversationBrowser(svc(request).sessions).page(query=q, cursor=cursor, limit=limit)
+
+
+@router.get("/api/conversations/creation-receipt")
+def creation_receipt(request: Request, request_key: str = Query(min_length=1, max_length=200)):
+    return svc(request).jobs.creation_receipt(request_key)
+
+
+@router.get("/api/client-state")
+def client_state(request: Request):
+    from knowledgeops_agent.persistence.redis import database_namespace
+
+    return {"namespace": database_namespace(svc(request).engine), "contract_version": 1}
+
+
 @router.post("/api/conversations", status_code=201)
 def create_conversation(body: ConversationInput, request: Request):
-    return svc(request).jobs.create_conversation(body.title)
+    return svc(request).jobs.create_conversation(body.title, request_key=body.request_key)
 
 
 @router.get("/api/conversations/{conversation_id}/messages")
 def messages(conversation_id: str, request: Request):
     return svc(request).jobs.messages(conversation_id)
+
+
+@router.get("/api/conversations/{conversation_id}/messages/page")
+def message_page(conversation_id: str, request: Request, cursor: str | None = Query(default=None, max_length=1024),
+                 anchor: str | None = Query(default=None, max_length=120), limit: int = Query(default=40, ge=1, le=100)):
+    return ConversationBrowser(svc(request).sessions).messages(conversation_id, cursor=cursor, anchor=anchor, limit=limit)
+
+
+@router.get("/api/conversations/{conversation_id}/submission-receipt")
+def submission_receipt(conversation_id: str, request: Request, request_key: str = Query(min_length=1, max_length=200)):
+    row = svc(request).jobs.lookup_submission(conversation_id, request_key)
+    return {"state": "accepted", "run_id": row["id"], "status": row["status"]} if row else {"state": "not_accepted"}
 
 
 @router.patch("/api/conversations/{conversation_id}")
@@ -100,6 +131,10 @@ def conversation_context_usage(conversation_id: str, request: Request):
 @router.post("/api/conversations/{conversation_id}/messages", status_code=202)
 def send_message(conversation_id: str, body: MessageInput, request: Request):
     dependencies = svc(request)
+    payload = body.model_dump()
+    accepted = dependencies.jobs.lookup_submission(conversation_id, body.request_key, body=payload)
+    if accepted is not None:
+        return accepted
     from knowledgeops_agent.harness.permissions.settings import ExecutionSettings
 
     defaults = ExecutionSettings(dependencies.sessions).get(conversation_id)
@@ -121,6 +156,7 @@ def send_message(conversation_id: str, body: MessageInput, request: Request):
         source_ids=body.source_ids,
         budgets=body.budgets.model_dump(),
         learning_task_id=body.learning_task_id,
+        submission_fingerprint=fingerprint([conversation_id, payload]),
     )
 
 

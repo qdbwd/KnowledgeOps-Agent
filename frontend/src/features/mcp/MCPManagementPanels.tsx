@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { messageOf, send, useResource } from '../../shared/api/api';
 import { Button } from '../../shared/ui/Button';
 import { Dialog } from '../../shared/ui/Dialog';
@@ -497,24 +498,29 @@ type Cleanup = {
 };
 
 export function MCPCleanup({ version }: { version: number }) {
+  const [params] = useSearchParams();
+  const selected = params.get('cleanup');
   const [tick, setTick] = useState(0);
   const [error, setError] = useState('');
   const result = useResource<Cleanup[]>('/api/mcp/cleanup', `${version}:${tick}`);
-  const pending = result.data?.some((row) => ['queued', 'running', 'waiting'].includes(row.status));
+  const detail = useResource<Cleanup>(selected ? `/api/mcp/cleanup/${encodeURIComponent(selected)}` : null, `${version}:${tick}`);
+  const rows = detail.data ? [detail.data, ...(result.data ?? []).filter((row) => row.id !== detail.data!.id)] : result.data;
+  const pending = rows?.some((row) => ['queued', 'running', 'waiting'].includes(row.status));
   useEffect(() => {
     if (!pending) return;
-    const timer = setInterval(() => setTick((value) => value + 1), 5000);
+    const timer = setInterval(() => { if (document.visibilityState !== 'hidden') setTick((value) => value + 1); }, 5000);
     return () => clearInterval(timer);
   }, [pending]);
-  if (!result.data?.length && !result.error) return null;
+  if (!rows?.length && !result.error && !selected) return null;
   return (
-    <details className="mt-6 rounded-xl border border-line bg-white p-5">
+    <details className="mt-6 rounded-xl border border-line bg-white p-5" open={Boolean(selected) || undefined}>
       <summary>后台清理与失败重试</summary>
-      <ErrorBox message={error || result.error} />
+      <ErrorBox message={error || result.error || detail.error} />
+      {detail.loading && <Loading />}
       <p className="text-sm text-muted">
         保留仍在使用的安装与必要历史记录，只清理应用拥有的文件。第三方服务和外部目录由其所有者管理。
       </p>
-      {result.data?.map((row) => (
+      {rows?.map((row) => (
         <section
           key={row.id}
           aria-label={`清理：${row.name}`}
@@ -636,22 +642,29 @@ export function MCPRemoveDialog({
 }
 
 export function MCPPreparations({ version, changed }: { version: number; changed: () => void }) {
+  const [params] = useSearchParams();
+  const selected = params.get('operation');
   const [tick, setTick] = useState(0);
   const result = useResource<Operation[]>('/api/mcp/operations', `${version}:${tick}`);
-  const working = result.data?.some((row) =>
+  const detail = useResource<Operation>(selected ? `/api/mcp/operations/${encodeURIComponent(selected)}` : null, `${version}:${tick}`);
+  const rows = detail.data ? [detail.data, ...(result.data ?? []).filter((row) => row.id !== detail.data!.id)] : result.data;
+  const working = rows?.some((row) =>
     ['importing', 'queued', 'preparing', 'testing'].includes(row.status),
   );
   useEffect(() => {
     if (!working) return;
-    const timer = setInterval(() => setTick((v) => v + 1), 1500);
+    const timer = setInterval(() => { if (document.visibilityState !== 'hidden') setTick((v) => v + 1); }, 1500);
     return () => clearInterval(timer);
   }, [working]);
   return (
     <>
-      <ErrorBox message={result.error} />
-      {!!result.data?.length && <h2>待处理的候选配置</h2>}
-      {result.data?.map((row) => (
-        <Candidate key={`${row.id}:${row.status}:${row.attempts}`} row={row} changed={changed} />
+      <ErrorBox message={result.error || detail.error} />
+      {detail.loading && <Loading />}
+      {!!rows?.length && <h2>待处理的候选配置</h2>}
+      {rows?.map((row) => (
+        ['active', 'removed', 'archived'].includes(row.status)
+          ? <p key={row.id} className="rounded-lg border border-line bg-white p-4 text-sm">{row.parameters.name}：{row.status === 'active' ? '已应用，后续操作请在连接中管理。' : '候选已移除，仅保留历史记录。'}</p>
+          : <Candidate key={`${row.id}:${row.status}:${row.attempts}`} row={row} changed={changed} />
       ))}
     </>
   );

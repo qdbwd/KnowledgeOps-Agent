@@ -348,6 +348,10 @@ def test_sse_http_contract_with_redis_enabled(business_sessions, redis_case):
         settings=SimpleNamespace(
             workspace_root=None, api_allowed_hosts="testserver,localhost,127.0.0.1"
         ),
+        # 注入服务不持有真实维护租约时，用非 None 占位表示"已由外层持有"，
+        # 避免测试去获取正式库的写入保护；中间件仍会调用只读检查。
+        maintenance=SimpleNamespace(),
+        check_maintenance=lambda: None,
     )
     with TestClient(create_app(services=services, publish_jobs=False)) as client:
         response = client.get(f"/api/runs/{run['id']}/events", headers={"Last-Event-ID": "1"})

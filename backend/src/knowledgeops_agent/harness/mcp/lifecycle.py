@@ -105,6 +105,15 @@ class MCPCleaner:
                     for row in session.scalars(select(db.ExtensionOperation).where(
                         db.ExtensionOperation.kind == CLEANUP).order_by(db.ExtensionOperation.updated_at.desc()).limit(limit))]
 
+    def get(self, identity):
+        """全局活动可直接定位旧清理记录，不受最近列表的条数限制。"""
+        with self.sessions() as session:
+            row = session.get(db.ExtensionOperation, identity)
+            if not row or row.kind != CLEANUP:
+                raise KeyError('MCP清理记录不存在')
+            return {'id': row.id, 'target': row.target, 'name': row.parameters.get('name', ''),
+                    'status': row.status, 'result': row.result, 'error_code': row.error_code}
+
     def retry(self, identity):
         with self.sessions.begin() as session:
             lock_control(session)

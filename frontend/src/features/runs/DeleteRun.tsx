@@ -5,7 +5,7 @@ import type { Run } from '../../shared/types/types';
 import { Button } from '../../shared/ui/Button';
 import { AssetDeletionDialog, AssetDeletionHistory } from '../sources/AssetDeletion';
 
-export function DeleteRunButton({ run, leave = false }: { run: Run; leave?: boolean }) {
+export function DeleteRunButton({ run, leave = false }: { run: Pick<Run, 'id' | 'task' | 'parent_id' | 'user_deleted_at'>; leave?: boolean }) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   if (run.parent_id || run.user_deleted_at) return null;

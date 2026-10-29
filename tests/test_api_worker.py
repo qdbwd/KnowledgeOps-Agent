@@ -51,6 +51,26 @@ def enqueue(client, *, mode="preview"):
     return conversation, response.json(), body
 
 
+def test_api_startup_refuses_existing_backup_window(services):
+    from knowledgeops_agent.app.application import create_app
+    from knowledgeops_agent.persistence.maintenance import MaintenanceBusy, maintenance_lease
+
+    with maintenance_lease(services.engine, exclusive=True):
+        with pytest.raises(MaintenanceBusy), TestClient(create_app(services=services, publish_jobs=False)):
+            pytest.fail('API startup passed the maintenance barrier')
+
+
+def test_api_lease_loss_refuses_new_requests(client, services):
+    from sqlalchemy import text
+
+    with services.engine.begin() as connection:
+        connection.execute(text('SELECT pg_terminate_backend(:pid)'), {'pid': services.maintenance.backend_pid})
+    response = client.post('/api/conversations', json={'title': '不得创建'})
+    assert response.status_code == 503
+    assert response.json()['code'] == 'maintenance_lost'
+    assert services.jobs.conversations() == []
+
+
 def test_development_reports_are_not_exposed_as_product_endpoints(client):
     response = client.get("/api/evaluations")
     assert response.status_code == 404

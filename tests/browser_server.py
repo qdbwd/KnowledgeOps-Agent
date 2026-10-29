@@ -60,6 +60,24 @@ def main():
                 shutil.copyfile(original_skills / "availability.json", skill_root / "availability.json")
             os.environ["SKILLS_DIRECTORY"] = str(skill_root)
             os.environ["MCP_DIRECTORY"] = str(Path(storage) / "mcp")
+            (Path(storage) / "mcp").mkdir()
+            # 备份记录使用夹具目录：不读取本机真实归档，也不写 artifacts。
+            backups = Path(storage) / "backups"
+            verified = backups / "fixture000001"
+            (verified / "operations").mkdir(parents=True)
+            (verified / "manifest.json").write_text(
+                '{"format": 3, "created_at": "2026-10-24T00:00:00Z"}', encoding="utf-8")
+            (verified / "operations" / "op1.json").write_text(
+                '{"id": "op1", "kind": "backup", "state": "complete", "phase": "complete"}',
+                encoding="utf-8")
+            (verified / "restore-verification.json").write_text(
+                '{"database": "restore_fixture", "checks": {"hashes": true, "references": true}}',
+                encoding="utf-8")
+            broken = backups / "fixture000000"
+            (broken / "operations").mkdir(parents=True)
+            (broken / "operations" / "op0.json").write_text(
+                '{"id": "op0", "kind": "backup", "state": "failed"}', encoding="utf-8")
+            os.environ["BACKUP_ARTIFACT_ROOT"] = str(backups)
             SkillManagement(sessions, skill_root).adopt_existing()
             sessions.configure(info={"file_store": FileStore(Path(storage) / "workspace")})
             jobs, knowledge = RunService(sessions), KnowledgeService(sessions)
@@ -196,6 +214,150 @@ def main():
             offline_provider, offline_saver = LearningProvider(), InMemorySaver()
             async_provider = None
             input_providers = {}
+
+            @app.post('/api/__offline/conversation-browsing-seed')
+            def seed_conversation_browsing():
+                """只在隔离测试服务器准备长历史；不启动模型、worker或正常会话。"""
+                from datetime import UTC, datetime, timedelta
+
+                from knowledgeops_agent.app.conversations import touch_messages
+                from knowledgeops_agent.persistence.models import ChatMessage, Conversation
+
+                token = uuid4().hex[:10]
+                now = datetime.now(UTC)
+                with sessions.begin() as session:
+                    for index in range(17):
+                        conversation = Conversation(title=f'浏览测试-{token}-{index:02d}', created_at=now)
+                        session.add(conversation)
+                        session.flush()
+                        root = str(uuid4())
+                        session.add(Run(id=root, root_id=root, checkpoint_id=root, conversation_id=conversation.id,
+                            task='离线目录样例', status='completed', budgets={}, input_data={}, outcome={}))
+                        session.flush()
+                        session.add(ChatMessage(conversation_id=conversation.id, run_id=root, role='user', content='目录中的正文'))
+                        touch_messages(session, conversation.id, activity_at=now - timedelta(minutes=18-index))
+                    session.add(Conversation(title=f'仅材料-{token}'))
+                    long = Conversation(title=f'长对话-{token}', created_at=now)
+                    session.add(long)
+                    session.flush()
+                    anchor_id = str(uuid4())
+                    for index in range(46):
+                        root = str(uuid4())
+                        session.add(Run(id=root, root_id=root, checkpoint_id=root, conversation_id=long.id,
+                            conversation_sequence=index+1, execution_sequence=index+1, task='离线历史样例',
+                            status='completed', budgets={}, input_data={}, outcome={}))
+                        session.flush()
+                        for role in ('user', 'assistant'):
+                            identity = anchor_id if index == 17 and role == 'assistant' else str(uuid4())
+                            content = f'{role} 第{index:02d}轮\n\n' + ('保留原始正文，支持跨页连续阅读。\n\n' * 3)
+                            if identity == anchor_id:
+                                content += f'独有命中词-{token}'
+                            session.add(ChatMessage(id=identity, conversation_id=long.id, run_id=root, role=role,
+                                content=content, user_sequence=index+1, created_at=now + timedelta(seconds=index),
+                                protocol_payload={'private': f'不公开的协议-{token}'} if role == 'assistant' else None))
+                    touch_messages(session, long.id, activity_at=now)
+                    return {'conversation_id': long.id, 'anchor_id': anchor_id, 'token': token}
+
+            @app.post('/api/__offline/application-activity-seed')
+            def seed_application_activity():
+                """准备跨页面活动样例；只写隔离 schema，不启动模型或 worker。
+
+                直接落 Run 的展示字段（status/outcome/result_version）复现真实状态机结果，
+                队列、审批和恢复动作仍指向原页面，种子本身不冒充执行或批准。
+                """
+                from datetime import UTC, datetime
+
+                from knowledgeops_agent.persistence.models import (
+                    CleanupJob,
+                    Conversation,
+                    ExtensionOperation,
+                    Run,
+                    RunReadReceipt,
+                )
+
+                token = uuid4().hex[:8]
+                now = datetime.now(UTC)
+                identities = {}
+                with sessions.begin() as session:
+                    def new_conversation(title):
+                        row = Conversation(title=f'{title}-{token}')
+                        session.add(row)
+                        session.flush()
+                        return row
+
+                    def new_run(conversation, key, status, *, sequence=1, outcome=None,
+                                result_version=0, parent=None):
+                        identity = str(uuid4())
+                        session.add(Run(id=identity, root_id=parent or identity, parent_id=parent,
+                            checkpoint_id=identity, conversation_id=conversation.id,
+                            conversation_sequence=sequence, execution_sequence=sequence,
+                            task=f'{key}-{token}', status=status, budgets={}, input_data={},
+                            outcome=outcome or {}, result_version=result_version,
+                            result_at=now if result_version else None))
+                        session.flush()
+                        identities[key] = identity
+                        return identity
+
+                    def read_receipt(run_id, version):
+                        session.add(RunReadReceipt(run_id=run_id, version=version, updated_at=now))
+
+                    # 1) 待处理三类：批准、回答、执行结果未知；均带结果版本即同时"未读"。
+                    approval_conversation = new_conversation('活动-批准')
+                    new_run(approval_conversation, 'approval', 'interrupted',
+                        outcome={'kind': 'waiting_approval'}, result_version=1)
+                    new_run(new_conversation('活动-回答'), 'input', 'waiting_input',
+                        outcome={'kind': 'waiting_input'}, result_version=1)
+                    new_run(new_conversation('活动-未知'), 'unknown', 'interrupted',
+                        outcome={'kind': 'execution_unknown'}, result_version=1)
+
+                    # 2) 进行中：根运行加一个运行中的子任务，用于侧栏"进行中"和子任务摘要。
+                    active_conversation = new_conversation('活动-进行')
+                    active = new_run(active_conversation, 'active', 'running')
+                    new_run(active_conversation, 'active_child', 'running', sequence=2, parent=active)
+
+                    # 3) 新结果：结果版本 3、回执停在 1；标为已读只推进回执，不动任务状态。
+                    unread = new_run(new_conversation('活动-未读'), 'unread', 'completed',
+                        outcome={'kind': 'completed'}, result_version=3)
+                    read_receipt(unread, 1)
+
+                    # 4) 历史终态已读：迁移初始化后的形态，不应再出现在"新结果"。
+                    history = new_run(new_conversation('活动-已读'), 'history', 'completed',
+                        outcome={'kind': 'completed'}, result_version=1)
+                    read_receipt(history, 1)
+
+                    # 5) 整组关注原因：根为等待批准，但最早一个子任务才是"执行结果待核对"，
+                    #    页面只展示最近三个子摘要时也不能把这个原因漏掉。
+                    aggregate_conversation = new_conversation('活动-聚合')
+                    aggregate = new_run(aggregate_conversation, 'aggregate', 'interrupted',
+                        outcome={'kind': 'waiting_approval'}, result_version=1)
+                    for index in range(2, 7):
+                        new_run(aggregate_conversation, f'aggregate_child_{index}',
+                            'interrupted' if index == 2 else 'completed',
+                            sequence=index, outcome={'kind': 'execution_unknown'} if index == 2 else {'kind': 'completed'},
+                            parent=aggregate)
+
+                    # 6) 后台操作失败：会话删除作业与 MCP 准备，各自链接回原管理入口。
+                    session.add(CleanupJob(target_kind='conversation', target_id=approval_conversation.id,
+                        status='failed', phase='files', summary={'title': f'后台删除未完成-{token}'},
+                        last_error='offline fixture'))
+                    session.add(ExtensionOperation(kind='mcp_candidate', target=token, status='failed',
+                        parameters={'package': '@offline/fixture'}, error_code='offline_fixture'))
+                return {'token': token, **identities}
+
+            @app.post('/api/__offline/application-activity-complete/{run_id}')
+            def complete_application_activity(run_id: str):
+                """把运行推进到终态并产生新结果版本；用于验证"不导航也能收到变化"。"""
+                from datetime import UTC, datetime
+
+                from knowledgeops_agent.app.activity import record_result
+
+                with sessions.begin() as session:
+                    run = session.get(Run, run_id)
+                    if run is None:
+                        raise ValueError('offline activity fixture does not exist')
+                    run.status = 'completed'
+                    record_result(session, run, 'finished', datetime.now(UTC))
+                    return {'id': run.id, 'result_version': run.result_version}
 
             @app.post('/api/__offline/mcp-preparation/{operation_id}')
             def execute_mcp_preparation(operation_id: str):

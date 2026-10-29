@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -324,6 +325,10 @@ class Conversation(Base):
     __tablename__ = "conversations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(String(300), default="新对话")
+    creation_key: Mapped[str | None] = mapped_column(String(200), unique=True)
+    creation_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    messages_revision: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     # 先封闭读写再跨存储清理；墓碑不保存已删除聊天正文。
     deletion_state: Mapped[str] = mapped_column(String(20), default="active", server_default="active")
     deletion_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -341,6 +346,15 @@ class Conversation(Base):
         ForeignKey("continuation_snapshots.id", use_alter=True, name="fk_latest_continuation")
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ConversationIndexState(Base):
+    """会话目录的展示修订；只使旧游标失效，不成为聊天内容的保留依赖。"""
+
+    __tablename__ = "conversation_index_state"
+    __table_args__ = (CheckConstraint("id = 1"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    revision: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
 
 
 class ExecutionRule(Base):
@@ -465,6 +479,8 @@ class Run(Base):
     applied_authority_epoch: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     generation: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     request_key: Mapped[str | None] = mapped_column(String(200), unique=True)
+    # HTTP原始请求的规范摘要；先查已接受身份，再读取可能已变化的设置/材料。
+    submission_fingerprint: Mapped[str | None] = mapped_column(String(64))
     kind: Mapped[str] = mapped_column(String(30), default="agent")
     task: Mapped[str] = mapped_column(Text)
     input_data: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -480,6 +496,9 @@ class Run(Base):
     active_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     event_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    # 展示结果的单调版本与诊断事件序号分开；已读不会修改执行或恢复状态。
+    result_version: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    result_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # 独立于执行 status；过期不伪造任务成功，也不能再次恢复已清理的位置。
@@ -490,6 +509,25 @@ class Run(Base):
     details_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     details_summary: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
     input_fingerprint: Mapped[str | None] = mapped_column(String(64))
+
+
+class ApplicationActivityState(Base):
+    """跨页面观察时钟；事件和已读推进同事务提交，不依赖本机时间。"""
+
+    __tablename__ = "application_activity_state"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    revision: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    __table_args__ = (CheckConstraint("id = 1"),)
+
+
+class RunReadReceipt(Base):
+    """当前单用户应用的独立已读位置；不持有正文，不是生命周期保留根。"""
+
+    __tablename__ = "run_read_receipts"
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True)
+    version: Mapped[int] = mapped_column(BigInteger, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (CheckConstraint("version >= 0"),)
 
 
 class RunControl(Base):

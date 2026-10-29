@@ -130,4 +130,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from knowledgeops_agent.persistence.maintenance import managed_main
+
+    managed_main(main)

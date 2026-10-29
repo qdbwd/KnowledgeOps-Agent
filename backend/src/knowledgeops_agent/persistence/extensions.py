@@ -42,9 +42,10 @@ def _tree(root):
             yield path
 
 
-def create_extensions(sessions, *, skills: Path, mcp: Path, output: Path, include_data=False):
+def extension_inventory(sessions, *, skills: Path, mcp: Path, include_data=False):
+    """可移植集合的实际字节/安装清单；供备份前后比较，不含缓存、环境或密钥。"""
     storage = MCPInstallStorage(mcp)
-    hashes: dict[str, str] = {}
+    paths: dict[str, Path] = {}
     installations, connections = {}, set()
     with sessions() as session:
         # 正式0039升级前也必须能备份，旧库没有安装表。
@@ -62,8 +63,38 @@ def create_extensions(sessions, *, skills: Path, mcp: Path, output: Path, includ
         if inspect(session.connection()).has_table('extension_operations'):
             connections.update(session.scalars(select(db.ExtensionOperation.target).where(
                 db.ExtensionOperation.kind == 'mcp_candidate')))
-    manifest = {'format': FORMAT, 'source_mcp_root': str(storage.root), 'files': hashes,
+    manifest = {'format': FORMAT, 'source_mcp_root': str(storage.root), 'files': {},
                 'installations': installations, 'include_data': include_data, 'data_connections': []}
+    for path in _tree(skills):
+        paths['skills/' + path.relative_to(skills).as_posix()] = path
+    if include_data:
+        for connection in sorted(connections):
+            directory = storage.checked('data', connection)
+            if not directory.exists():
+                continue
+            expected = {'format': MCP_FORMAT, 'connection_id': connection, 'area': 'data'}
+            if json.loads((directory / 'owner.json').read_text()) != expected:
+                raise ValueError('MCP服务数据缺少有效归属')
+            manifest['data_connections'].append(connection)
+            for path in _tree(directory):
+                paths[f'mcp/data/{connection}/' + path.relative_to(directory).as_posix()] = path
+    hashes = {}
+    for name, path in paths.items():
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, 'rb') as stream:
+            before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode):
+                raise ValueError('扩展归档对象不是普通文件')
+            hashes[name] = hashlib.file_digest(stream, 'sha256').hexdigest()
+            after = os.fstat(stream.fileno())
+            if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                raise ValueError('读取期间扩展文件发生变化，请停止外部编辑后重试')
+    manifest['files'] = hashes
+    return manifest, paths
+
+
+def create_extensions(sessions, *, skills: Path, mcp: Path, output: Path, include_data=False):
+    manifest, paths = extension_inventory(sessions, skills=skills, mcp=mcp, include_data=include_data)
     with tarfile.open(output, 'x:gz') as archive:
         def add(path, name):
             descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -72,30 +103,23 @@ def create_extensions(sessions, *, skills: Path, mcp: Path, output: Path, includ
                 if not stat.S_ISREG(info.st_mode):
                     raise ValueError('扩展归档对象不是普通文件')
                 digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+                if digest != manifest['files'][name]:
+                    raise ValueError('打包期间扩展文件发生变化')
                 stream.seek(0)
                 entry = tarfile.TarInfo(name)
                 entry.size, entry.mode = info.st_size, stat.S_IMODE(info.st_mode) & 0o777
                 archive.addfile(entry, stream)
-                hashes[name] = digest
-        for path in _tree(skills):
-            add(path, 'skills/' + path.relative_to(skills).as_posix())
-        if include_data:
-            for connection in sorted(connections):
-                directory = storage.checked('data', connection)
-                if not directory.exists():
-                    continue
-                expected = {'format': MCP_FORMAT, 'connection_id': connection, 'area': 'data'}
-                if json.loads((directory / 'owner.json').read_text()) != expected:
-                    raise ValueError('MCP服务数据缺少有效归属')
-                manifest['data_connections'].append(connection)
-                for path in _tree(directory):
-                    add(path, f'mcp/data/{connection}/' + path.relative_to(directory).as_posix())
+        for name, path in paths.items():
+            add(path, name)
         payload = json.dumps(manifest, ensure_ascii=False).encode()
         entry = tarfile.TarInfo('extensions.json')
         entry.size, entry.mode = len(payload), 0o600
         archive.addfile(entry, io.BytesIO(payload))
-    return {'skill_files': sum(name.startswith('skills/') for name in hashes),
-            'installations': len(installations), 'data_connections': len(manifest['data_connections'])}
+    current, _ = extension_inventory(sessions, skills=skills, mcp=mcp, include_data=include_data)
+    if current != manifest:
+        raise ValueError('扩展集合在归档期间变化，请停止外部编辑后重试')
+    return {'skill_files': sum(name.startswith('skills/') for name in manifest['files']),
+            'installations': len(manifest['installations']), 'data_connections': len(manifest['data_connections'])}
 
 
 def restore_extensions(sessions, *, archive: Path, target: Path):

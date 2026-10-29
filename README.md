@@ -441,11 +441,15 @@ python scripts/dev.py --run python scripts/maintain_lifecycle.py --job-id JOB_ID
 
 ## 备份、恢复与故障
 
-正常备份前先让任务结束，并停止应用写入和本地工作区编辑，保留postgres运行。开发模式在dev.py终端按Ctrl+C；生产部署模式在Windows执行`docker compose stop api worker`。然后在Windows项目根目录创建备份：
+正常备份前停止应用写入和本地工作区编辑，保留postgres运行。开发模式在dev.py终端按Ctrl+C；生产部署模式在Windows执行`docker compose stop api worker`。有未完成任务时先按既有暂停/停止规则处理；持久的暂停、排队记录本身不阻止备份，也不会因备份而恢复执行。然后在Windows项目根目录创建备份：
 
 ```powershell
 ./scripts/backup.ps1 -Mode create -Runtime development
 ```
+
+脚本检查应用/维护进程及数据库连接，并在数据库和完整工作区上持有维护互斥；此时新启动的应用、初始化或迁移命令会被拒绝。开发容器可以继续运行，但内部API、Worker及维护写入必须停止。请不要为了启动已存在的dev容器再次运行初始化；需要恢复一个已经准备好的容器时，可先`docker compose start postgres redis`，再`docker start knowledgeops-agent-dev-1`，避免Compose依赖自动重跑init。新设备准备仍用正常开发初始化入口。
+
+整个导出与归档过程保持同一保护连接，并核对文件集合、归档内容和复制后的数据库摘要。连接丢失、文件变化或命令失败时保留`operation.json`和部分文件；只有校验通过才发布`manifest.json`。失败目录不能当作备份使用，排除原因后使用新目录重试。工作区的`.knowledgeops-maintenance.lock`只是文件锁载体，存在不表示应用正在运行，不要删除它来解锁；它不进入备份。外部编辑器不参与应用锁，备份期间仍须停止编辑。备份创建/归档完整性通过不等于已经完成隔离恢复验证。
 
 开发模式使用正在运行的dev容器打包工作区，并用当前源码验证恢复，不需要构建应用镜像，也不会启动普通API/worker。部署环境使用`-Runtime deployment`（旧命令默认值），通过临时应用容器执行；镜像应与备份所需迁移版本一致。备份完成后，开发模式回到dev重新执行`python scripts/dev.py`；生产部署模式执行`./scripts/start.ps1 -Mode production`。
 
@@ -454,6 +458,8 @@ python scripts/dev.py --run python scripts/maintain_lifecycle.py --job-id JOB_ID
 ```powershell
 ./scripts/backup.ps1 -Mode restore -Runtime development -BackupFolder '<本项目 artifacts/backups 下的备份目录>'
 ```
+
+每次恢复在备份目录的`operations/`保存独立操作记录，报告使用独立名称；`restore-verification.json`指向最新成功报告，替换前保存原报告。失败时原备份、旧报告和新建的部分恢复目标均保留，不自动清空后重试；检查失败阶段后使用新的隔离目标。
 
 备份格式3包含PostgreSQL业务库、独立模型回执库副本、完整工作区包、扩展归档及SHA-256清单。扩展归档保存完整skills文件（含脚本、资源和未完成管理操作）与MCP安装清单/锁文件；不复制node_modules、venv、缓存和mcp/.env。服务自有data默认不备份，需要保留时明确添加`-IncludeMcpData`；此选项保存服务数据原样，内容由具体服务决定。部署环境变量和项目密钥另行安全迁移，不能依赖普通归档恢复凭据。
 

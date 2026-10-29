@@ -9,7 +9,8 @@ import os
 import stat
 from pathlib import Path, PurePosixPath
 
-MANAGED_DIRECTORIES = {"uploads", "artifacts", "deliveries", ".knowledgeops-temporary", ".knowledgeops-content"}
+MANAGED_DIRECTORIES = {"uploads", "artifacts", "deliveries", ".knowledgeops-temporary", ".knowledgeops-content",
+                       ".knowledgeops-maintenance.lock"}
 FILE_MUTATIONS = frozenset({"write_file", "edit_file", "delete"})
 _TEXT_BYTES = 8192
 

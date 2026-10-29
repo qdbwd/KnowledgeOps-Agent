@@ -4,6 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter } from 'react-router-dom';
 import { DeleteConversationDialog } from './DeleteConversationDialog';
 import { BackgroundDeletions } from './BackgroundDeletions';
+import { ApplicationActivity } from '../activity/ApplicationActivity';
+import { ConversationDeletionHistory } from './ConversationDeletionHistory';
 
 afterEach(() => {
   cleanup();
@@ -48,9 +50,8 @@ it('returns immediately after accepted deletion without a cleaning page', async 
     JSON.stringify({ expected_version: preview.version }),
   );
   expect(screen.queryByText('正在清理会话')).not.toBeInTheDocument();
-  expect(JSON.parse(localStorage.getItem('knowledgeops:pending-conversation-deletions')!)).toEqual([
-    'chat',
-  ]);
+  // 服务端已持久登记，浏览器不再维护第二份待清理索引。
+  expect(localStorage.getItem('knowledgeops:pending-conversation-deletions')).toBeNull();
 });
 it('blocks unresolved execution and does not cancel it', async () => {
   vi.stubGlobal(
@@ -77,27 +78,36 @@ it('keeps a changed preview open without resubmitting deletion', async () => {
   expect(onDeleted).not.toHaveBeenCalled();
   expect(requests.mock.calls.filter(([, options]) => options?.method === 'DELETE')).toHaveLength(1);
 });
-it('reloads pending cleanup, only reports failure and retries the same job', async () => {
+it('finds failure from the global feed and retries only from its original conversation handler', async () => {
   localStorage.setItem('knowledgeops:pending-conversation-deletions', '["chat"]');
   let completed = false;
-  const requests = vi.fn(async (_url: string, options?: RequestInit) => {
+  const notice = { id: 'cleanup', target_id: 'chat', kind: 'deletion', status: 'failed', label: '未完成的会话清理', attention: true, href: '/conversations?deletion=chat' };
+  const requests = vi.fn(async (url: string, options?: RequestInit) => {
     if (options?.method === 'POST') completed = true;
-    return Response.json({ status: completed ? 'completed' : 'failed' });
+    if (url.startsWith('/api/activity?')) return Response.json({ revision: 1,
+      counts: { all: 0, attention: 0, active: 0, unread: 0 }, conversations: {}, checked_at: '',
+      management: { attention: completed ? 0 : 1, items: completed ? [] : [notice], truncated: false } });
+    if (url.startsWith('/api/activity/management')) return Response.json({ items: completed ? [] : [notice], next_cursor: null });
+    return Response.json({ status: completed ? 'completed' : 'failed', summary: { title: '原会话' } });
   });
   vi.stubGlobal('fetch', requests);
   render(
-    <BackgroundDeletions>
-      <p>正常页面</p>
-    </BackgroundDeletions>,
+    <MemoryRouter initialEntries={['/conversations?deletion=chat']}>
+      <ApplicationActivity conversationIds={[]} version={0}><BackgroundDeletions>
+        <ConversationDeletionHistory />
+      </BackgroundDeletions></ApplicationActivity>
+    </MemoryRouter>,
   );
   fireEvent.click(await screen.findByRole('button', { name: '重试后台清理' }));
   await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
   await waitFor(() =>
     expect(
-      JSON.parse(localStorage.getItem('knowledgeops:pending-conversation-deletions')!),
-    ).toEqual([]),
+      localStorage.getItem('knowledgeops:pending-conversation-deletions'),
+    ).toBeNull(),
   );
   expect(requests.mock.calls.find(([, options]) => options?.method === 'POST')?.[0]).toBe(
     '/api/conversations/chat/deletion/retry',
   );
+  expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
+  expect(await screen.findByText('清理已完成，仍有依赖的内容已保留。')).toBeInTheDocument();
 });

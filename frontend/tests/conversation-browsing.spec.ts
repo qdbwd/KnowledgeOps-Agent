@@ -1,0 +1,62 @@
+import { expect, test } from '@playwright/test';
+
+test('all chats remain reachable and body search opens the exact historical message on desktop and mobile', async ({ page, request }, info) => {
+  const seed = await (await request.post('/api/__offline/conversation-browsing-seed')).json();
+  await page.goto('/');
+  await page.locator('.recent').getByRole('link', { name: '查看全部会话与搜索 →' }).click();
+  await expect(page.getByRole('heading', { name: '全部会话' })).toBeVisible();
+  await page.getByRole('searchbox').fill(seed.token);
+  await page.getByRole('button', { name: '搜索', exact: true }).click();
+  await expect(page.getByRole('article')).toHaveCount(18);
+  await expect(page.getByText(`仅材料-${seed.token}`)).toHaveCount(0);
+  await page.getByRole('searchbox').fill(`不公开的协议-${seed.token}`);
+  await page.getByRole('button', { name: '搜索', exact: true }).click();
+  await expect(page.getByText('没有找到匹配的会话')).toBeVisible();
+  await page.getByRole('searchbox').fill(`独有命中词-${seed.token}`);
+  await page.getByRole('button', { name: '搜索', exact: true }).click();
+  const hit = page.getByRole('link').filter({ hasText: `独有命中词-${seed.token}` });
+  await hit.click();
+  await expect(page).toHaveURL(new RegExp(`message=${seed.anchor_id}`));
+  const message = page.getByRole('article', { name: '搜索命中的消息' });
+  await expect(message).toContainText(`独有命中词-${seed.token}`);
+  await expect(message).toBeInViewport();
+  await page.screenshot({ path: info.outputPath('search-anchor-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/conversations');
+  await page.getByRole('searchbox').fill(`独有命中词-${seed.token}`);
+  await page.getByRole('button', { name: '搜索', exact: true }).click();
+  await hit.click();
+  await expect(message).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('search-anchor-mobile.png') });
+});
+
+test('long histories load older pages without moving the visible message and can return to the latest window', async ({ page, request }, info) => {
+  const seed = await (await request.post('/api/__offline/conversation-browsing-seed')).json();
+  await page.goto(`/chat/${seed.conversation_id}`);
+  const messages = page.locator('[data-message-id]');
+  await expect(messages).toHaveCount(40);
+  const firstId = await messages.first().getAttribute('data-message-id');
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(`**/api/conversations/${seed.conversation_id}/messages/page?cursor=*`, async (route) => {
+    const response = await route.fetch();
+    await gate;
+    await route.fulfill({ response });
+  });
+  const loading = page.waitForRequest((request) => request.url().includes('/messages/page?cursor='));
+  await page.getByRole('button', { name: '加载更早的消息' }).click();
+  await loading;
+  const oldPosition = (await page.locator(`[data-message-id="${firstId}"]`).boundingBox())!.y;
+  release();
+  await expect(messages).toHaveCount(80);
+  const newPosition = (await page.locator(`[data-message-id="${firstId}"]`).boundingBox())!.y;
+  expect(Math.abs(newPosition - oldPosition)).toBeLessThan(4);
+  await page.unroute(`**/api/conversations/${seed.conversation_id}/messages/page?cursor=*`);
+  await page.getByRole('button', { name: '加载更早的消息' }).click();
+  await expect(messages).toHaveCount(92);
+  expect(new Set(await messages.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-message-id')))).size).toBe(92);
+  await page.getByRole('button', { name: '回到最新消息' }).click();
+  await expect(messages.last()).toBeInViewport();
+  await page.screenshot({ path: info.outputPath('history-pagination.png') });
+});

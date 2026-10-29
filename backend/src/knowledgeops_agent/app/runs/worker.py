@@ -384,9 +384,13 @@ def prepare_mcp(operation_id: str, generation: int, *, services: Services | None
     services = services or _services
     if services is None:
         raise RuntimeError("start the worker entry point before preparing MCP dependencies")
-    if _lease_connection is not None:
-        _lease_connection.check()
-    return MCPManagement(services.sessions, live_check=_lease_connection.check if _lease_connection else None).execute(operation_id, generation)
+    def check_live():
+        services.check_maintenance()
+        if _lease_connection is not None:
+            _lease_connection.check()
+
+    check_live()
+    return MCPManagement(services.sessions, live_check=check_live).execute(operation_id, generation)
 
 
 def main() -> None:
@@ -396,7 +400,11 @@ def main() -> None:
     try:
         with worker_lease(_services.engine) as lease:
             _lease_connection = lease
-            _services.jobs.live_check = lease.check
+            def check_live():
+                _services.check_maintenance()
+                lease.check()
+
+            _services.jobs.live_check = check_live
             count = _services.jobs.recover_on_startup()
             logger.warning("worker startup: %s unfinished runs await explicit resume", count)
             # 顶层 -m 薄入口调用本模块 main；显式注册这里已初始化依赖的函数，
@@ -407,7 +415,7 @@ def main() -> None:
             def watch_lease():
                 while not stop_watchdog.wait(2):
                     try:
-                        lease.check()
+                        check_live()
                     except RuntimeError:
                         # 只终止本 worker，Celery 正常处理 SIGTERM。进程重启后
                         # 遗留任务等待用户恢复，绝不靠重连静默继续收费操作。

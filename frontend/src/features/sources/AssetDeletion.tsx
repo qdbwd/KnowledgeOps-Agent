@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, messageOf, send, useResource } from '../../shared/api/api';
 import { useWorkspace } from '../../shared/state/workspace';
 import { Button } from '../../shared/ui/Button';
@@ -164,6 +165,8 @@ export function AssetDeletionDialog({
 
 /** 刷新浏览器后仍能找到未结束/失败的删除；只有存在运行作业时才轮询。 */
 export function AssetDeletionHistory({ kind }: { kind?: 'knowledge' | 'run' } = {}) {
+  const [params] = useSearchParams();
+  const selected = params.get('deletion');
   const { version, refresh } = useWorkspace();
   const [tick, setTick] = useState(0);
   const [error, setError] = useState('');
@@ -172,29 +175,35 @@ export function AssetDeletionHistory({ kind }: { kind?: 'knowledge' | 'run' } = 
     `/api/asset-deletions${kind ? `?kind=${kind}` : ''}`,
     `${version}:${tick}`,
   );
-  const pending = result.data?.some((row) => ['pending', 'running'].includes(row.status));
+  const selection = useResource<Job>(selected ? `/api/asset-deletions/${encodeURIComponent(selected)}` : null, `${version}:${tick}`);
+  const selectedJob = selection.data && (kind ? selection.data.target_kind === kind : ['source', 'delivery', 'draft'].includes(selection.data.target_kind)) ? selection.data : null;
+  const jobs = selectedJob ? [selectedJob, ...(result.data ?? []).filter((row) => row.id !== selectedJob.id)] : result.data;
+  const pending = jobs?.some((row) => ['pending', 'running'].includes(row.status));
   useEffect(() => {
     if (!pending) return;
-    const timer = setInterval(() => setTick((value) => value + 1), 1500);
+    const timer = setInterval(() => { if (document.visibilityState !== 'hidden') setTick((value) => value + 1); }, 1500);
     return () => clearInterval(timer);
   }, [pending]);
-  if (!result.data?.length && !result.error) return null;
+  if (!jobs?.length && !result.error && !selected) return null;
   return (
     <details
       className="mt-8"
       role="region"
       aria-label={kind ? '删除管理' : '最近的删除'}
-      open={!kind || result.data?.some((job) => job.status === 'failed') || undefined}
+      open={Boolean(selected) || !kind || result.data?.some((job) => job.status === 'failed') || undefined}
     >
       <summary className="cursor-pointer text-sm text-muted">
         {kind ? '删除管理' : '最近的删除'}
         {result.data?.some((job) => job.status === 'failed') ? ' · 有清理失败的记录' : ''}
       </summary>
-      <ErrorBox message={error || result.error} />
+      <ErrorBox message={error || result.error || selection.error} />
+      {selected && selection.data && !selectedJob && <p className="text-sm text-muted">此删除记录属于其他管理页面，请从运行记录中的后台操作入口打开。</p>}
+      {selection.loading && <Loading />}
       <div className="grid gap-2">
-        {result.data?.map((job) => (
+        {jobs?.map((job) => (
           <div
             key={job.id}
+            aria-label={job.id === selected ? '选中的删除记录' : undefined}
             className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-white px-4 py-3 text-sm"
           >
             <div className="min-w-0 flex-1 break-words">

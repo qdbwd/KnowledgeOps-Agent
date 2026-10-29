@@ -1,12 +1,11 @@
 import { Button } from '../../shared/ui/Button';
 import { useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { Activity, ArrowLeft, RotateCcw } from 'lucide-react';
-import { messageOf, send, terminal, usePagedResource, useResource } from '../../shared/api/api';
+import { ArrowLeft, RotateCcw } from 'lucide-react';
+import { messageOf, send, terminal, useResource } from '../../shared/api/api';
 import { RunPauseControl } from './RunPauseControl';
-import { Badge, Empty, ErrorBox, Loading, Markdown, PageTitle } from '../../shared/ui/components';
+import { Badge, ErrorBox, Loading, Markdown, PageTitle } from '../../shared/ui/components';
 import type { Budgets, Run } from '../../shared/types/types';
-import { useWorkspace } from '../../shared/state/workspace';
 import { ExecutionApprovals } from '../permissions/ExecutionApprovals';
 import { RunQuestions } from './RunQuestions';
 import { RunChildren } from './RunChildren';
@@ -14,69 +13,9 @@ import { TaskActivity } from './TaskActivity';
 import { useRunDetails } from './useRunDetails';
 import { RunOutcome } from './RunOutcome';
 import { DeleteRunButton, RemovedRun } from './DeleteRun';
-import { AssetDeletionHistory } from '../sources/AssetDeletion';
 
-export function RunsPage() {
-  const { version } = useWorkspace();
-  const result = usePagedResource<Run>('/api/runs/page', version);
-  return (
-    <>
-      <PageTitle eyebrow="REVIEW & TRACE" title="运行记录">
-        <Link className="button secondary button-secondary" to="/knowledge/reviews">
-          查看知识变更 →
-        </Link>
-      </PageTitle>
-      <p className="intro text-muted">查看每次任务的结果、工具活动、模型用量与停止原因。</p>
-      <ErrorBox message={result.error} />
-      {result.loading && !result.data.length ? (
-        <Loading />
-      ) : result.data?.length ? (
-        <div className="list-cards grid gap-3">
-          {result.data.map((run) => (
-            <article
-              className="list-card flex items-center gap-[17px] rounded-[9px] border border-line bg-white px-[23px] py-4.5 text-[#5c7057] hover:border-[#aec2a5] hover:no-underline max-md:flex-wrap max-md:gap-3 max-md:p-4 [&>div]:min-w-0 [&>div]:flex-1 [&_h3]:mt-0 [&_h3]:mb-[5px] [&_h3]:text-[#344c37] [&_h3]:[overflow-wrap:anywhere] max-md:[&_h3]:text-[13px] [&_p]:m-0 [&_p]:text-[11px] [&_p]:text-[#85917e] [&_p]:[overflow-wrap:anywhere] [&>span:last-child]:text-[11px] [&>span:last-child]:whitespace-nowrap max-md:[&>span:last-child]:hidden"
-              key={run.id}
-            >
-              <Activity size={20} />
-              <div>
-                <h3>
-                  <Link to={`/runs/${run.id}`}>{run.task.slice(0, 90)}</Link>
-                </h3>
-                <p>
-                  {new Date(run.created_at).toLocaleString()} ·{' '}
-                  {run.kind === 'material'
-                    ? '材料解析'
-                    : run.kind === 'memory_classification'
-                      ? '记忆分类'
-                      : run.kind === 'context_compaction'
-                        ? '上下文压缩'
-                        : run.parent_id
-                          ? '研究子任务'
-                          : '主任务'}
-                </p>
-              </div>
-              <Badge status={run.status} />
-              <DeleteRunButton run={run} />
-              <Link to={`/runs/${run.id}`}>查看 →</Link>
-            </article>
-          ))}
-        </div>
-      ) : (
-        <Empty title="暂无运行记录">通过对话提交第一个任务后，完整过程会保存在这里。</Empty>
-      )}
-      {result.next && (
-        <Button
-          className="secondary button-secondary"
-          disabled={result.loading}
-          onClick={result.loadMore}
-        >
-          {result.loading ? '正在加载…' : '加载更多运行'}
-        </Button>
-      )}
-      <AssetDeletionHistory kind="run" />
-    </>
-  );
-}
+
+export { ActivityRunsPage as RunsPage } from '../activity/ActivityRunsPage';
 
 function ResumeControls({ run, onChanged }: { run: Run; onChanged: () => void }) {
   const [limits, setLimits] = useState<Budgets>(run.budgets);
@@ -194,6 +133,7 @@ export function RunPage() {
         </div>
       </PageTitle>
       <ErrorBox message={error || result.error} />
+      {run.status === 'queued' && <RunBlocking runId={run.id} />}
       <section className="card mb-5.5 rounded-[11px] border border-line bg-white p-6.5 max-md:p-4.5">
         <div className="row flex items-center gap-3 wrap flex-wrap">
           <Badge status={run.status} />
@@ -329,5 +269,27 @@ export function RunArtifactPage() {
         )
       )}
     </>
+  );
+}
+
+type RunBlockingState = {
+  id: string;
+  status: string;
+  claimable: boolean;
+  reason: string;
+  detail: string;
+  action?: string;
+  href: string;
+};
+
+/** 排队原因来自服务端领取规则；这里只解释原因并链接原处理入口，不重试。 */
+function RunBlocking({ runId }: { runId: string }) {
+  const { data, error } = useResource<RunBlockingState>(`/api/readiness/runs/${runId}`);
+  if (error || !data || data.claimable) return null;
+  return (
+    <p className="notice border-l-[3px] border-[#c0a76b] bg-[#f5f0e0] px-4 py-3 text-[13px] [overflow-wrap:anywhere]" role="status">
+      还在排队：{data.detail}
+      {data.action ? ` · ${data.action}` : ''} <Link to={data.href}>前往处理入口 →</Link>
+    </p>
   );
 }

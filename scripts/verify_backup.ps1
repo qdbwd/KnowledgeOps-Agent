@@ -1,4 +1,4 @@
-<#
+﻿<#
 真实 pg_dump/pg_restore 演练：0030旧表、当前完整资产，以及显式去掉HTML之后的备份。
 只创建随机backupfixture/restore数据库，运行当前dev源码且关闭模型。默认收尾删除本脚本
 创建的隔离数据库；证据和归档留在artifacts。绝不连接正式库做迁移/清理。

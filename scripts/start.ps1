@@ -1,4 +1,4 @@
-<# Windows 的兼容启动入口；与 Makefile 使用同一 Compose 定义，不在宿主机运行应用。 #>
+﻿<# Windows 的兼容启动入口；与 Makefile 使用同一 Compose 定义，不在宿主机运行应用。 #>
 [CmdletBinding()]
 param(
     [ValidateSet('production', 'development')]

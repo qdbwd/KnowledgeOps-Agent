@@ -32,7 +32,8 @@ test('materials stay out of recent chats until a message, and right-click rename
   const recent = page.locator('.recent');
   await expect(recent.getByRole('link', { name: title, exact: true })).toBeVisible();
   await recent.getByRole('link', { name: title, exact: true }).click({ button: 'right' });
-  await expect(page.getByRole('menuitem')).toHaveCount(1);
+  await expect(page.getByRole('menuitem')).toHaveCount(2);
+  await expect(page.getByRole('menuitem', { name: '删除会话' })).toBeVisible();
   await page.getByRole('menuitem', { name: '重命名' }).click();
   await page.getByLabel('会话名称').fill('');
   await expect(page.getByRole('button', { name: '保存名称' })).toBeDisabled();
@@ -48,6 +49,7 @@ test('materials stay out of recent chats until a message, and right-click rename
     .getByRole('button', { name: '会话“手动命名的会话”的选项' })
     .click();
   await expect(page.getByRole('menuitem', { name: '重命名' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: '删除会话' })).toBeVisible();
   await page.screenshot({ path: info.outputPath('rename-menu-mobile.png'), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
